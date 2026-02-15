@@ -9,7 +9,10 @@ from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Request
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 import uvicorn
+
+import database
 
 from transcriber import Transcriber
 from claude_agent_sdk import (
@@ -92,6 +95,7 @@ def verify_token(token: str | None) -> bool:
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
+    database._ensure_db()
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, transcriber.load_model)
     yield
@@ -107,6 +111,11 @@ app = FastAPI(title="Rain Assistant", lifespan=lifespan)
 @app.get("/")
 async def root():
     return FileResponse(str(STATIC_DIR / "index.html"))
+
+
+@app.get("/sw.js")
+async def service_worker():
+    return FileResponse(str(STATIC_DIR / "sw.js"), media_type="application/javascript")
 
 
 # ---------------------------------------------------------------------------
@@ -245,6 +254,30 @@ async def upload_audio(request: Request, audio: UploadFile = File(...)):
 
 
 # ---------------------------------------------------------------------------
+# REST: Message persistence
+# ---------------------------------------------------------------------------
+
+@app.get("/api/messages")
+async def get_messages(request: Request, cwd: str = ""):
+    if not verify_token(get_token(request)):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    if not cwd:
+        return JSONResponse({"error": "cwd parameter is required"}, status_code=400)
+    messages = database.get_messages(cwd)
+    return {"messages": messages}
+
+
+@app.delete("/api/messages")
+async def delete_messages(request: Request, cwd: str = ""):
+    if not verify_token(get_token(request)):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    if not cwd:
+        return JSONResponse({"error": "cwd parameter is required"}, status_code=400)
+    count = database.clear_messages(cwd)
+    return {"deleted": count}
+
+
+# ---------------------------------------------------------------------------
 # WebSocket: Claude Code interaction
 # ---------------------------------------------------------------------------
 
@@ -270,23 +303,39 @@ async def websocket_endpoint(ws: WebSocket):
 
     async def stream_claude_response(stream_client: ClaudeSDKClient):
         """Stream Claude's response to the frontend. Runs as a background task."""
+        accumulated_text = ""
+
+        def flush_text():
+            nonlocal accumulated_text
+            if accumulated_text and current_cwd:
+                database.save_message(
+                    current_cwd, "assistant", "assistant_text",
+                    {"text": accumulated_text},
+                )
+                accumulated_text = ""
+
         try:
             async for message in stream_client.receive_response():
                 if isinstance(message, AssistantMessage):
                     for block in message.content:
                         if isinstance(block, TextBlock):
+                            accumulated_text += block.text
                             await send({
                                 "type": "assistant_text",
                                 "text": block.text,
                             })
                         elif isinstance(block, ToolUseBlock):
-                            await send({
-                                "type": "tool_use",
+                            flush_text()
+                            payload = {
                                 "tool": block.name,
                                 "id": block.id,
                                 "input": block.input,
-                            })
+                            }
+                            if current_cwd:
+                                database.save_message(current_cwd, "tool", "tool_use", payload)
+                            await send({"type": "tool_use", **payload})
                         elif isinstance(block, ToolResultBlock):
+                            flush_text()
                             content_str = ""
                             if isinstance(block.content, str):
                                 content_str = block.content
@@ -294,26 +343,31 @@ async def websocket_endpoint(ws: WebSocket):
                                 content_str = json.dumps(block.content, default=str)
                             elif block.content is not None:
                                 content_str = str(block.content)
-                            await send({
-                                "type": "tool_result",
+                            payload = {
                                 "tool_use_id": block.tool_use_id,
                                 "content": content_str,
                                 "is_error": block.is_error or False,
-                            })
+                            }
+                            if current_cwd:
+                                database.save_message(current_cwd, "tool", "tool_result", payload)
+                            await send({"type": "tool_result", **payload})
 
                 elif isinstance(message, StreamEvent):
                     pass  # Text already handled via AssistantMessage TextBlocks
 
                 elif isinstance(message, ResultMessage):
-                    await send({
-                        "type": "result",
+                    flush_text()
+                    payload = {
                         "text": message.result or "",
                         "session_id": message.session_id,
                         "cost": message.total_cost_usd,
                         "duration_ms": message.duration_ms,
                         "num_turns": message.num_turns,
                         "is_error": message.is_error,
-                    })
+                    }
+                    if current_cwd:
+                        database.save_message(current_cwd, "assistant", "result", payload)
+                    await send({"type": "result", **payload})
 
                 elif isinstance(message, SystemMessage):
                     await send({
@@ -322,8 +376,9 @@ async def websocket_endpoint(ws: WebSocket):
                     })
 
         except asyncio.CancelledError:
-            pass
+            flush_text()
         except Exception as e:
+            flush_text()
             await send({"type": "error", "text": str(e)})
 
     async def cancel_streaming():
@@ -402,6 +457,10 @@ async def websocket_endpoint(ws: WebSocket):
                     await send({"type": "error", "text": "No project directory selected."})
                     continue
 
+                # Persist user message
+                if current_cwd:
+                    database.save_message(current_cwd, "user", "text", {"text": text})
+
                 # Cancel any previous streaming task
                 await cancel_streaming()
 
@@ -448,6 +507,12 @@ async def websocket_endpoint(ws: WebSocket):
             except Exception:
                 pass
 
+
+# ---------------------------------------------------------------------------
+# Static files (CSS/JS modules)
+# ---------------------------------------------------------------------------
+
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # ---------------------------------------------------------------------------
 # Entry point
