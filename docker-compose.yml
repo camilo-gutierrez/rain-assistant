@@ -1,0 +1,10 @@
+services:
+  voice-claude:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    volumes:
+      - ~/.voice-claude:/root/.voice-claude
+    restart: unless-stopped

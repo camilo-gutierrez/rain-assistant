@@ -1,0 +1,990 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rain Assistant — Tu asistente de código controlado por voz</title>
+    <meta name="description" content="Controla Rain con tu voz. Programa, depura y navega tus proyectos hablando. Acceso local y remoto.">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Orbitron:wght@500;700;900&display=swap');
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --bg: #0a0a14;
+            --bg-deep: #060610;
+            --surface: #0f0f1e;
+            --surface2: #1a1a2e;
+            --overlay: #252540;
+            --text: #e0e0f0;
+            --text2: #a0a0c0;
+            --subtext: #606080;
+            --blue: #00d4ff;
+            --green: #00ff88;
+            --red: #ff2266;
+            --yellow: #ffcc00;
+            --mauve: #bf5af2;
+            --peach: #ff8855;
+            --teal: #00ddbb;
+            --cyan: #00d4ff;
+            --magenta: #ff00aa;
+        }
+
+        html { scroll-behavior: smooth; }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            background: var(--bg-deep);
+            color: var(--text);
+            overflow-x: hidden;
+            line-height: 1.6;
+        }
+
+        /* ============ NAV ============ */
+        nav {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 100;
+            padding: 16px 32px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: rgba(17, 17, 27, 0.8);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid rgba(69, 71, 90, 0.3);
+            transition: all 0.3s ease;
+        }
+
+        nav.scrolled {
+            padding: 10px 32px;
+            background: rgba(17, 17, 27, 0.95);
+        }
+
+        .nav-logo {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-family: 'Orbitron', monospace;
+            font-size: 18px;
+            font-weight: 700;
+            background: linear-gradient(90deg, var(--cyan), var(--magenta));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            text-decoration: none;
+        }
+
+        .nav-logo svg { width: 32px; height: 32px; }
+
+        .nav-links {
+            display: flex;
+            align-items: center;
+            gap: 32px;
+            list-style: none;
+        }
+
+        .nav-links a {
+            color: var(--text2);
+            text-decoration: none;
+            font-size: 14px;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+
+        .nav-links a:hover { color: var(--text); }
+
+        .nav-cta {
+            background: linear-gradient(135deg, var(--cyan), var(--mauve));
+            color: var(--bg-deep) !important;
+            padding: 8px 20px;
+            border-radius: 8px;
+            font-weight: 600 !important;
+            transition: transform 0.2s, box-shadow 0.2s !important;
+        }
+
+        .nav-cta:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 20px rgba(0, 212, 255, 0.3);
+        }
+
+        .mobile-menu-btn {
+            display: none;
+            background: none;
+            border: none;
+            color: var(--text);
+            font-size: 24px;
+            cursor: pointer;
+        }
+
+        /* ============ HERO ============ */
+        .hero {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 120px 24px 80px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 800px;
+            height: 800px;
+            background: radial-gradient(circle, rgba(0, 212, 255, 0.08) 0%, transparent 70%);
+            pointer-events: none;
+        }
+
+        .hero::after {
+            content: '';
+            position: absolute;
+            bottom: -30%;
+            right: -10%;
+            width: 600px;
+            height: 600px;
+            background: radial-gradient(circle, rgba(191, 90, 242, 0.06) 0%, transparent 70%);
+            pointer-events: none;
+        }
+
+        .hero-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(0, 212, 255, 0.1);
+            border: 1px solid rgba(0, 212, 255, 0.2);
+            padding: 6px 16px;
+            border-radius: 50px;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--blue);
+            margin-bottom: 32px;
+            animation: fadeInDown 0.6s ease;
+        }
+
+        .hero-badge .pulse-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--green);
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        .hero h1 {
+            font-size: clamp(42px, 7vw, 80px);
+            font-weight: 800;
+            line-height: 1.1;
+            margin-bottom: 24px;
+            animation: fadeInUp 0.6s ease 0.1s both;
+        }
+
+        .hero h1 .gradient-text {
+            background: linear-gradient(135deg, var(--cyan), var(--magenta), var(--blue));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .hero-sub {
+            font-size: clamp(16px, 2.5vw, 20px);
+            color: var(--text2);
+            max-width: 600px;
+            margin-bottom: 48px;
+            animation: fadeInUp 0.6s ease 0.2s both;
+        }
+
+        .hero-buttons {
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+            justify-content: center;
+            animation: fadeInUp 0.6s ease 0.3s both;
+        }
+
+        .btn-primary {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--blue);
+            color: var(--bg-deep);
+            padding: 14px 32px;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            text-decoration: none;
+            border: none;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 30px rgba(0, 212, 255, 0.25);
+        }
+
+        .btn-secondary {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--surface);
+            color: var(--text);
+            padding: 14px 32px;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            text-decoration: none;
+            border: 1px solid var(--surface2);
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .btn-secondary:hover {
+            background: var(--surface2);
+            transform: translateY(-2px);
+        }
+
+        /* Hero visual / mockup */
+        .hero-visual {
+            margin-top: 64px;
+            width: 100%;
+            max-width: 900px;
+            position: relative;
+            animation: fadeInUp 0.8s ease 0.4s both;
+        }
+
+        .mockup-window {
+            background: var(--surface);
+            border: 1px solid var(--surface2);
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 24px 80px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.03);
+        }
+
+        .mockup-titlebar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 14px 18px;
+            background: var(--bg-deep);
+            border-bottom: 1px solid var(--surface2);
+        }
+
+        .mockup-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+
+        .mockup-dot.red { background: var(--red); }
+        .mockup-dot.yellow { background: var(--yellow); }
+        .mockup-dot.green { background: var(--green); }
+
+        .mockup-titlebar span {
+            flex: 1;
+            text-align: center;
+            font-size: 13px;
+            color: var(--subtext);
+            font-weight: 500;
+        }
+
+        .mockup-body {
+            padding: 24px;
+            min-height: 300px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .mock-msg {
+            display: flex;
+            gap: 12px;
+            align-items: flex-start;
+            animation: fadeInUp 0.5s ease both;
+        }
+
+        .mock-msg:nth-child(2) { animation-delay: 1s; }
+        .mock-msg:nth-child(3) { animation-delay: 2.5s; }
+
+        .mock-avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            flex-shrink: 0;
+        }
+
+        .mock-avatar.user { background: var(--surface2); }
+        .mock-avatar.ai { background: rgba(0, 212, 255, 0.15); }
+
+        .mock-bubble {
+            background: var(--bg);
+            border: 1px solid var(--surface2);
+            padding: 12px 16px;
+            border-radius: 12px;
+            font-size: 14px;
+            line-height: 1.5;
+            max-width: 80%;
+        }
+
+        .mock-bubble.ai-bubble {
+            border-color: rgba(0, 212, 255, 0.15);
+        }
+
+        .mock-bubble .tool-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            background: rgba(166, 227, 161, 0.1);
+            color: var(--green);
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-family: 'Consolas', 'Courier New', monospace;
+            margin-top: 8px;
+        }
+
+        .mock-voice-indicator {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            padding: 12px 24px;
+            background: rgba(0, 212, 255, 0.08);
+            border: 1px solid rgba(0, 212, 255, 0.15);
+            border-radius: 50px;
+            align-self: center;
+            margin-top: 8px;
+        }
+
+        .voice-bar {
+            width: 3px;
+            height: 20px;
+            background: var(--blue);
+            border-radius: 3px;
+            animation: voiceBar 0.8s ease-in-out infinite;
+        }
+        .voice-bar:nth-child(2) { animation-delay: 0.1s; height: 28px; }
+        .voice-bar:nth-child(3) { animation-delay: 0.2s; height: 16px; }
+        .voice-bar:nth-child(4) { animation-delay: 0.3s; height: 32px; }
+        .voice-bar:nth-child(5) { animation-delay: 0.15s; height: 22px; }
+        .voice-bar:nth-child(6) { animation-delay: 0.25s; height: 18px; }
+        .voice-bar:nth-child(7) { animation-delay: 0.05s; height: 26px; }
+
+        /* ============ FEATURES ============ */
+        .section {
+            padding: 100px 24px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .section-header {
+            text-align: center;
+            margin-bottom: 64px;
+        }
+
+        .section-label {
+            display: inline-block;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--blue);
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 16px;
+        }
+
+        .section-header h2 {
+            font-size: clamp(28px, 4vw, 44px);
+            font-weight: 700;
+            margin-bottom: 16px;
+        }
+
+        .section-header p {
+            color: var(--text2);
+            font-size: 18px;
+            max-width: 550px;
+            margin: 0 auto;
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 24px;
+        }
+
+        .feature-card {
+            background: var(--surface);
+            border: 1px solid var(--surface2);
+            border-radius: 16px;
+            padding: 32px;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .feature-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--blue), transparent);
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-4px);
+            border-color: rgba(0, 212, 255, 0.3);
+            box-shadow: 0 12px 40px rgba(0,0,0,0.3), 0 0 20px rgba(0, 212, 255, 0.05);
+        }
+
+        .feature-card:hover::before { opacity: 1; }
+
+        .feature-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            margin-bottom: 20px;
+        }
+
+        .feature-icon.voice { background: rgba(0, 212, 255, 0.12); }
+        .feature-icon.remote { background: rgba(191, 90, 242, 0.12); }
+        .feature-icon.secure { background: rgba(0, 255, 136, 0.12); }
+        .feature-icon.files { background: rgba(255, 136, 85, 0.12); }
+        .feature-icon.realtime { background: rgba(0, 221, 187, 0.12); }
+        .feature-icon.theme { background: rgba(255, 204, 0, 0.12); }
+
+        .feature-card h3 {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+
+        .feature-card p {
+            color: var(--text2);
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        /* ============ HOW IT WORKS ============ */
+        .steps-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 32px;
+            position: relative;
+        }
+
+        .step {
+            text-align: center;
+            position: relative;
+        }
+
+        .step-number {
+            width: 64px;
+            height: 64px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--cyan), var(--magenta));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            font-weight: 800;
+            margin: 0 auto 20px;
+            color: var(--bg-deep);
+        }
+
+        .step h3 {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+
+        .step p {
+            color: var(--text2);
+            font-size: 14px;
+        }
+
+        /* ============ TECH STACK ============ */
+        .tech-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+            justify-content: center;
+        }
+
+        .tech-tag {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--surface);
+            border: 1px solid var(--surface2);
+            padding: 12px 20px;
+            border-radius: 50px;
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text2);
+            transition: all 0.2s;
+        }
+
+        .tech-tag:hover {
+            border-color: var(--blue);
+            color: var(--text);
+            transform: translateY(-2px);
+        }
+
+        .tech-tag span { font-size: 18px; }
+
+        /* ============ CTA FINAL ============ */
+        .cta-section {
+            padding: 100px 24px;
+            text-align: center;
+            position: relative;
+        }
+
+        .cta-section::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 600px;
+            height: 400px;
+            background: radial-gradient(circle, rgba(0, 212, 255, 0.06) 0%, transparent 70%);
+            pointer-events: none;
+        }
+
+        .cta-box {
+            max-width: 700px;
+            margin: 0 auto;
+            background: var(--surface);
+            border: 1px solid var(--surface2);
+            border-radius: 24px;
+            padding: 56px 40px;
+            position: relative;
+        }
+
+        .cta-box h2 {
+            font-size: clamp(26px, 4vw, 38px);
+            font-weight: 700;
+            margin-bottom: 16px;
+        }
+
+        .cta-box p {
+            color: var(--text2);
+            font-size: 16px;
+            margin-bottom: 32px;
+        }
+
+        .cta-code {
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            background: var(--bg-deep);
+            border: 1px solid var(--surface2);
+            padding: 14px 24px;
+            border-radius: 12px;
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: 15px;
+            color: var(--green);
+            margin-bottom: 24px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .cta-code:hover {
+            border-color: var(--green);
+            box-shadow: 0 0 20px rgba(0, 255, 136, 0.1);
+        }
+
+        .cta-code .copy-icon {
+            color: var(--subtext);
+            transition: color 0.2s;
+        }
+
+        .cta-code:hover .copy-icon { color: var(--text); }
+
+        /* ============ FOOTER ============ */
+        footer {
+            padding: 40px 24px;
+            text-align: center;
+            border-top: 1px solid var(--surface2);
+            color: var(--subtext);
+            font-size: 14px;
+        }
+
+        footer a {
+            color: var(--blue);
+            text-decoration: none;
+        }
+
+        footer a:hover { text-decoration: underline; }
+
+        /* ============ ANIMATIONS ============ */
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(24px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes fadeInDown {
+            from { opacity: 0; transform: translateY(-16px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.6; transform: scale(1.3); }
+        }
+
+        @keyframes voiceBar {
+            0%, 100% { transform: scaleY(0.4); }
+            50% { transform: scaleY(1); }
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-10px); }
+        }
+
+        /* Scroll animations */
+        .reveal {
+            opacity: 0;
+            transform: translateY(30px);
+            transition: all 0.7s ease;
+        }
+
+        .reveal.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        /* ============ RESPONSIVE ============ */
+        @media (max-width: 768px) {
+            .nav-links { display: none; }
+            .nav-links.open {
+                display: flex;
+                flex-direction: column;
+                position: absolute;
+                top: 100%;
+                left: 0;
+                right: 0;
+                background: var(--bg-deep);
+                padding: 24px;
+                border-bottom: 1px solid var(--surface2);
+                gap: 16px;
+            }
+            .mobile-menu-btn { display: block; }
+
+            .hero { padding: 100px 20px 60px; }
+            .hero-buttons { flex-direction: column; align-items: center; }
+            .btn-primary, .btn-secondary { width: 100%; max-width: 300px; justify-content: center; }
+
+            .mockup-body { padding: 16px; }
+            .mock-bubble { max-width: 90%; font-size: 13px; }
+
+            .features-grid { grid-template-columns: 1fr; }
+            .steps-container { grid-template-columns: 1fr; }
+
+            .section { padding: 60px 20px; }
+            .cta-box { padding: 40px 24px; }
+            .cta-code { font-size: 13px; padding: 12px 16px; }
+        }
+
+        @media (max-width: 480px) {
+            .hero h1 { font-size: 36px; }
+            .hero-sub { font-size: 15px; }
+            .feature-card { padding: 24px; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- ====== NAV ====== -->
+<nav id="navbar">
+    <a href="#" class="nav-logo">
+        <svg viewBox="0 0 32 32" fill="none">
+            <rect width="32" height="32" rx="8" fill="url(#logo-grad)"/>
+            <path d="M16 8C16 8 10 12 10 17C10 20.3137 12.6863 23 16 23C19.3137 23 22 20.3137 22 17C22 12 16 8 16 8Z" fill="#1e1e2e" opacity="0.9"/>
+            <circle cx="14" cy="16" r="1.5" fill="#00d4ff"/>
+            <circle cx="18" cy="16" r="1.5" fill="#00d4ff"/>
+            <path d="M13 19.5C13 19.5 14.5 21 16 21C17.5 21 19 19.5 19 19.5" stroke="#00d4ff" stroke-width="1.2" stroke-linecap="round"/>
+            <defs>
+                <linearGradient id="logo-grad" x1="0" y1="0" x2="32" y2="32">
+                    <stop offset="0%" stop-color="#00d4ff"/>
+                    <stop offset="100%" stop-color="#ff00aa"/>
+                </linearGradient>
+            </defs>
+        </svg>
+        Rain Assistant
+    </a>
+
+    <button class="mobile-menu-btn" onclick="toggleMenu()" aria-label="Menú">☰</button>
+
+    <ul class="nav-links" id="navLinks">
+        <li><a href="#features">Características</a></li>
+        <li><a href="#how-it-works">Cómo funciona</a></li>
+        <li><a href="#tech">Tecnología</a></li>
+        <li><a href="#download" class="nav-cta">Descargar</a></li>
+    </ul>
+</nav>
+
+<!-- ====== HERO ====== -->
+<section class="hero">
+    <div class="hero-badge">
+        <span class="pulse-dot"></span>
+        Impulsado por Claude Agent SDK
+    </div>
+
+    <h1>
+        Programa con<br>
+        <span class="gradient-text">tu voz</span>
+    </h1>
+
+    <p class="hero-sub">
+        Habla, y deja que la IA escriba tu código. Rain Assistant combina reconocimiento de voz con el poder de Claude para transformar cómo programas.
+    </p>
+
+    <div class="hero-buttons">
+        <a href="#download" class="btn-primary">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Descargar gratis
+        </a>
+        <a href="#features" class="btn-secondary">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+            Ver en acción
+        </a>
+    </div>
+
+    <!-- Mockup -->
+    <div class="hero-visual">
+        <div class="mockup-window">
+            <div class="mockup-titlebar">
+                <div class="mockup-dot red"></div>
+                <div class="mockup-dot yellow"></div>
+                <div class="mockup-dot green"></div>
+                <span>Rain Assistant — mi-proyecto/</span>
+            </div>
+            <div class="mockup-body">
+                <div class="mock-msg">
+                    <div class="mock-avatar user">🎙️</div>
+                    <div class="mock-bubble">
+                        "Crea un componente de login con validación de email y contraseña"
+                    </div>
+                </div>
+                <div class="mock-voice-indicator">
+                    <div class="voice-bar"></div>
+                    <div class="voice-bar"></div>
+                    <div class="voice-bar"></div>
+                    <div class="voice-bar"></div>
+                    <div class="voice-bar"></div>
+                    <div class="voice-bar"></div>
+                    <div class="voice-bar"></div>
+                </div>
+                <div class="mock-msg">
+                    <div class="mock-avatar ai">🤖</div>
+                    <div class="mock-bubble ai-bubble">
+                        Perfecto, voy a crear el componente de login. Primero analizaré la estructura de tu proyecto...
+                        <div class="tool-tag">⚡ Escribiendo → src/components/Login.tsx</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ====== FEATURES ====== -->
+<section class="section" id="features">
+    <div class="section-header reveal">
+        <span class="section-label">Características</span>
+        <h2>Todo lo que necesitas para programar sin teclado</h2>
+        <p>Una interfaz intuitiva que combina voz, IA y herramientas de desarrollo.</p>
+    </div>
+
+    <div class="features-grid">
+        <div class="feature-card reveal">
+            <div class="feature-icon voice">🎙️</div>
+            <h3>Control por voz</h3>
+            <p>Mantén presionado para hablar. Whisper AI transcribe tu voz en tiempo real con soporte para español e inglés. Programa sin tocar el teclado.</p>
+        </div>
+
+        <div class="feature-card reveal">
+            <div class="feature-icon remote">🌐</div>
+            <h3>Acceso remoto</h3>
+            <p>Accede desde cualquier dispositivo con Cloudflare Tunnel. Tu servidor local se convierte en una URL pública segura automáticamente.</p>
+        </div>
+
+        <div class="feature-card reveal">
+            <div class="feature-icon secure">🔒</div>
+            <h3>Autenticación segura</h3>
+            <p>Protege tu sesión con un PIN de 6 dígitos generado automáticamente. Solo tú puedes acceder a tu entorno de desarrollo.</p>
+        </div>
+
+        <div class="feature-card reveal">
+            <div class="feature-icon files">📁</div>
+            <h3>Navegador de archivos</h3>
+            <p>Explora y selecciona los directorios de tu proyecto directamente desde la interfaz. Cambia de proyecto sin reiniciar.</p>
+        </div>
+
+        <div class="feature-card reveal">
+            <div class="feature-icon realtime">⚡</div>
+            <h3>Streaming en tiempo real</h3>
+            <p>Respuestas de Claude vía WebSocket con visualización de herramientas en uso. Ve cómo la IA escribe, lee y edita tu código en vivo.</p>
+        </div>
+
+        <div class="feature-card reveal">
+            <div class="feature-icon theme">🎨</div>
+            <h3>Tema Cyberpunk</h3>
+            <p>Interfaz futurista con acentos neon y tema oscuro/claro. Diseñada para sesiones largas de programación con estilo.</p>
+        </div>
+    </div>
+</section>
+
+<!-- ====== HOW IT WORKS ====== -->
+<section class="section" id="how-it-works" style="background: var(--surface); border-radius: 32px; margin: 0 auto; max-width: 1200px;">
+    <div class="section-header reveal">
+        <span class="section-label">Cómo funciona</span>
+        <h2>De tu voz al código en 3 pasos</h2>
+    </div>
+
+    <div class="steps-container">
+        <div class="step reveal">
+            <div class="step-number">1</div>
+            <h3>Inicia el servidor</h3>
+            <p>Ejecuta Rain Assistant y obtén tu PIN de acceso. Conéctate desde tu navegador o usa la app de escritorio.</p>
+        </div>
+
+        <div class="step reveal">
+            <div class="step-number">2</div>
+            <h3>Habla tu idea</h3>
+            <p>Mantén presionado el botón de voz y describe lo que necesitas. Whisper transcribe tu voz al instante.</p>
+        </div>
+
+        <div class="step reveal">
+            <div class="step-number">3</div>
+            <h3>Claude lo construye</h3>
+            <p>Claude Agent SDK analiza tu proyecto, escribe código, crea archivos y ejecuta comandos. Tú solo supervisas.</p>
+        </div>
+    </div>
+</section>
+
+<!-- ====== TECH STACK ====== -->
+<section class="section" id="tech">
+    <div class="section-header reveal">
+        <span class="section-label">Tecnología</span>
+        <h2>Construido con lo mejor</h2>
+        <p>Un stack moderno diseñado para rendimiento y fiabilidad.</p>
+    </div>
+
+    <div class="tech-grid reveal">
+        <div class="tech-tag"><span>🐍</span> Python</div>
+        <div class="tech-tag"><span>⚡</span> FastAPI</div>
+        <div class="tech-tag"><span>🤖</span> Claude Agent SDK</div>
+        <div class="tech-tag"><span>🎤</span> Faster Whisper</div>
+        <div class="tech-tag"><span>🔌</span> WebSocket</div>
+        <div class="tech-tag"><span>☁️</span> Cloudflare Tunnel</div>
+        <div class="tech-tag"><span>🖥️</span> Tkinter</div>
+        <div class="tech-tag"><span>📦</span> PyInstaller</div>
+    </div>
+</section>
+
+<!-- ====== CTA ====== -->
+<section class="cta-section" id="download">
+    <div class="cta-box reveal">
+        <h2>Empieza a programar<br>con tu voz hoy</h2>
+        <p>Open source y gratuito. Clona el repositorio y comienza en minutos.</p>
+
+        <div class="cta-code" onclick="copyCommand(this)" title="Haz clic para copiar" role="button" tabindex="0">
+            <span>$ git clone https://github.com/tu-usuario/rain-assistant.git</span>
+            <svg class="copy-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        </div>
+
+        <br><br>
+        <div class="hero-buttons">
+            <a href="#" class="btn-primary">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Descargar .exe
+            </a>
+            <a href="https://github.com" class="btn-secondary" target="_blank">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+                Ver en GitHub
+            </a>
+        </div>
+    </div>
+</section>
+
+<!-- ====== FOOTER ====== -->
+<footer>
+    <p>Rain Assistant — Hecho con 💜 usando <a href="https://www.anthropic.com/claude" target="_blank">Claude</a></p>
+</footer>
+
+<script>
+    // ---- Scroll reveal ----
+    const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                entry.target.classList.add('visible');
+            }
+        });
+    }, { threshold: 0.1, rootMargin: '0px 0px -50px 0px' });
+
+    document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+
+    // ---- Nav scroll effect ----
+    window.addEventListener('scroll', () => {
+        document.getElementById('navbar').classList.toggle('scrolled', window.scrollY > 50);
+    });
+
+    // ---- Mobile menu ----
+    function toggleMenu() {
+        document.getElementById('navLinks').classList.toggle('open');
+    }
+
+    // Close menu on link click
+    document.querySelectorAll('.nav-links a').forEach(link => {
+        link.addEventListener('click', () => {
+            document.getElementById('navLinks').classList.remove('open');
+        });
+    });
+
+    // ---- Copy command ----
+    function copyCommand(el) {
+        const text = el.querySelector('span').textContent.replace('$ ', '');
+        navigator.clipboard.writeText(text).then(() => {
+            const original = el.querySelector('span').textContent;
+            el.querySelector('span').textContent = '✓ ¡Copiado!';
+            el.querySelector('span').style.color = 'var(--green)';
+            setTimeout(() => {
+                el.querySelector('span').textContent = original;
+                el.querySelector('span').style.color = '';
+            }, 2000);
+        });
+    }
+
+    // ---- Smooth scroll for anchor links ----
+    document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+        anchor.addEventListener('click', function (e) {
+            e.preventDefault();
+            const target = document.querySelector(this.getAttribute('href'));
+            if (target) {
+                target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        });
+    });
+</script>
+
+</body>
+</html>

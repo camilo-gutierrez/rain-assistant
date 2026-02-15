@@ -1,0 +1,14 @@
+dist/
+build/
+__pycache__/
+*.exe
+*.spec
+*.bat
+.git/
+.dockerignore
+Dockerfile
+docker-compose.yml
+landing.html
+main.py
+recorder.py
+claude_client.py
