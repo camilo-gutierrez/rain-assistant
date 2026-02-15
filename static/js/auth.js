@@ -5,6 +5,7 @@
 import { state, dom, API } from './app.js';
 import { connectWS, wsSend } from './websocket.js';
 import { showFileBrowser } from './browser.js';
+import { t } from './translations.js';
 
 export function migrateStorageKeys() {
     const migrations = [
@@ -34,7 +35,7 @@ function startLockoutCountdown(seconds) {
         const mins = Math.floor(remaining / 60);
         const secs = remaining % 60;
         const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
-        dom.pinError.textContent = `Too many attempts. Try again in ${timeStr}`;
+        dom.pinError.textContent = t('pin.tooManyAttempts', { time: timeStr });
         dom.pinError.style.display = '';
     }
 
@@ -45,7 +46,7 @@ function startLockoutCountdown(seconds) {
         remaining--;
         if (remaining <= 0) {
             clearInterval(_lockoutTimer);
-            dom.pinError.textContent = 'Incorrect PIN';
+            dom.pinError.textContent = t('pin.error');
             dom.pinError.style.display = 'none';
             dom.pinInput.disabled = false;
             dom.pinSubmitBtn.disabled = false;
@@ -88,15 +89,15 @@ async function submitPin() {
         dom.pinError.style.display = '';
         if (typeof data.remaining_attempts === 'number') {
             dom.pinError.textContent = data.remaining_attempts === 1
-                ? 'Incorrect PIN — 1 attempt remaining'
-                : `Incorrect PIN — ${data.remaining_attempts} attempts remaining`;
+                ? t('pin.incorrectRemainingOne')
+                : t('pin.incorrectRemaining', { n: data.remaining_attempts });
         } else {
-            dom.pinError.textContent = 'Incorrect PIN';
+            dom.pinError.textContent = t('pin.error');
         }
         dom.pinInput.value = '';
         dom.pinInput.focus();
     } catch {
-        dom.pinError.textContent = 'Connection error';
+        dom.pinError.textContent = t('status.connectionError');
         dom.pinError.style.display = '';
     }
     dom.pinSubmitBtn.disabled = false;
@@ -119,7 +120,7 @@ export function initAuth() {
     dom.toggleKeyVis.addEventListener('click', () => {
         const isPassword = dom.apiKeyInput.type === 'password';
         dom.apiKeyInput.type = isPassword ? 'text' : 'password';
-        dom.toggleKeyVis.textContent = isPassword ? 'Hide' : 'Show';
+        dom.toggleKeyVis.textContent = isPassword ? t('apiKey.hide') : t('apiKey.show');
     });
 
     dom.connectApiBtn.addEventListener('click', () => {

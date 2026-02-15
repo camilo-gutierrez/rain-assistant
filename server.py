@@ -566,6 +566,13 @@ async def websocket_endpoint(ws: WebSocket):
                 api_key = key
                 await send({"type": "status", "agent_id": agent_id, "text": "API key set."})
 
+            # ---- Set transcription language ----
+            elif msg_type == "set_transcription_lang":
+                lang = data.get("lang", "").strip()
+                if lang in ("en", "es"):
+                    transcriber.language = lang
+                    await send({"type": "status", "agent_id": agent_id, "text": f"Transcription language set to {lang}."})
+
             # ---- Set working directory for an agent ----
             elif msg_type == "set_cwd":
                 new_cwd = data.get("path", "")

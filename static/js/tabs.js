@@ -5,6 +5,7 @@
 import { state, dom } from './app.js';
 import { wsSend } from './websocket.js';
 import { loadHistory } from './history.js';
+import { t } from './translations.js';
 
 let _tabCounter = 0;
 
@@ -195,7 +196,7 @@ export function syncProcessingUI(agent) {
     if (agent.id !== state.activeAgentId) return;
 
     if (agent.isProcessing) {
-        dom.recordBtn.textContent = 'Rain is working...';
+        dom.recordBtn.textContent = t('status.rainWorking');
         dom.recordBtn.classList.add('processing');
         dom.recordBtn.disabled = true;
         dom.sendTextBtn.disabled = true;
@@ -203,23 +204,23 @@ export function syncProcessingUI(agent) {
 
         // Restore interrupt button state based on agent's pending status
         if (agent.interruptPending) {
-            dom.interruptBtn.textContent = 'Force Stop';
+            dom.interruptBtn.textContent = t('chat.forceStop');
             dom.interruptBtn.disabled = false;
             dom.interruptBtn.classList.remove('stopping');
             dom.interruptBtn.classList.add('force');
         } else {
-            dom.interruptBtn.textContent = 'Stop';
+            dom.interruptBtn.textContent = t('chat.stop');
             dom.interruptBtn.disabled = false;
             dom.interruptBtn.classList.remove('force', 'stopping');
         }
     } else {
-        dom.recordBtn.textContent = 'Hold to Speak';
+        dom.recordBtn.textContent = t('chat.holdToSpeak');
         dom.recordBtn.className = '';
         dom.recordBtn.disabled = false;
         dom.sendTextBtn.disabled = false;
         dom.interruptBtn.classList.add('hidden');
         dom.interruptBtn.classList.remove('force', 'stopping');
-        dom.interruptBtn.textContent = 'Stop';
+        dom.interruptBtn.textContent = t('chat.stop');
         dom.interruptBtn.disabled = false;
     }
 }

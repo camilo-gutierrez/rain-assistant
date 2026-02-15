@@ -14,6 +14,8 @@ function _resetToPin() {
     dom.apiKeyPanel.classList.add('hidden');
     dom.fileBrowser.classList.add('hidden');
     dom.chatPanel.classList.add('hidden');
+    if (dom.settingsPanel) dom.settingsPanel.classList.add('hidden');
+    if (dom.metricsPanel) dom.metricsPanel.classList.add('hidden');
     dom.pinPanel.classList.remove('hidden');
     dom.pinError.style.display = '';
 }

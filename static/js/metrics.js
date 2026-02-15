@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { state, API, authHeaders, dom } from './app.js';
+import { t } from './translations.js';
 
 let _metricsData = null;
 let _lastFetch = 0;
@@ -75,17 +76,15 @@ function formatDuration(ms) {
 function formatShortDate(dateStr) {
     // "2026-02-10" → "Feb 10"
     const parts = dateStr.split('-');
-    const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
-                    'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-    return months[parseInt(parts[1], 10) - 1] + ' ' + parseInt(parts[2], 10);
+    const monthIdx = parseInt(parts[1], 10) - 1;
+    return t('month.' + monthIdx) + ' ' + parseInt(parts[2], 10);
 }
 
 function formatMonth(monthStr) {
     // "2026-02" → "Feb 2026"
     const parts = monthStr.split('-');
-    const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
-                    'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-    return months[parseInt(parts[1], 10) - 1] + ' ' + parts[0];
+    const monthIdx = parseInt(parts[1], 10) - 1;
+    return t('month.' + monthIdx) + ' ' + parts[0];
 }
 
 // ---------------------------------------------------------------------------
@@ -148,32 +147,32 @@ function renderRateLimitSection(container) {
     const section = document.createElement('div');
     section.className = 'metrics-chart-section rl-section';
     section.innerHTML = `
-        <div class="metrics-chart-title">API Rate Limits (Tiempo Real)</div>
+        <div class="metrics-chart-title">${t('metrics.rateLimits')}</div>
         <div class="rl-dashboard">
             ${renderRateLimitGauge('Requests/min', rl['requests-remaining'], rl['requests-limit'], rl['requests-reset'])}
             ${renderRateLimitGauge('Input Tokens/min', rl['input-tokens-remaining'], rl['input-tokens-limit'], rl['input-tokens-reset'])}
             ${renderRateLimitGauge('Output Tokens/min', rl['output-tokens-remaining'], rl['output-tokens-limit'], rl['output-tokens-reset'])}
         </div>
         <div class="rl-meta">
-            Modelo: <strong>${parseModelName(state.currentModel)}</strong>
-            &nbsp;|&nbsp; Actualizado: ${new Date().toLocaleTimeString()}
+            ${t('metrics.model')}: <strong>${parseModelName(state.currentModel)}</strong>
+            &nbsp;|&nbsp; ${t('metrics.updated')}: ${new Date().toLocaleTimeString()}
         </div>`;
     container.appendChild(section);
 }
 
 function renderTokenUsageCards(container, data) {
-    const t = data.totals;
-    if (!t.all_time.total_input_tokens && !t.all_time.total_output_tokens) return;
+    const totals = data.totals;
+    if (!totals.all_time.total_input_tokens && !totals.all_time.total_output_tokens) return;
     const section = document.createElement('div');
     section.className = 'metrics-cards';
     section.innerHTML = `
         <div class="metric-card">
-            <div class="metric-value" style="color:var(--cyan);text-shadow:0 0 12px rgba(0,212,255,0.3)">${formatNumber(t.all_time.total_input_tokens)}</div>
-            <div class="metric-label">Input Tokens</div>
+            <div class="metric-value" style="color:var(--cyan);text-shadow:0 0 12px rgba(0,212,255,0.3)">${formatNumber(totals.all_time.total_input_tokens)}</div>
+            <div class="metric-label">${t('metrics.inputTokens')}</div>
         </div>
         <div class="metric-card">
-            <div class="metric-value" style="color:var(--magenta);text-shadow:0 0 12px rgba(255,0,170,0.3)">${formatNumber(t.all_time.total_output_tokens)}</div>
-            <div class="metric-label">Output Tokens</div>
+            <div class="metric-value" style="color:var(--magenta);text-shadow:0 0 12px rgba(255,0,170,0.3)">${formatNumber(totals.all_time.total_output_tokens)}</div>
+            <div class="metric-label">${t('metrics.outputTokens')}</div>
         </div>`;
     container.appendChild(section);
 }
@@ -181,11 +180,11 @@ function renderTokenUsageCards(container, data) {
 function renderMetrics(data) {
     const container = document.getElementById('metrics-content');
     if (!data) {
-        container.innerHTML = '<div id="metrics-loading">No metrics data available.</div>';
+        container.innerHTML = `<div id="metrics-loading">${t('metrics.noData')}</div>`;
         return;
     }
 
-    const t = data.totals;
+    const totals = data.totals;
     container.innerHTML = '';
 
     // Rate limit section at the top
@@ -197,33 +196,33 @@ function renderMetrics(data) {
 
     cards.innerHTML = `
         <div class="metric-card">
-            <div class="metric-value cost">${formatUSD(t.all_time.cost)}</div>
-            <div class="metric-label">Total Gastado</div>
+            <div class="metric-value cost">${formatUSD(totals.all_time.cost)}</div>
+            <div class="metric-label">${t('metrics.totalSpent')}</div>
             <div class="metric-sub">
-                Hoy: ${formatUSD(t.today.cost)}<br>
-                Semana: ${formatUSD(t.this_week.cost)}<br>
-                Mes: ${formatUSD(t.this_month.cost)}
+                ${t('metrics.today')}: ${formatUSD(totals.today.cost)}<br>
+                ${t('metrics.week')}: ${formatUSD(totals.this_week.cost)}<br>
+                ${t('metrics.month')}: ${formatUSD(totals.this_month.cost)}
             </div>
         </div>
         <div class="metric-card">
-            <div class="metric-value sessions">${t.all_time.sessions}</div>
-            <div class="metric-label">Sesiones</div>
+            <div class="metric-value sessions">${totals.all_time.sessions}</div>
+            <div class="metric-label">${t('metrics.sessions')}</div>
             <div class="metric-sub">
-                Hoy: ${t.today.sessions}<br>
-                Semana: ${t.this_week.sessions}<br>
-                Mes: ${t.this_month.sessions}
+                ${t('metrics.today')}: ${totals.today.sessions}<br>
+                ${t('metrics.week')}: ${totals.this_week.sessions}<br>
+                ${t('metrics.month')}: ${totals.this_month.sessions}
             </div>
         </div>
         <div class="metric-card">
-            <div class="metric-value duration">${formatDuration(t.all_time.avg_duration_ms)}</div>
-            <div class="metric-label">Duraci&oacute;n Prom.</div>
+            <div class="metric-value duration">${formatDuration(totals.all_time.avg_duration_ms)}</div>
+            <div class="metric-label">${t('metrics.avgDuration')}</div>
             <div class="metric-sub">
-                Costo prom: ${formatUSD(t.all_time.avg_cost)}
+                ${t('metrics.avgCost')}: ${formatUSD(totals.all_time.avg_cost)}
             </div>
         </div>
         <div class="metric-card">
-            <div class="metric-value">${t.all_time.total_turns}</div>
-            <div class="metric-label">Total Turnos</div>
+            <div class="metric-value">${totals.all_time.total_turns}</div>
+            <div class="metric-label">${t('metrics.totalTurns')}</div>
             <div class="metric-sub">
                 &nbsp;
             </div>
@@ -236,23 +235,23 @@ function renderMetrics(data) {
 
     // --- Charts ---
     renderBarChart(data.by_hour, container, {
-        title: 'Uso por Hora',
+        title: t('metrics.usageByHour'),
         labelKey: 'hour',
         formatLabel: h => (h % 3 === 0) ? h + 'h' : '',
         valueKey: 'cost',
-        tooltipFn: d => `${d.hour}:00 — ${formatUSD(d.cost)} | ${d.sessions} sesiones`,
+        tooltipFn: d => `${d.hour}:00 — ${formatUSD(d.cost)} | ${d.sessions} ${t('metrics.sessionsLabel')}`,
     });
 
     renderBarChart(data.by_dow, container, {
-        title: 'Uso por D\u00eda de Semana',
+        title: t('metrics.usageByDow'),
         labelKey: 'name',
         valueKey: 'cost',
-        tooltipFn: d => `${d.name} — ${formatUSD(d.cost)} | ${d.sessions} sesiones`,
+        tooltipFn: d => `${d.name} — ${formatUSD(d.cost)} | ${d.sessions} ${t('metrics.sessionsLabel')}`,
     });
 
     if (data.by_day.length > 0) {
         renderBarChart(data.by_day, container, {
-            title: 'Gasto Diario (\u00daltimos 30 D\u00edas)',
+            title: t('metrics.dailySpend'),
             labelKey: 'day',
             formatLabel: (v, i, total) => (i % Math.max(1, Math.floor(total / 6)) === 0) ? formatShortDate(v) : '',
             valueKey: 'cost',
@@ -262,7 +261,7 @@ function renderMetrics(data) {
 
     if (data.by_month.length > 0) {
         renderBarChart(data.by_month, container, {
-            title: 'Gasto Mensual',
+            title: t('metrics.monthlySpend'),
             labelKey: 'month',
             formatLabel: v => formatMonth(v),
             valueKey: 'cost',
@@ -331,9 +330,10 @@ export function toggleMetrics() {
         // Hide other panels, show metrics
         dom.chatPanel.classList.add('hidden');
         dom.fileBrowser.classList.add('hidden');
+        if (dom.settingsPanel) dom.settingsPanel.classList.add('hidden');
         dom.metricsPanel.classList.remove('hidden');
         const content = document.getElementById('metrics-content');
-        content.innerHTML = '<div id="metrics-loading">Cargando m\u00e9tricas...</div>';
+        content.innerHTML = `<div id="metrics-loading">${t('metrics.loading')}</div>`;
         fetchMetrics().then(data => {
             if (data) renderMetrics(data);
         });
@@ -366,7 +366,7 @@ export function initMetrics() {
     document.getElementById('metrics-close-btn').addEventListener('click', toggleMetrics);
     document.getElementById('metrics-refresh-btn').addEventListener('click', () => {
         const content = document.getElementById('metrics-content');
-        content.innerHTML = '<div id="metrics-loading">Cargando m\u00e9tricas...</div>';
+        content.innerHTML = `<div id="metrics-loading">${t('metrics.loading')}</div>`;
         fetchMetrics(true).then(data => {
             if (data) renderMetrics(data);
         });

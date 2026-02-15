@@ -14,6 +14,7 @@ import {
     showTabBar,
 } from './tabs.js';
 import { updateModelInfo, updateRateLimits, updateUsageInfo } from './metrics.js';
+import { t } from './translations.js';
 
 // ---------------------------------------------------------------------------
 // Markdown & HTML helpers
@@ -141,7 +142,7 @@ export function appendToolResult(content, isError, options = {}, agentId = null)
     if (truncated) {
         const btn = document.createElement('button');
         btn.className = 'expand-btn';
-        btn.textContent = 'Show full output';
+        btn.textContent = t('chat.showFullOutput');
         btn.addEventListener('click', () => {
             pre.textContent = content;
             pre.style.maxHeight = 'none';
@@ -155,7 +156,7 @@ export function appendToolResult(content, isError, options = {}, agentId = null)
 }
 
 export function resetRecordBtn() {
-    dom.recordBtn.textContent = 'Hold to Speak';
+    dom.recordBtn.textContent = t('chat.holdToSpeak');
     dom.recordBtn.className = '';
     dom.recordBtn.disabled = false;
 }
@@ -166,7 +167,7 @@ export function resetRecordBtn() {
 function forceReset(agentId) {
     const agent = getAgent(agentId);
     finalizeAssistant(agentId);
-    appendMsg('system', 'Force stopped.', {}, agentId);
+    appendMsg('system', t('chat.forceStopped'), {}, agentId);
 
     if (agent) {
         agent.isProcessing = false;
@@ -186,9 +187,9 @@ function forceReset(agentId) {
         dom.sendTextBtn.disabled = false;
         dom.interruptBtn.classList.add('hidden');
         dom.interruptBtn.classList.remove('force', 'stopping');
-        dom.interruptBtn.textContent = 'Stop';
+        dom.interruptBtn.textContent = t('chat.stop');
         dom.interruptBtn.disabled = false;
-        setStatus('connected', 'Ready');
+        setStatus('connected', t('status.ready'));
     }
 
     setAgentStatus(effectiveId, 'idle');
@@ -216,9 +217,9 @@ function completeProcessing(agentId, statusType) {
         dom.sendTextBtn.disabled = false;
         dom.interruptBtn.classList.add('hidden');
         dom.interruptBtn.classList.remove('force', 'stopping');
-        dom.interruptBtn.textContent = 'Stop';
+        dom.interruptBtn.textContent = t('chat.stop');
         dom.interruptBtn.disabled = false;
-        setStatus('connected', 'Ready');
+        setStatus('connected', t('status.ready'));
     }
 
     setAgentStatus(agentId, statusType);
@@ -238,7 +239,7 @@ function sendTextMessage() {
 
     // Check that agent has a cwd (project selected)
     if (!agent.cwd) {
-        appendMsg('system', 'Please select a project directory first.', {}, state.activeAgentId);
+        appendMsg('system', t('chat.selectDirFirst'), {}, state.activeAgentId);
         return;
     }
 
@@ -253,13 +254,13 @@ export function sendToRainViaWS(text) {
 
     // Prevent sending if agent has no cwd
     if (!agent.cwd) {
-        appendMsg('system', 'Please select a project directory first.', {}, state.activeAgentId);
+        appendMsg('system', t('chat.selectDirFirst'), {}, state.activeAgentId);
         return;
     }
 
     agent.isProcessing = true;
     state.isProcessing = true;
-    dom.recordBtn.textContent = 'Rain is working...';
+    dom.recordBtn.textContent = t('status.rainWorking');
     dom.recordBtn.classList.add('processing');
     dom.recordBtn.disabled = true;
     dom.sendTextBtn.disabled = true;
@@ -385,7 +386,7 @@ export function initChat() {
 
         // Send interrupt to server for this specific agent
         wsSend({ type: 'interrupt', agent_id: state.activeAgentId });
-        dom.interruptBtn.textContent = 'Stopping...';
+        dom.interruptBtn.textContent = t('chat.stopping');
         dom.interruptBtn.classList.add('stopping');
         dom.interruptBtn.disabled = true;
 
@@ -405,7 +406,7 @@ export function initChat() {
             if (agentCheck && agentCheck.interruptPending && agentCheck.isProcessing) {
                 // Only update UI if this agent is still the active one
                 if (state.activeAgentId === targetAgentId) {
-                    dom.interruptBtn.textContent = 'Force Stop';
+                    dom.interruptBtn.textContent = t('chat.forceStop');
                     dom.interruptBtn.disabled = false;
                     dom.interruptBtn.classList.remove('stopping');
                     dom.interruptBtn.classList.add('force');

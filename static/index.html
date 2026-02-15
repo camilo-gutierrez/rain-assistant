@@ -15,7 +15,7 @@
     <div id="status-bar">
         <span id="connection-dot"></span>
         <h1>Rain Assistant</h1>
-        <span id="status-text">Connecting...</span>
+        <span id="status-text" data-i18n="status.connecting">Conectando...</span>
         <!-- Rate-limit compact indicator -->
         <div id="rate-limit-indicator" class="hidden" title="API Rate Limits">
             <span id="rate-model-badge"></span>
@@ -37,66 +37,110 @@
                 </div>
             </div>
         </div>
-        <button id="metrics-toggle" title="Usage Metrics">&#128202;</button>
-        <button id="theme-toggle" title="Toggle light/dark mode">&#127769;</button>
+        <button id="metrics-toggle" data-i18n-title="btn.metricsToggle.title" title="Métricas de uso">&#128202;</button>
+        <button id="settings-toggle" data-i18n-title="btn.settings.title" title="Configuración">&#9881;&#65039;</button>
     </div>
 
     <!-- Tab Bar (multi-agent) -->
     <div id="tab-bar" class="hidden">
         <div id="tab-list"></div>
-        <button id="new-agent-btn" title="New agent">+</button>
+        <button id="new-agent-btn" data-i18n-title="btn.newAgent.title" title="Nuevo agente">+</button>
     </div>
 
     <!-- PIN Panel -->
     <div id="pin-panel" class="panel">
         <div class="pin-container">
-            <h2>Rain Assistant</h2>
-            <p>Enter the PIN shown on your server console</p>
+            <h2 data-i18n="pin.title">Rain Assistant</h2>
+            <p data-i18n="pin.instruction">Ingresa el PIN que aparece en la consola del servidor</p>
             <input type="password" inputmode="numeric" maxlength="6" id="pin-input" placeholder="------" autocomplete="off">
-            <span id="pin-error">Incorrect PIN</span>
-            <button id="pin-submit-btn">Enter</button>
+            <span id="pin-error" data-i18n="pin.error">PIN incorrecto</span>
+            <button id="pin-submit-btn" data-i18n="pin.submit">Entrar</button>
         </div>
     </div>
 
     <!-- API Key Panel -->
     <div id="api-key-panel" class="panel hidden">
         <div class="api-key-container">
-            <h2>Rain Assistant</h2>
-            <p>Enter your Anthropic API key to connect. You can get one at
+            <h2 data-i18n="apiKey.title">Rain Assistant</h2>
+            <p><span data-i18n="apiKey.instruction">Ingresa tu API key de Anthropic para conectar. Obtén una en</span>
                <a href="https://console.anthropic.com" target="_blank" style="color:var(--cyan)">console.anthropic.com</a></p>
             <div class="api-key-input-wrap">
                 <input type="password" id="api-key-input" placeholder="sk-ant-..." autocomplete="off">
-                <button id="toggle-key-vis" type="button">Show</button>
+                <button id="toggle-key-vis" type="button" data-i18n="apiKey.show">Ver</button>
             </div>
             <div id="saved-key-info" class="api-key-saved" style="display:none">
-                Key saved from last session. <button id="clear-key-btn">Clear</button>
+                <span data-i18n="apiKey.savedInfo">Key guardada de la sesión anterior.</span> <button id="clear-key-btn" data-i18n="apiKey.clear">Borrar</button>
             </div>
-            <button id="connect-api-btn">Connect</button>
-            <button id="skip-api-btn">Use without key (local mode)</button>
+            <button id="connect-api-btn" data-i18n="apiKey.connect">Conectar</button>
+            <button id="skip-api-btn" data-i18n="apiKey.skip">Usar sin key (modo local)</button>
         </div>
     </div>
 
     <!-- File Browser Panel -->
     <div id="file-browser" class="panel hidden">
         <div id="browser-header">
-            <h2>Select Project Directory</h2>
-            <div id="current-path">Loading...</div>
+            <h2 data-i18n="browser.title">Seleccionar Directorio del Proyecto</h2>
+            <div id="current-path" data-i18n="browser.loading">Cargando...</div>
         </div>
         <div id="file-list"></div>
-        <button id="select-dir-btn">Select This Directory</button>
+        <button id="select-dir-btn" data-i18n="browser.selectBtn">Seleccionar Este Directorio</button>
     </div>
 
     <!-- Metrics Panel -->
     <div id="metrics-panel" class="panel hidden">
         <div id="metrics-header">
-            <h2>Usage Metrics</h2>
+            <h2 data-i18n="metrics.title">Métricas de Uso</h2>
             <div id="metrics-header-actions">
-                <button id="metrics-refresh-btn">Refresh</button>
-                <button id="metrics-close-btn">Close</button>
+                <button id="metrics-refresh-btn" data-i18n="metrics.refresh">Actualizar</button>
+                <button id="metrics-close-btn" data-i18n="metrics.close">Cerrar</button>
             </div>
         </div>
         <div id="metrics-content">
-            <div id="metrics-loading">Loading metrics...</div>
+            <div id="metrics-loading" data-i18n="metrics.loading">Cargando métricas...</div>
+        </div>
+    </div>
+
+    <!-- Settings Panel -->
+    <div id="settings-panel" class="panel hidden">
+        <div id="settings-header">
+            <h2 data-i18n="settings.title">Configuración</h2>
+            <button id="settings-close-btn" data-i18n="settings.close">Cerrar</button>
+        </div>
+        <div id="settings-content">
+            <!-- Language -->
+            <div class="settings-group">
+                <label class="settings-label" data-i18n="settings.language">Idioma</label>
+                <select id="settings-language" class="settings-select">
+                    <option value="es">Español</option>
+                    <option value="en">English</option>
+                </select>
+            </div>
+            <!-- Theme -->
+            <div class="settings-group">
+                <label class="settings-label" data-i18n="settings.theme">Tema</label>
+                <div id="theme-options" class="settings-theme-grid">
+                    <button class="theme-option" data-theme-value="dark">
+                        <span class="theme-preview theme-preview-dark"></span>
+                        <span data-i18n="settings.theme.dark">Cyberpunk</span>
+                    </button>
+                    <button class="theme-option" data-theme-value="light">
+                        <span class="theme-preview theme-preview-light"></span>
+                        <span data-i18n="settings.theme.light">Claro</span>
+                    </button>
+                    <button class="theme-option" data-theme-value="ocean">
+                        <span class="theme-preview theme-preview-ocean"></span>
+                        <span data-i18n="settings.theme.ocean">Océano</span>
+                    </button>
+                </div>
+            </div>
+            <!-- Voice Recognition Language -->
+            <div class="settings-group">
+                <label class="settings-label" data-i18n="settings.voiceLang">Reconocimiento de Voz</label>
+                <select id="settings-voice-lang" class="settings-select">
+                    <option value="es">Español</option>
+                    <option value="en">English</option>
+                </select>
+            </div>
         </div>
     </div>
 
@@ -104,17 +148,17 @@
     <div id="chat-panel" class="panel hidden">
         <div id="chat-header">
             <span id="project-name"></span>
-            <button id="clear-history-btn">Clear</button>
-            <button id="change-dir-btn">Change</button>
+            <button id="clear-history-btn" data-i18n="chat.clearBtn">Limpiar</button>
+            <button id="change-dir-btn" data-i18n="chat.changeBtn">Cambiar</button>
         </div>
         <div id="chat-messages"></div>
         <div id="text-input-area">
-            <input type="text" id="text-input" placeholder="Type a message..." autocomplete="off">
-            <button id="send-text-btn">Send</button>
+            <input type="text" id="text-input" data-i18n-placeholder="chat.inputPlaceholder" placeholder="Escribe un mensaje..." autocomplete="off">
+            <button id="send-text-btn" data-i18n="chat.sendBtn">Enviar</button>
         </div>
         <div id="controls">
-            <button id="record-btn" disabled>Hold to Speak</button>
-            <button id="interrupt-btn" class="hidden">Stop</button>
+            <button id="record-btn" disabled data-i18n="chat.holdToSpeak">Mantén para Hablar</button>
+            <button id="interrupt-btn" class="hidden" data-i18n="chat.stop">Detener</button>
         </div>
     </div>
 

@@ -5,6 +5,7 @@
 import { state, dom, API, authHeaders, setStatus } from './app.js';
 import { appendMsg, sendToRainViaWS, resetRecordBtn } from './chat.js';
 import { getActiveAgent } from './tabs.js';
+import { t } from './translations.js';
 
 async function initAudio() {
     try {
@@ -31,7 +32,7 @@ async function initAudio() {
             const blob = new Blob(state.audioChunks, { type: state.mediaRecorder.mimeType });
             state.audioChunks = [];
             if (blob.size < 3000) {
-                setStatus('ready', 'Recording too short');
+                setStatus('ready', t('status.recordingTooShort'));
                 resetRecordBtn();
                 return;
             }
@@ -41,7 +42,7 @@ async function initAudio() {
         dom.recordBtn.disabled = false;
     } catch (err) {
         console.error('Audio init error:', err);
-        dom.recordBtn.textContent = 'Mic unavailable';
+        dom.recordBtn.textContent = t('chat.micUnavailable');
         dom.recordBtn.disabled = true;
     }
 }
@@ -54,7 +55,7 @@ function startRecording() {
     state.audioChunks = [];
     state.mediaRecorder.start(100);
     state.isRecording = true;
-    dom.recordBtn.textContent = 'Recording... Release to Send';
+    dom.recordBtn.textContent = t('chat.recording');
     dom.recordBtn.classList.add('recording');
 }
 
@@ -62,7 +63,7 @@ function stopRecording() {
     if (!state.isRecording || !state.mediaRecorder) return;
     state.mediaRecorder.stop();
     state.isRecording = false;
-    dom.recordBtn.textContent = 'Transcribing...';
+    dom.recordBtn.textContent = t('status.transcribing');
     dom.recordBtn.classList.remove('recording');
     dom.recordBtn.classList.add('processing');
     dom.recordBtn.disabled = true;
@@ -73,12 +74,12 @@ async function sendAudio(blob) {
 
     // Prevent sending if agent has no project selected
     if (!agent || !agent.cwd) {
-        setStatus('ready', 'Select a project directory first');
+        setStatus('ready', t('status.selectProjectFirst'));
         resetRecordBtn();
         return;
     }
 
-    setStatus('connected', 'Transcribing...');
+    setStatus('connected', t('status.transcribing'));
     const fd = new FormData();
     fd.append('audio', blob, 'recording.webm');
 
@@ -91,11 +92,11 @@ async function sendAudio(blob) {
             appendMsg('user', data.text.trim(), {}, state.activeAgentId);
             sendToRainViaWS(data.text.trim());
         } else {
-            setStatus('ready', 'No speech detected');
+            setStatus('ready', t('status.noSpeechDetected'));
             resetRecordBtn();
         }
     } catch {
-        setStatus('error', 'Transcription failed');
+        setStatus('error', t('status.transcriptionFailed'));
         resetRecordBtn();
     }
 }

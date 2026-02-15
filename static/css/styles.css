@@ -40,6 +40,26 @@
     --grid-color: rgba(0, 153, 204, 0.03);
 }
 
+/* Ocean theme */
+[data-theme="ocean"] {
+    --bg: #0a1628;
+    --surface: #0f1f3d;
+    --surface2: #162d50;
+    --overlay: #1e3a5f;
+    --text: #c8ddf0;
+    --text2: #8ab4d8;
+    --subtext: #4a7a9e;
+    --blue: #4fc3f7;
+    --green: #26c6a0;
+    --red: #ef5350;
+    --yellow: #ffca28;
+    --mauve: #7e57c2;
+    --cyan: #4fc3f7;
+    --magenta: #ab47bc;
+    --neon-glow: rgba(79, 195, 247, 0.12);
+    --grid-color: rgba(79, 195, 247, 0.03);
+}
+
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
     background: var(--bg);
@@ -370,6 +390,10 @@ body::after {
     background: rgba(200, 208, 224, 0.8);
 }
 
+[data-theme="ocean"] .tool-block {
+    background: rgba(15, 31, 61, 0.8);
+}
+
 .tool-block .tool-header {
     display: flex;
     align-items: center;
@@ -411,6 +435,10 @@ body::after {
 
 [data-theme="light"] .tool-result-block {
     background: rgba(200, 208, 224, 0.8);
+}
+
+[data-theme="ocean"] .tool-result-block {
+    background: rgba(15, 31, 61, 0.8);
 }
 
 .tool-result-block.error {
@@ -612,8 +640,8 @@ body::after {
     cursor: default;
 }
 
-/* ---- Theme Toggle ---- */
-#theme-toggle {
+/* ---- Settings Toggle ---- */
+#settings-toggle {
     background: var(--surface2);
     border: 1px solid var(--overlay);
     border-radius: 8px;
@@ -625,8 +653,8 @@ body::after {
     flex-shrink: 0;
 }
 
-#theme-toggle:hover { background: var(--overlay); border-color: var(--cyan); }
-#theme-toggle:active { transform: scale(0.92); }
+#settings-toggle:hover { background: var(--overlay); border-color: var(--cyan); }
+#settings-toggle:active { transform: scale(0.92); }
 
 /* ---- PIN & API Key Panels ---- */
 #pin-panel,
@@ -841,7 +869,8 @@ body::after {
 
 /* Smooth theme transition */
 body, #status-bar, #chat-header, #controls, #text-input-area,
-.msg, .tool-block, .tool-result-block, #text-input, .file-entry {
+.msg, .tool-block, .tool-result-block, #text-input, .file-entry,
+#settings-content, .settings-select, .theme-option {
     transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
 }
 
@@ -1545,5 +1574,189 @@ body, #status-bar, #chat-header, #controls, #text-input-area,
     #rate-limit-indicator { gap: 4px; }
     .rl-dashboard {
         grid-template-columns: 1fr;
+    }
+}
+
+/* =========================================================================
+   OCEAN THEME — scanline & glow overrides
+   ========================================================================= */
+
+[data-theme="ocean"] body::before {
+    background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(79, 195, 247, 0.004) 2px,
+        rgba(79, 195, 247, 0.004) 4px
+    );
+}
+
+[data-theme="ocean"] body::after {
+    background:
+        radial-gradient(ellipse at 0% 0%, rgba(79, 195, 247, 0.06) 0%, transparent 50%),
+        radial-gradient(ellipse at 100% 100%, rgba(126, 87, 194, 0.06) 0%, transparent 50%);
+}
+
+/* =========================================================================
+   SETTINGS PANEL
+   ========================================================================= */
+
+#settings-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--overlay);
+    flex-shrink: 0;
+}
+
+#settings-header h2 {
+    font-family: 'Orbitron', monospace;
+    font-size: 18px;
+    font-weight: 700;
+    background: linear-gradient(90deg, var(--cyan), var(--magenta));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+#settings-close-btn {
+    padding: 6px 14px;
+    font-size: 13px;
+    background: var(--surface2);
+    color: var(--text2);
+    border: 1px solid var(--overlay);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: border-color 0.2s, color 0.2s;
+}
+
+#settings-close-btn:hover {
+    border-color: var(--red);
+    color: var(--red);
+}
+
+#settings-content {
+    flex: 1;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 24px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+}
+
+.settings-group {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.settings-label {
+    font-family: 'Orbitron', monospace;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text2);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.settings-select {
+    padding: 12px 14px;
+    font-size: 15px;
+    background: var(--surface2);
+    color: var(--text);
+    border: 1px solid var(--overlay);
+    border-radius: 10px;
+    outline: none;
+    font-family: inherit;
+    cursor: pointer;
+    transition: border-color 0.3s, box-shadow 0.3s;
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a0a0c0' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    background-size: 12px;
+}
+
+.settings-select:focus {
+    border-color: var(--cyan);
+    box-shadow: 0 0 12px rgba(0, 212, 255, 0.1);
+}
+
+.settings-select option {
+    background: var(--surface);
+    color: var(--text);
+}
+
+/* Theme selector grid */
+.settings-theme-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+}
+
+.theme-option {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 16px 12px;
+    background: var(--surface);
+    border: 2px solid var(--overlay);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: border-color 0.3s, box-shadow 0.3s, transform 0.15s;
+    color: var(--text2);
+    font-size: 12px;
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.theme-option:hover {
+    border-color: rgba(0, 212, 255, 0.3);
+    box-shadow: 0 0 12px var(--neon-glow);
+    transform: translateY(-1px);
+}
+
+.theme-option.active {
+    border-color: var(--cyan);
+    box-shadow: 0 0 16px rgba(0, 212, 255, 0.2), 0 0 32px rgba(0, 212, 255, 0.1);
+}
+
+.theme-preview {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    border: 2px solid rgba(255,255,255,0.1);
+}
+
+.theme-preview-dark {
+    background: linear-gradient(135deg, #0a0a14, #1a1a2e);
+    box-shadow: 0 0 8px rgba(0, 212, 255, 0.3);
+}
+
+.theme-preview-light {
+    background: linear-gradient(135deg, #e8eaf0, #c0c8d8);
+    border-color: rgba(0,0,0,0.1);
+}
+
+.theme-preview-ocean {
+    background: linear-gradient(135deg, #0a1628, #162d50);
+    box-shadow: 0 0 8px rgba(79, 195, 247, 0.3);
+}
+
+@media (max-width: 480px) {
+    .settings-theme-grid {
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+    }
+    .theme-option {
+        padding: 12px 8px;
+    }
+    .theme-preview {
+        width: 36px;
+        height: 36px;
     }
 }

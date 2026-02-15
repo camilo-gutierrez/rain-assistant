@@ -9,6 +9,7 @@ import { getActiveAgent, showTabBar } from './tabs.js';
 
 export function showFileBrowser() {
     dom.apiKeyPanel.classList.add('hidden');
+    if (dom.settingsPanel) dom.settingsPanel.classList.add('hidden');
     dom.fileBrowser.classList.remove('hidden');
     const agent = getActiveAgent();
     const startPath = agent ? agent.currentBrowsePath : '~';

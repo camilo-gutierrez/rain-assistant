@@ -87,6 +87,7 @@ export function setStatus(statusState, text) {
 
 import { migrateStorageKeys, initAuth } from './auth.js';
 import { initTheme } from './theme.js';
+import { initTranslations } from './translations.js';
 import { initNotifications } from './notifications.js';
 import { connectWS } from './websocket.js';
 import { initRecorder } from './recorder.js';
@@ -94,11 +95,13 @@ import { initBrowser } from './browser.js';
 import { initChat } from './chat.js';
 import { initTabs } from './tabs.js';
 import { initMetrics } from './metrics.js';
+import { initSettings } from './settings.js';
 
 function init() {
     migrateStorageKeys();
     initDom();
     initTheme();
+    initTranslations();
     initAuth();
     initTabs();
     initBrowser();
@@ -106,6 +109,7 @@ function init() {
     initRecorder();
     initNotifications();
     initMetrics();
+    initSettings();
 
     if (state.authToken) {
         dom.pinPanel.classList.add('hidden');

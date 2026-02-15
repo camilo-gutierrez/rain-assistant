@@ -1,22 +1,25 @@
 // ---------------------------------------------------------------------------
-// Theme Toggle (dark / light)
+// Theme management (dark / light / ocean)
 // ---------------------------------------------------------------------------
 
-let themeToggle;
+const THEMES = ['dark', 'light', 'ocean'];
 
-function setTheme(theme) {
+export function getTheme() {
+    return localStorage.getItem('rain-theme') || 'dark';
+}
+
+export function setTheme(theme) {
+    if (!THEMES.includes(theme)) theme = 'dark';
     document.documentElement.setAttribute('data-theme', theme);
-    themeToggle.textContent = theme === 'light' ? '\u2600\uFE0F' : '\uD83C\uDF19';
     localStorage.setItem('rain-theme', theme);
+
+    // Update active state on theme buttons in settings (if panel exists)
+    document.querySelectorAll('.theme-option').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.themeValue === theme);
+    });
 }
 
 export function initTheme() {
-    themeToggle = document.getElementById('theme-toggle');
-    const saved = localStorage.getItem('rain-theme') || 'dark';
+    const saved = getTheme();
     setTheme(saved);
-
-    themeToggle.addEventListener('click', () => {
-        const current = document.documentElement.getAttribute('data-theme');
-        setTheme(current === 'light' ? 'dark' : 'light');
-    });
 }
