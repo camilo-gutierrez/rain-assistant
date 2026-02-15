@@ -302,14 +302,7 @@ async def websocket_endpoint(ws: WebSocket):
                             })
 
                 elif isinstance(message, StreamEvent):
-                    event = message.event
-                    if isinstance(event, dict):
-                        delta = event.get("delta", {})
-                        if isinstance(delta, dict) and delta.get("type") == "text_delta":
-                            await send({
-                                "type": "stream_text",
-                                "text": delta.get("text", ""),
-                            })
+                    pass  # Text already handled via AssistantMessage TextBlocks
 
                 elif isinstance(message, ResultMessage):
                     await send({
