@@ -4,12 +4,14 @@ import os
 import secrets
 import sys
 import tempfile
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+import httpx
 import uvicorn
 
 import database
@@ -58,10 +60,77 @@ RAIN_SYSTEM_PROMPT = (
 transcriber = Transcriber(model_size="base", language="es")
 
 # ---------------------------------------------------------------------------
+# Rate limit fetching (Anthropic API headers via lightweight GET /v1/models)
+# ---------------------------------------------------------------------------
+
+_rate_limit_cache: dict = {"data": None, "last_fetch": 0.0}
+_RATE_LIMIT_FETCH_INTERVAL = 30  # seconds between fetches
+
+
+async def fetch_rate_limits(api_key: str) -> dict | None:
+    """Fetch rate-limit info from Anthropic via a zero-cost GET /v1/models call.
+
+    Returns a dict with cleaned header keys (e.g. "requests-limit") or None.
+    Results are cached and the call is throttled to once per 30 s.
+    """
+    now = time.time()
+    if (now - _rate_limit_cache["last_fetch"]) < _RATE_LIMIT_FETCH_INTERVAL:
+        return _rate_limit_cache["data"]
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                "https://api.anthropic.com/v1/models",
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                },
+                timeout=5.0,
+            )
+
+        headers = resp.headers
+        rate_limits: dict = {}
+
+        prefixes = [
+            "anthropic-ratelimit-requests",
+            "anthropic-ratelimit-tokens",
+            "anthropic-ratelimit-input-tokens",
+            "anthropic-ratelimit-output-tokens",
+        ]
+        for prefix in prefixes:
+            for suffix in ("limit", "remaining", "reset"):
+                key = f"{prefix}-{suffix}"
+                val = headers.get(key)
+                if val is not None:
+                    clean_key = key.replace("anthropic-ratelimit-", "")
+                    if suffix != "reset":
+                        try:
+                            val = int(val)
+                        except (ValueError, TypeError):
+                            pass
+                    rate_limits[clean_key] = val
+
+        if rate_limits:
+            _rate_limit_cache["data"] = rate_limits
+            _rate_limit_cache["last_fetch"] = now
+            return rate_limits
+    except Exception as exc:
+        print(f"  [RATE_LIMIT] fetch failed: {exc}", flush=True)
+
+    return _rate_limit_cache["data"]  # stale cache on failure
+
+
+# ---------------------------------------------------------------------------
 # PIN & token management
 # ---------------------------------------------------------------------------
 
 active_tokens: set[str] = set()
+
+# Rate limiting: track failed PIN attempts per IP
+# { ip: { "attempts": int, "locked_until": float } }
+MAX_PIN_ATTEMPTS = 3
+LOCKOUT_SECONDS = 5 * 60  # 5 minutes
+_auth_attempts: dict[str, dict] = {}
 
 
 def load_or_create_config() -> dict:
@@ -125,6 +194,25 @@ async def service_worker():
 
 @app.post("/api/auth")
 async def authenticate(request: Request):
+    client_ip = request.client.host if request.client else "unknown"
+
+    # Check if this IP is currently locked out
+    record = _auth_attempts.get(client_ip)
+    if record:
+        remaining = record["locked_until"] - time.time()
+        if remaining > 0:
+            mins = int(remaining // 60)
+            secs = int(remaining % 60)
+            print(f"  [AUTH] IP {client_ip} is locked out ({mins}m {secs}s remaining)", flush=True)
+            return JSONResponse({
+                "error": "Too many failed attempts. Try again later.",
+                "locked": True,
+                "remaining_seconds": int(remaining),
+            }, status_code=429)
+        else:
+            # Lockout expired — reset
+            del _auth_attempts[client_ip]
+
     try:
         body = await request.json()
     except Exception:
@@ -133,10 +221,32 @@ async def authenticate(request: Request):
     pin = str(body.get("pin", "")).strip()
     expected = str(config.get("pin", "")).strip()
 
-    print(f"  [AUTH] pin={repr(pin)} expected={repr(expected)} match={pin == expected}", flush=True)
+    print(f"  [AUTH] pin={repr(pin)} expected={repr(expected)} match={pin == expected} ip={client_ip}", flush=True)
 
     if not pin or pin != expected:
-        return JSONResponse({"error": "Invalid PIN"}, status_code=401)
+        # Track failed attempt
+        if client_ip not in _auth_attempts:
+            _auth_attempts[client_ip] = {"attempts": 0, "locked_until": 0}
+        _auth_attempts[client_ip]["attempts"] += 1
+        attempts = _auth_attempts[client_ip]["attempts"]
+        remaining_attempts = MAX_PIN_ATTEMPTS - attempts
+
+        if attempts >= MAX_PIN_ATTEMPTS:
+            _auth_attempts[client_ip]["locked_until"] = time.time() + LOCKOUT_SECONDS
+            print(f"  [AUTH] IP {client_ip} LOCKED OUT after {attempts} failed attempts", flush=True)
+            return JSONResponse({
+                "error": "Too many failed attempts. Try again later.",
+                "locked": True,
+                "remaining_seconds": LOCKOUT_SECONDS,
+            }, status_code=429)
+
+        return JSONResponse({
+            "error": "Invalid PIN",
+            "remaining_attempts": remaining_attempts,
+        }, status_code=401)
+
+    # Successful auth — clear any attempt tracking for this IP
+    _auth_attempts.pop(client_ip, None)
     token = secrets.token_urlsafe(32)
     active_tokens.add(token)
     return {"token": token}
@@ -258,42 +368,51 @@ async def upload_audio(request: Request, audio: UploadFile = File(...)):
 # ---------------------------------------------------------------------------
 
 @app.get("/api/messages")
-async def get_messages(request: Request, cwd: str = ""):
+async def get_messages(request: Request, cwd: str = "", agent_id: str = "default"):
     if not verify_token(get_token(request)):
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
     if not cwd:
         return JSONResponse({"error": "cwd parameter is required"}, status_code=400)
-    messages = database.get_messages(cwd)
+    messages = database.get_messages(cwd, agent_id=agent_id)
     return {"messages": messages}
 
 
 @app.delete("/api/messages")
-async def delete_messages(request: Request, cwd: str = ""):
+async def delete_messages(request: Request, cwd: str = "", agent_id: str = ""):
     if not verify_token(get_token(request)):
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
     if not cwd:
         return JSONResponse({"error": "cwd parameter is required"}, status_code=400)
-    count = database.clear_messages(cwd)
+    count = database.clear_messages(cwd, agent_id=agent_id or None)
     return {"deleted": count}
 
 
+@app.get("/api/metrics")
+async def get_metrics(request: Request):
+    if not verify_token(get_token(request)):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    metrics = database.get_metrics_data()
+    return metrics
+
+
 # ---------------------------------------------------------------------------
-# WebSocket: Claude Code interaction
+# WebSocket: Multi-agent Claude Code interaction
 # ---------------------------------------------------------------------------
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     token = ws.query_params.get("token")
     if not verify_token(token):
+        # Must accept before sending close code so the browser sees 4001
+        await ws.accept()
         await ws.close(code=4001, reason="Unauthorized")
         return
 
     await ws.accept()
 
-    client: ClaudeSDKClient | None = None
-    current_cwd: str | None = None
+    # Agent registry: agent_id → { client, cwd, streaming_task }
+    agents: dict[str, dict] = {}
     api_key: str | None = None
-    streaming_task: asyncio.Task | None = None
 
     async def send(msg: dict):
         try:
@@ -301,27 +420,38 @@ async def websocket_endpoint(ws: WebSocket):
         except Exception:
             pass
 
-    async def stream_claude_response(stream_client: ClaudeSDKClient):
+    async def stream_claude_response(stream_client: ClaudeSDKClient, agent_id: str):
         """Stream Claude's response to the frontend. Runs as a background task."""
+        agent = agents.get(agent_id)
+        if not agent:
+            return
+        cwd = agent.get("cwd")
         accumulated_text = ""
 
         def flush_text():
             nonlocal accumulated_text
-            if accumulated_text and current_cwd:
-                database.save_message(
-                    current_cwd, "assistant", "assistant_text",
-                    {"text": accumulated_text},
-                )
+            if accumulated_text and cwd:
+                database.save_message(cwd, "assistant", "assistant_text",
+                                      {"text": accumulated_text}, agent_id=agent_id)
                 accumulated_text = ""
 
         try:
             async for message in stream_client.receive_response():
                 if isinstance(message, AssistantMessage):
+                    # Forward model name to the frontend
+                    model_name = getattr(message, "model", None)
+                    if model_name:
+                        await send({
+                            "type": "model_info",
+                            "agent_id": agent_id,
+                            "model": model_name,
+                        })
                     for block in message.content:
                         if isinstance(block, TextBlock):
                             accumulated_text += block.text
                             await send({
                                 "type": "assistant_text",
+                                "agent_id": agent_id,
                                 "text": block.text,
                             })
                         elif isinstance(block, ToolUseBlock):
@@ -331,9 +461,9 @@ async def websocket_endpoint(ws: WebSocket):
                                 "id": block.id,
                                 "input": block.input,
                             }
-                            if current_cwd:
-                                database.save_message(current_cwd, "tool", "tool_use", payload)
-                            await send({"type": "tool_use", **payload})
+                            if cwd:
+                                database.save_message(cwd, "tool", "tool_use", payload, agent_id=agent_id)
+                            await send({"type": "tool_use", "agent_id": agent_id, **payload})
                         elif isinstance(block, ToolResultBlock):
                             flush_text()
                             content_str = ""
@@ -348,9 +478,9 @@ async def websocket_endpoint(ws: WebSocket):
                                 "content": content_str,
                                 "is_error": block.is_error or False,
                             }
-                            if current_cwd:
-                                database.save_message(current_cwd, "tool", "tool_result", payload)
-                            await send({"type": "tool_result", **payload})
+                            if cwd:
+                                database.save_message(cwd, "tool", "tool_result", payload, agent_id=agent_id)
+                            await send({"type": "tool_result", "agent_id": agent_id, **payload})
 
                 elif isinstance(message, StreamEvent):
                     pass  # Text already handled via AssistantMessage TextBlocks
@@ -364,14 +494,26 @@ async def websocket_endpoint(ws: WebSocket):
                         "duration_ms": message.duration_ms,
                         "num_turns": message.num_turns,
                         "is_error": message.is_error,
+                        "usage": message.usage,
                     }
-                    if current_cwd:
-                        database.save_message(current_cwd, "assistant", "result", payload)
-                    await send({"type": "result", **payload})
+                    if cwd:
+                        database.save_message(cwd, "assistant", "result", payload, agent_id=agent_id)
+                    await send({"type": "result", "agent_id": agent_id, **payload})
+
+                    # Fetch & send rate limits after each response
+                    if api_key:
+                        rl = await fetch_rate_limits(api_key)
+                        if rl:
+                            await send({
+                                "type": "rate_limits",
+                                "agent_id": agent_id,
+                                "limits": rl,
+                            })
 
                 elif isinstance(message, SystemMessage):
                     await send({
                         "type": "status",
+                        "agent_id": agent_id,
                         "text": f"System: {message.subtype}",
                     })
 
@@ -379,60 +521,69 @@ async def websocket_endpoint(ws: WebSocket):
             flush_text()
         except Exception as e:
             flush_text()
-            await send({"type": "error", "text": str(e)})
+            await send({"type": "error", "agent_id": agent_id, "text": str(e)})
 
-    async def cancel_streaming():
-        """Cancel the current streaming task if running."""
-        nonlocal streaming_task
-        if streaming_task and not streaming_task.done():
-            streaming_task.cancel()
+    async def cancel_agent_streaming(agent_id: str):
+        """Cancel the streaming task for a specific agent."""
+        agent = agents.get(agent_id)
+        if not agent:
+            return
+        task = agent.get("streaming_task")
+        if task and not task.done():
+            task.cancel()
             try:
-                await streaming_task
+                await task
             except asyncio.CancelledError:
                 pass
-        streaming_task = None
+        if agent_id in agents:
+            agents[agent_id]["streaming_task"] = None
+
+    async def destroy_agent(agent_id: str):
+        """Fully disconnect and remove an agent."""
+        await cancel_agent_streaming(agent_id)
+        agent = agents.pop(agent_id, None)
+        if agent and agent.get("client"):
+            try:
+                await agent["client"].disconnect()
+            except Exception:
+                pass
 
     try:
-        await send({"type": "status", "text": "Connected. Select a project directory."})
+        await send({"type": "status", "agent_id": None, "text": "Connected. Select a project directory."})
 
         while True:
             raw = await ws.receive_text()
             data = json.loads(raw)
             msg_type = data.get("type")
+            agent_id = data.get("agent_id", "default")
 
-            # ---- Set API key ----
+            # ---- Set API key (global, not per-agent) ----
             if msg_type == "set_api_key":
                 key = data.get("key", "").strip()
                 if not key:
-                    await send({"type": "error", "text": "API key is required."})
+                    await send({"type": "error", "agent_id": agent_id, "text": "API key is required."})
                     continue
                 api_key = key
-                await send({"type": "status", "text": "API key set."})
+                await send({"type": "status", "agent_id": agent_id, "text": "API key set."})
 
-            # ---- Set working directory ----
+            # ---- Set working directory for an agent ----
             elif msg_type == "set_cwd":
                 new_cwd = data.get("path", "")
                 cwd_path = Path(new_cwd)
 
                 if not cwd_path.is_dir():
-                    await send({"type": "error", "text": f"Not a directory: {new_cwd}"})
+                    await send({"type": "error", "agent_id": agent_id, "text": f"Not a directory: {new_cwd}"})
                     continue
 
-                # Cancel any running streaming task first
-                await cancel_streaming()
+                # Destroy previous agent with this id if exists
+                if agent_id in agents:
+                    await destroy_agent(agent_id)
 
-                # Disconnect previous client
-                if client:
-                    try:
-                        await client.disconnect()
-                    except Exception:
-                        pass
-
-                current_cwd = str(cwd_path.resolve())
+                resolved_cwd = str(cwd_path.resolve())
 
                 env = {"ANTHROPIC_API_KEY": api_key} if api_key else {}
                 options = ClaudeAgentOptions(
-                    cwd=current_cwd,
+                    cwd=resolved_cwd,
                     permission_mode="bypassPermissions",
                     include_partial_messages=True,
                     env=env,
@@ -441,51 +592,62 @@ async def websocket_endpoint(ws: WebSocket):
                 client = ClaudeSDKClient(options=options)
                 await client.connect()
 
+                agents[agent_id] = {
+                    "client": client,
+                    "cwd": resolved_cwd,
+                    "streaming_task": None,
+                }
+
                 await send({
                     "type": "status",
+                    "agent_id": agent_id,
                     "text": f"Ready. Project: {cwd_path.name}",
-                    "cwd": current_cwd,
+                    "cwd": resolved_cwd,
                 })
 
-            # ---- Send message to Claude ----
+            # ---- Send message to a specific agent ----
             elif msg_type == "send_message":
                 text = data.get("text", "").strip()
                 if not text:
                     continue
 
-                if not client:
-                    await send({"type": "error", "text": "No project directory selected."})
+                agent = agents.get(agent_id)
+                if not agent or not agent.get("client"):
+                    await send({"type": "error", "agent_id": agent_id, "text": "No project directory selected for this agent."})
                     continue
 
                 # Persist user message
-                if current_cwd:
-                    database.save_message(current_cwd, "user", "text", {"text": text})
+                if agent.get("cwd"):
+                    database.save_message(agent["cwd"], "user", "text", {"text": text}, agent_id=agent_id)
 
-                # Cancel any previous streaming task
-                await cancel_streaming()
+                # Cancel any previous streaming for this agent
+                await cancel_agent_streaming(agent_id)
 
-                await send({"type": "status", "text": "Rain is working..."})
+                await send({"type": "status", "agent_id": agent_id, "text": "Rain is working..."})
 
                 try:
-                    await client.query(text)
-                    streaming_task = asyncio.create_task(
-                        stream_claude_response(client)
+                    await agent["client"].query(text)
+                    task = asyncio.create_task(
+                        stream_claude_response(agent["client"], agent_id)
                     )
+                    agents[agent_id]["streaming_task"] = task
                 except Exception as e:
-                    await send({"type": "error", "text": str(e)})
+                    await send({"type": "error", "agent_id": agent_id, "text": str(e)})
 
-            # ---- Interrupt ----
+            # ---- Interrupt a specific agent ----
             elif msg_type == "interrupt":
-                if client:
+                agent = agents.get(agent_id)
+                if agent and agent.get("client"):
                     try:
-                        await client.interrupt()
+                        await agent["client"].interrupt()
                     except Exception:
                         pass
 
-                await cancel_streaming()
+                await cancel_agent_streaming(agent_id)
 
                 await send({
                     "type": "result",
+                    "agent_id": agent_id,
                     "text": "Interrupted by user.",
                     "session_id": None,
                     "cost": None,
@@ -494,18 +656,29 @@ async def websocket_endpoint(ws: WebSocket):
                     "is_error": False,
                 })
 
+            # ---- Destroy / close a specific agent ----
+            elif msg_type == "destroy_agent":
+                await destroy_agent(agent_id)
+                await send({"type": "agent_destroyed", "agent_id": agent_id})
+
     except WebSocketDisconnect:
         pass
     except Exception:
         pass
     finally:
-        if streaming_task and not streaming_task.done():
-            streaming_task.cancel()
-        if client:
-            try:
-                await client.disconnect()
-            except Exception:
-                pass
+        # Cleanup all agents on disconnect
+        for aid in list(agents.keys()):
+            agent = agents.get(aid)
+            if agent:
+                task = agent.get("streaming_task")
+                if task and not task.done():
+                    task.cancel()
+                if agent.get("client"):
+                    try:
+                        await agent["client"].disconnect()
+                    except Exception:
+                        pass
+        agents.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -524,23 +697,41 @@ if __name__ == "__main__":
 
     import socket
 
+    PORT = 8000
+
     hostname = socket.gethostname()
     try:
         local_ip = socket.gethostbyname(hostname)
     except socket.gaierror:
         local_ip = "127.0.0.1"
 
-    # Start Cloudflare Tunnel for remote access
-    from tunnel import start_tunnel
-    tunnel_url = start_tunnel(port=8000)
-
     print(flush=True)
     print("  Rain Assistant Server", flush=True)
-    print(f"  Local:   http://localhost:8000", flush=True)
-    print(f"  Network: http://{local_ip}:8000", flush=True)
-    if tunnel_url:
-        print(f"  Public:  {tunnel_url}", flush=True)
+    print(f"  Local:   http://localhost:{PORT}", flush=True)
+    print(f"  Network: http://{local_ip}:{PORT}", flush=True)
     print(f"  PIN:     {config['pin']}", flush=True)
     print(flush=True)
 
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # cloudflared quick-tunnel binds the --url port on Windows, so we must
+    # start uvicorn first (to own the port) and launch the tunnel afterwards
+    # via the on_startup callback.
+    uv_config = uvicorn.Config(app, host="0.0.0.0", port=PORT)
+    server = uvicorn.Server(uv_config)
+
+    async def _run():
+        # Start uvicorn in the background so it binds the port first
+        serve_task = asyncio.create_task(server.serve())
+        # Wait until uvicorn is actually listening
+        while not server.started:
+            await asyncio.sleep(0.1)
+
+        # Now start the tunnel — uvicorn already owns the port
+        from tunnel import start_tunnel
+        tunnel_url = start_tunnel(port=PORT)
+        if tunnel_url:
+            print(f"  Public:  {tunnel_url}", flush=True)
+            print(flush=True)
+
+        await serve_task
+
+    asyncio.run(_run())

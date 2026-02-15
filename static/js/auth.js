@@ -21,6 +21,41 @@ export function migrateStorageKeys() {
     });
 }
 
+let _lockoutTimer = null;
+
+function startLockoutCountdown(seconds) {
+    dom.pinInput.disabled = true;
+    dom.pinSubmitBtn.disabled = true;
+    dom.pinInput.value = '';
+
+    clearInterval(_lockoutTimer);
+
+    function updateCountdown(remaining) {
+        const mins = Math.floor(remaining / 60);
+        const secs = remaining % 60;
+        const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+        dom.pinError.textContent = `Too many attempts. Try again in ${timeStr}`;
+        dom.pinError.style.display = '';
+    }
+
+    let remaining = seconds;
+    updateCountdown(remaining);
+
+    _lockoutTimer = setInterval(() => {
+        remaining--;
+        if (remaining <= 0) {
+            clearInterval(_lockoutTimer);
+            dom.pinError.textContent = 'Incorrect PIN';
+            dom.pinError.style.display = 'none';
+            dom.pinInput.disabled = false;
+            dom.pinSubmitBtn.disabled = false;
+            dom.pinInput.focus();
+        } else {
+            updateCountdown(remaining);
+        }
+    }, 1000);
+}
+
 async function submitPin() {
     const pin = dom.pinInput.value.trim();
     if (!pin) return;
@@ -33,18 +68,35 @@ async function submitPin() {
             body: JSON.stringify({ pin }),
         });
         const data = await res.json();
+
         if (data.token) {
             state.authToken = data.token;
             sessionStorage.setItem('rain-token', state.authToken);
             dom.pinPanel.classList.add('hidden');
             dom.apiKeyPanel.classList.remove('hidden');
             connectWS();
-        } else {
-            dom.pinError.style.display = '';
-            dom.pinInput.value = '';
-            dom.pinInput.focus();
+            return;
         }
+
+        // Locked out (429)
+        if (data.locked) {
+            startLockoutCountdown(data.remaining_seconds || 300);
+            return;
+        }
+
+        // Wrong PIN — show remaining attempts
+        dom.pinError.style.display = '';
+        if (typeof data.remaining_attempts === 'number') {
+            dom.pinError.textContent = data.remaining_attempts === 1
+                ? 'Incorrect PIN — 1 attempt remaining'
+                : `Incorrect PIN — ${data.remaining_attempts} attempts remaining`;
+        } else {
+            dom.pinError.textContent = 'Incorrect PIN';
+        }
+        dom.pinInput.value = '';
+        dom.pinInput.focus();
     } catch {
+        dom.pinError.textContent = 'Connection error';
         dom.pinError.style.display = '';
     }
     dom.pinSubmitBtn.disabled = false;

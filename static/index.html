@@ -16,7 +16,35 @@
         <span id="connection-dot"></span>
         <h1>Rain Assistant</h1>
         <span id="status-text">Connecting...</span>
+        <!-- Rate-limit compact indicator -->
+        <div id="rate-limit-indicator" class="hidden" title="API Rate Limits">
+            <span id="rate-model-badge"></span>
+            <div id="rate-bars">
+                <div class="rate-bar-group">
+                    <span class="rate-label">REQ</span>
+                    <div class="rate-bar-track"><div class="rate-bar-fill" id="rate-bar-requests"></div></div>
+                    <span class="rate-pct" id="rate-pct-requests"></span>
+                </div>
+                <div class="rate-bar-group">
+                    <span class="rate-label">IN</span>
+                    <div class="rate-bar-track"><div class="rate-bar-fill" id="rate-bar-input"></div></div>
+                    <span class="rate-pct" id="rate-pct-input"></span>
+                </div>
+                <div class="rate-bar-group">
+                    <span class="rate-label">OUT</span>
+                    <div class="rate-bar-track"><div class="rate-bar-fill" id="rate-bar-output"></div></div>
+                    <span class="rate-pct" id="rate-pct-output"></span>
+                </div>
+            </div>
+        </div>
+        <button id="metrics-toggle" title="Usage Metrics">&#128202;</button>
         <button id="theme-toggle" title="Toggle light/dark mode">&#127769;</button>
+    </div>
+
+    <!-- Tab Bar (multi-agent) -->
+    <div id="tab-bar" class="hidden">
+        <div id="tab-list"></div>
+        <button id="new-agent-btn" title="New agent">+</button>
     </div>
 
     <!-- PIN Panel -->
@@ -56,6 +84,20 @@
         </div>
         <div id="file-list"></div>
         <button id="select-dir-btn">Select This Directory</button>
+    </div>
+
+    <!-- Metrics Panel -->
+    <div id="metrics-panel" class="panel hidden">
+        <div id="metrics-header">
+            <h2>Usage Metrics</h2>
+            <div id="metrics-header-actions">
+                <button id="metrics-refresh-btn">Refresh</button>
+                <button id="metrics-close-btn">Close</button>
+            </div>
+        </div>
+        <div id="metrics-content">
+            <div id="metrics-loading">Loading metrics...</div>
+        </div>
     </div>
 
     <!-- Chat Panel -->

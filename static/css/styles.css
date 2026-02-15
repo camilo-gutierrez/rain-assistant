@@ -844,3 +844,706 @@ body, #status-bar, #chat-header, #controls, #text-input-area,
 .msg, .tool-block, .tool-result-block, #text-input, .file-entry {
     transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
 }
+
+/* =========================================================================
+   TAB BAR — Cyberpunk multi-agent tabs
+   ========================================================================= */
+
+#tab-bar {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    background: var(--bg);
+    border-bottom: 1px solid var(--overlay);
+    flex-shrink: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    position: relative;
+}
+
+#tab-bar::-webkit-scrollbar { display: none; }
+
+#tab-bar.hidden { display: none; }
+
+/* Neon underline glow */
+#tab-bar::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--cyan), var(--magenta), transparent);
+    opacity: 0.4;
+}
+
+#tab-list {
+    display: flex;
+    gap: 2px;
+    padding: 4px 4px 0;
+    flex: 1;
+    min-width: 0;
+}
+
+/* ---- Individual Tab ---- */
+.tab {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    min-width: 0;
+    max-width: 180px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-bottom: none;
+    border-radius: 8px 8px 0 0;
+    cursor: pointer;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.2s, border-color 0.2s, box-shadow 0.2s;
+    position: relative;
+    flex-shrink: 0;
+}
+
+.tab:hover {
+    background: var(--surface);
+    border-color: rgba(0, 212, 255, 0.15);
+}
+
+.tab.active {
+    background: var(--surface);
+    border-color: var(--overlay);
+    box-shadow:
+        0 -2px 8px rgba(0, 212, 255, 0.08),
+        inset 0 1px 0 rgba(0, 212, 255, 0.15);
+}
+
+/* Active tab neon top edge */
+.tab.active::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 4px;
+    right: 4px;
+    height: 2px;
+    background: linear-gradient(90deg, var(--cyan), var(--magenta));
+    border-radius: 2px;
+    box-shadow: 0 0 8px var(--cyan), 0 0 16px rgba(0, 212, 255, 0.3);
+}
+
+/* ---- Status Dot in Tab ---- */
+.tab-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    transition: background 0.3s, box-shadow 0.3s;
+}
+
+/* Idle — green, solid */
+.tab-dot.idle {
+    background: var(--green);
+    box-shadow: 0 0 4px rgba(0, 255, 136, 0.4);
+}
+
+/* Working — cyan, pulsing */
+.tab-dot.working {
+    background: var(--cyan);
+    box-shadow: 0 0 6px var(--cyan), 0 0 12px rgba(0, 212, 255, 0.4);
+    animation: dot-pulse-cyan 1.2s ease-in-out infinite;
+}
+
+@keyframes dot-pulse-cyan {
+    0%, 100% {
+        box-shadow: 0 0 6px var(--cyan), 0 0 12px rgba(0, 212, 255, 0.4);
+        opacity: 1;
+    }
+    50% {
+        box-shadow: 0 0 10px var(--cyan), 0 0 20px rgba(0, 212, 255, 0.6);
+        opacity: 0.7;
+    }
+}
+
+/* Done — green with flash */
+.tab-dot.done {
+    background: var(--green);
+    box-shadow: 0 0 8px var(--green), 0 0 16px rgba(0, 255, 136, 0.5);
+    animation: dot-flash-green 0.6s ease-out 3;
+}
+
+@keyframes dot-flash-green {
+    0% {
+        box-shadow: 0 0 8px var(--green), 0 0 16px rgba(0, 255, 136, 0.5);
+        transform: scale(1);
+    }
+    50% {
+        box-shadow: 0 0 16px var(--green), 0 0 32px rgba(0, 255, 136, 0.7);
+        transform: scale(1.4);
+    }
+    100% {
+        box-shadow: 0 0 8px var(--green), 0 0 16px rgba(0, 255, 136, 0.5);
+        transform: scale(1);
+    }
+}
+
+/* Error — red, pulsing */
+.tab-dot.error {
+    background: var(--red);
+    box-shadow: 0 0 6px var(--red), 0 0 12px rgba(255, 34, 102, 0.4);
+    animation: dot-pulse-red 1s ease-in-out infinite;
+}
+
+@keyframes dot-pulse-red {
+    0%, 100% {
+        box-shadow: 0 0 6px var(--red), 0 0 12px rgba(255, 34, 102, 0.4);
+        opacity: 1;
+    }
+    50% {
+        box-shadow: 0 0 10px var(--red), 0 0 20px rgba(255, 34, 102, 0.6);
+        opacity: 0.7;
+    }
+}
+
+/* ---- Tab Label ---- */
+.tab-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text2);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    transition: color 0.2s;
+}
+
+.tab.active .tab-label {
+    color: var(--text);
+}
+
+/* ---- Unread Badge ---- */
+.tab-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--bg);
+    background: var(--magenta);
+    border-radius: 8px;
+    flex-shrink: 0;
+    box-shadow: 0 0 6px rgba(255, 0, 170, 0.4);
+    animation: badge-pop 0.3s ease-out;
+}
+
+@keyframes badge-pop {
+    0% { transform: scale(0); }
+    60% { transform: scale(1.2); }
+    100% { transform: scale(1); }
+}
+
+/* ---- Close Button ---- */
+.tab-close {
+    font-size: 14px;
+    line-height: 1;
+    color: var(--subtext);
+    cursor: pointer;
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    transition: color 0.15s, background 0.15s;
+    opacity: 0;
+}
+
+.tab:hover .tab-close,
+.tab.active .tab-close {
+    opacity: 1;
+}
+
+.tab-close:hover {
+    color: var(--red);
+    background: rgba(255, 34, 102, 0.15);
+}
+
+/* ---- New Agent "+" Button ---- */
+#new-agent-btn {
+    width: 32px;
+    height: 32px;
+    margin: 4px 6px;
+    font-size: 18px;
+    font-weight: 700;
+    font-family: 'JetBrains Mono', monospace;
+    background: transparent;
+    color: var(--subtext);
+    border: 1px dashed var(--overlay);
+    border-radius: 6px;
+    cursor: pointer;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.2s, border-color 0.2s, background 0.2s, box-shadow 0.2s;
+}
+
+#new-agent-btn:hover {
+    color: var(--cyan);
+    border-color: var(--cyan);
+    border-style: solid;
+    background: rgba(0, 212, 255, 0.05);
+    box-shadow: 0 0 8px rgba(0, 212, 255, 0.15);
+}
+
+#new-agent-btn:active {
+    transform: scale(0.92);
+}
+
+/* ---- Agent Messages Container ---- */
+.agent-messages {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-height: 100%;
+}
+
+/* =========================================================================
+   METRICS DASHBOARD
+   ========================================================================= */
+
+/* ---- Toggle Button (status bar) ---- */
+#metrics-toggle {
+    background: var(--surface2);
+    border: 1px solid var(--overlay);
+    border-radius: 8px;
+    padding: 6px 10px;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    transition: background 0.2s, transform 0.15s, border-color 0.2s;
+    flex-shrink: 0;
+}
+
+#metrics-toggle:hover { background: var(--overlay); border-color: var(--cyan); }
+#metrics-toggle:active { transform: scale(0.92); }
+
+/* ---- Panel Header ---- */
+#metrics-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--overlay);
+    flex-shrink: 0;
+}
+
+#metrics-header h2 {
+    font-family: 'Orbitron', monospace;
+    font-size: 18px;
+    font-weight: 700;
+    background: linear-gradient(90deg, var(--cyan), var(--magenta));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+#metrics-header-actions {
+    display: flex;
+    gap: 8px;
+}
+
+#metrics-refresh-btn,
+#metrics-close-btn {
+    padding: 6px 14px;
+    font-size: 13px;
+    background: var(--surface2);
+    color: var(--text2);
+    border: 1px solid var(--overlay);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: border-color 0.2s, color 0.2s;
+}
+
+#metrics-refresh-btn:hover { border-color: var(--cyan); color: var(--cyan); }
+#metrics-close-btn:hover { border-color: var(--red); color: var(--red); }
+
+/* ---- Content Area ---- */
+#metrics-content {
+    flex: 1;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+}
+
+#metrics-loading {
+    text-align: center;
+    color: var(--subtext);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    padding: 40px 0;
+}
+
+/* ---- Summary Cards ---- */
+.metrics-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px;
+}
+
+.metric-card {
+    background: var(--surface);
+    border: 1px solid var(--overlay);
+    border-radius: 12px;
+    padding: 16px;
+    text-align: center;
+    transition: border-color 0.3s, box-shadow 0.3s;
+}
+
+.metric-card:hover {
+    border-color: rgba(0, 212, 255, 0.3);
+    box-shadow: 0 0 16px var(--neon-glow);
+}
+
+.metric-value {
+    font-family: 'Orbitron', monospace;
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--cyan);
+    text-shadow: 0 0 12px rgba(0, 212, 255, 0.3);
+    margin-bottom: 4px;
+}
+
+.metric-value.cost { color: var(--green); text-shadow: 0 0 12px rgba(0, 255, 136, 0.3); }
+.metric-value.sessions { color: var(--mauve); text-shadow: 0 0 12px rgba(191, 90, 242, 0.3); }
+.metric-value.duration { color: var(--yellow); text-shadow: 0 0 12px rgba(255, 204, 0, 0.3); }
+
+.metric-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--subtext);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 4px;
+}
+
+.metric-sub {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text2);
+    margin-top: 8px;
+    line-height: 1.6;
+}
+
+/* ---- Chart Sections ---- */
+.metrics-chart-section {
+    background: var(--surface);
+    border: 1px solid var(--overlay);
+    border-radius: 12px;
+    padding: 16px;
+}
+
+.metrics-chart-title {
+    font-family: 'Orbitron', monospace;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text2);
+    margin-bottom: 16px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.chart-container {
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 120px;
+    padding-bottom: 24px;
+    position: relative;
+}
+
+.chart-bar-group {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    height: 100%;
+    justify-content: flex-end;
+    position: relative;
+}
+
+.chart-bar {
+    width: 100%;
+    max-width: 30px;
+    min-height: 2px;
+    background: linear-gradient(180deg, var(--cyan), var(--mauve));
+    border-radius: 3px 3px 0 0;
+    transition: height 0.5s ease-out, box-shadow 0.2s;
+    position: relative;
+    cursor: pointer;
+}
+
+.chart-bar:hover {
+    box-shadow: 0 0 12px var(--cyan), 0 0 20px rgba(0, 212, 255, 0.3);
+}
+
+.chart-bar:hover .chart-tooltip {
+    opacity: 1;
+    transform: translateX(-50%) translateY(-4px);
+}
+
+.chart-tooltip {
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%) translateY(0);
+    background: var(--overlay);
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.2s, transform 0.2s;
+    z-index: 10;
+    border: 1px solid rgba(0, 212, 255, 0.3);
+}
+
+.chart-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    color: var(--subtext);
+    margin-top: 4px;
+    position: absolute;
+    bottom: -20px;
+    white-space: nowrap;
+}
+
+/* =========================================================================
+   RATE LIMIT INDICATOR (Status Bar — compact)
+   ========================================================================= */
+
+#rate-limit-indicator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 10px;
+    flex-shrink: 0;
+}
+
+#rate-limit-indicator.hidden { display: none; }
+
+#rate-model-badge {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--bg);
+    background: linear-gradient(135deg, var(--cyan), var(--mauve));
+    padding: 2px 8px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+    box-shadow: 0 0 8px rgba(0, 212, 255, 0.2);
+}
+
+#rate-bars {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 90px;
+}
+
+.rate-bar-group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.rate-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 8px;
+    font-weight: 600;
+    color: var(--subtext);
+    width: 24px;
+    text-align: right;
+    letter-spacing: 0.3px;
+}
+
+.rate-bar-track {
+    flex: 1;
+    height: 4px;
+    background: var(--surface2);
+    border-radius: 2px;
+    overflow: hidden;
+    min-width: 50px;
+}
+
+.rate-bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.6s ease-out, background 0.3s;
+    background: var(--green);
+    box-shadow: 0 0 4px rgba(0, 255, 136, 0.3);
+    width: 0%;
+}
+
+.rate-bar-fill.healthy {
+    background: var(--green);
+    box-shadow: 0 0 4px rgba(0, 255, 136, 0.3);
+}
+
+.rate-bar-fill.warning {
+    background: var(--yellow);
+    box-shadow: 0 0 4px rgba(255, 204, 0, 0.3);
+}
+
+.rate-bar-fill.critical {
+    background: var(--red);
+    box-shadow: 0 0 6px rgba(255, 34, 102, 0.4);
+    animation: neon-pulse-red 1.5s ease-in-out infinite;
+}
+
+.rate-pct {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 8px;
+    font-weight: 600;
+    color: var(--text2);
+    width: 28px;
+    text-align: right;
+}
+
+/* =========================================================================
+   RATE LIMIT DASHBOARD (Metrics Panel — gauges)
+   ========================================================================= */
+
+.rl-section {
+    border-color: rgba(0, 212, 255, 0.25);
+    background: linear-gradient(135deg, var(--surface), rgba(0, 212, 255, 0.03));
+}
+
+.rl-dashboard {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.rl-gauge {
+    background: var(--surface2);
+    border: 1px solid var(--overlay);
+    border-radius: 10px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.rl-gauge-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--subtext);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.rl-gauge-bar-track {
+    height: 8px;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.rl-gauge-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.6s ease-out;
+}
+
+.rl-gauge-fill.healthy {
+    background: linear-gradient(90deg, var(--green), rgba(0, 255, 136, 0.7));
+    box-shadow: 0 0 8px rgba(0, 255, 136, 0.3);
+}
+
+.rl-gauge-fill.warning {
+    background: linear-gradient(90deg, var(--yellow), rgba(255, 204, 0, 0.7));
+    box-shadow: 0 0 8px rgba(255, 204, 0, 0.3);
+}
+
+.rl-gauge-fill.critical {
+    background: linear-gradient(90deg, var(--red), rgba(255, 34, 102, 0.7));
+    box-shadow: 0 0 8px rgba(255, 34, 102, 0.4);
+    animation: neon-pulse-red 1.5s ease-in-out infinite;
+}
+
+.rl-gauge-stats {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+}
+
+.rl-gauge-pct {
+    font-family: 'Orbitron', monospace;
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--cyan);
+    text-shadow: 0 0 10px rgba(0, 212, 255, 0.3);
+}
+
+.rl-gauge-detail {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--text2);
+}
+
+.rl-gauge-reset {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    color: var(--subtext);
+}
+
+.rl-meta {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--subtext);
+    text-align: center;
+    padding-top: 8px;
+    border-top: 1px solid var(--overlay);
+}
+
+.rl-meta strong {
+    color: var(--cyan);
+}
+
+/* ---- Responsive ---- */
+@media (max-width: 480px) {
+    .metrics-cards {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    .metric-value {
+        font-size: 18px;
+    }
+    .chart-container {
+        height: 100px;
+    }
+    /* Hide rate bars on very small screens, keep badge */
+    #rate-bars { display: none; }
+    #rate-limit-indicator { gap: 4px; }
+    .rl-dashboard {
+        grid-template-columns: 1fr;
+    }
+}

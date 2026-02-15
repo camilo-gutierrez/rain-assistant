@@ -1,18 +1,21 @@
 // ---------------------------------------------------------------------------
-// File Browser
+// File Browser — multi-agent aware
 // ---------------------------------------------------------------------------
 
 import { state, dom, API, authHeaders, setStatus } from './app.js';
 import { wsSend } from './websocket.js';
 import { clearHistory } from './history.js';
+import { getActiveAgent, showTabBar } from './tabs.js';
 
 export function showFileBrowser() {
     dom.apiKeyPanel.classList.add('hidden');
     dom.fileBrowser.classList.remove('hidden');
-    loadDir('~');
+    const agent = getActiveAgent();
+    const startPath = agent ? agent.currentBrowsePath : '~';
+    loadDir(startPath);
 }
 
-async function loadDir(path) {
+export async function loadDir(path) {
     try {
         const res = await fetch(`${API}/browse?path=${encodeURIComponent(path)}`, { headers: authHeaders() });
         const data = await res.json();
@@ -22,7 +25,12 @@ async function loadDir(path) {
             return;
         }
 
-        state.currentBrowsePath = data.current;
+        // Update per-agent browse path (not global)
+        const activeAgent = getActiveAgent();
+        if (activeAgent) {
+            activeAgent.currentBrowsePath = data.current;
+        }
+        state.currentBrowsePath = data.current; // Keep global in sync for fallback
         dom.currentPathEl.textContent = data.current;
         dom.fileList.innerHTML = '';
 
@@ -67,23 +75,36 @@ function formatSize(bytes) {
 
 export function initBrowser() {
     dom.selectDirBtn.addEventListener('click', () => {
-        // Send set_cwd — history will load when the server responds with resolved cwd
-        wsSend({ type: 'set_cwd', path: state.currentBrowsePath });
+        // Use the active agent's browse path
+        const agent = getActiveAgent();
+        const browsePath = agent ? agent.currentBrowsePath : state.currentBrowsePath;
+
+        // Send set_cwd with agent_id — history loads when server responds with resolved cwd
+        wsSend({ type: 'set_cwd', path: browsePath, agent_id: state.activeAgentId });
         dom.fileBrowser.classList.add('hidden');
         dom.chatPanel.classList.remove('hidden');
-        dom.projectNameEl.textContent = state.currentBrowsePath.split(/[/\\]/).pop();
+        dom.projectNameEl.textContent = browsePath.split(/[/\\]/).pop();
+        showTabBar();
     });
 
     dom.changeDirBtn.addEventListener('click', () => {
+        // Use the active agent's browse path (not global)
+        const agent = getActiveAgent();
+        const browsePath = agent ? (agent.cwd || agent.currentBrowsePath) : state.currentBrowsePath;
+
         dom.chatPanel.classList.add('hidden');
         dom.fileBrowser.classList.remove('hidden');
-        loadDir(state.currentBrowsePath);
+        loadDir(browsePath);
     });
 
     dom.clearHistBtn.addEventListener('click', async () => {
-        if (!state.currentCwd) return;
-        await clearHistory(state.currentCwd);
+        // Use the active agent's cwd (not global state.currentCwd)
+        const agent = getActiveAgent();
+        const cwd = agent ? agent.cwd : null;
+        if (!cwd) return;
+
+        await clearHistory(cwd, state.activeAgentId);
         // Reset the Claude session too
-        wsSend({ type: 'set_cwd', path: state.currentCwd });
+        wsSend({ type: 'set_cwd', path: cwd, agent_id: state.activeAgentId });
     });
 }

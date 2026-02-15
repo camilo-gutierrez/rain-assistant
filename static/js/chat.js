@@ -1,11 +1,19 @@
 // ---------------------------------------------------------------------------
-// Chat rendering, markdown, WS message handling
+// Chat rendering, markdown, WS message handling — multi-agent aware
 // ---------------------------------------------------------------------------
 
 import { state, dom, setStatus } from './app.js';
 import { wsSend } from './websocket.js';
 import { sendNotification } from './notifications.js';
 import { loadHistory } from './history.js';
+import {
+    getAgentMessagesEl,
+    getActiveAgent,
+    setAgentStatus,
+    incrementUnread,
+    showTabBar,
+} from './tabs.js';
+import { updateModelInfo, updateRateLimits, updateUsageInfo } from './metrics.js';
 
 // ---------------------------------------------------------------------------
 // Markdown & HTML helpers
@@ -31,27 +39,55 @@ export function scrollToBottom() {
 }
 
 // ---------------------------------------------------------------------------
-// Message rendering
+// Message rendering (agent-scoped)
 // ---------------------------------------------------------------------------
 
-export function ensureAssistantBubble() {
-    if (!state.currentAssistantEl) {
-        state.currentAssistantEl = document.createElement('div');
-        state.currentAssistantEl.className = 'msg assistant';
-        dom.chatMessages.appendChild(state.currentAssistantEl);
-        state.currentStreamText = '';
+/**
+ * Get the correct messages container for a given agent_id.
+ * Falls back to the active agent if not found.
+ */
+function getTargetEl(agentId) {
+    if (agentId) {
+        const el = getAgentMessagesEl(agentId);
+        if (el) return el;
+    }
+    const active = getActiveAgent();
+    return active ? active.messagesEl : dom.chatMessages;
+}
+
+/**
+ * Get the agent object, defaulting to active agent
+ */
+function getAgent(agentId) {
+    if (agentId && state.agents.has(agentId)) {
+        return state.agents.get(agentId);
+    }
+    return getActiveAgent();
+}
+
+export function ensureAssistantBubble(agentId) {
+    const agent = getAgent(agentId);
+    if (!agent) return;
+    if (!agent.assistantEl) {
+        agent.assistantEl = document.createElement('div');
+        agent.assistantEl.className = 'msg assistant';
+        agent.messagesEl.appendChild(agent.assistantEl);
+        agent.streamText = '';
     }
 }
 
-export function finalizeAssistant() {
-    if (state.currentAssistantEl) {
-        state.currentAssistantEl.innerHTML = renderMarkdown(state.currentStreamText);
-        state.currentAssistantEl = null;
-        state.currentStreamText = '';
+export function finalizeAssistant(agentId) {
+    const agent = getAgent(agentId);
+    if (!agent) return;
+    if (agent.assistantEl) {
+        agent.assistantEl.innerHTML = renderMarkdown(agent.streamText);
+        agent.assistantEl = null;
+        agent.streamText = '';
     }
 }
 
-export function appendMsg(role, text, options = {}) {
+export function appendMsg(role, text, options = {}, agentId = null) {
+    const targetEl = options._targetEl || getTargetEl(agentId);
     const div = document.createElement('div');
     div.className = 'msg ' + role;
     if (options.animate === false) div.classList.add('no-animate');
@@ -60,11 +96,12 @@ export function appendMsg(role, text, options = {}) {
     } else {
         div.textContent = text;
     }
-    dom.chatMessages.appendChild(div);
-    scrollToBottom();
+    targetEl.appendChild(div);
+    if (agentId === state.activeAgentId || !agentId) scrollToBottom();
 }
 
-export function appendToolUse(tool, input, options = {}) {
+export function appendToolUse(tool, input, options = {}, agentId = null) {
+    const targetEl = options._targetEl || getTargetEl(agentId);
     const div = document.createElement('div');
     div.className = 'tool-block';
     if (options.animate === false) div.classList.add('no-animate');
@@ -83,11 +120,12 @@ export function appendToolUse(tool, input, options = {}) {
     div.innerHTML =
         '<div class="tool-header">' + escapeHtml(tool) + '</div>' +
         '<div class="tool-detail">' + escapeHtml(summary) + '</div>';
-    dom.chatMessages.appendChild(div);
-    scrollToBottom();
+    targetEl.appendChild(div);
+    if (agentId === state.activeAgentId || !agentId) scrollToBottom();
 }
 
-export function appendToolResult(content, isError, options = {}) {
+export function appendToolResult(content, isError, options = {}, agentId = null) {
+    const targetEl = options._targetEl || getTargetEl(agentId);
     const div = document.createElement('div');
     div.className = 'tool-result-block' + (isError ? ' error' : '');
     if (options.animate === false) div.classList.add('no-animate');
@@ -112,8 +150,8 @@ export function appendToolResult(content, isError, options = {}) {
         div.appendChild(btn);
     }
 
-    dom.chatMessages.appendChild(div);
-    scrollToBottom();
+    targetEl.appendChild(div);
+    if (agentId === state.activeAgentId || !agentId) scrollToBottom();
 }
 
 export function resetRecordBtn() {
@@ -122,18 +160,68 @@ export function resetRecordBtn() {
     dom.recordBtn.disabled = false;
 }
 
-function forceReset() {
-    finalizeAssistant();
-    appendMsg('system', 'Force stopped.');
-    resetRecordBtn();
-    state.isProcessing = false;
-    state.interruptPending = false;
-    dom.sendTextBtn.disabled = false;
-    dom.interruptBtn.classList.add('hidden');
-    dom.interruptBtn.classList.remove('force', 'stopping');
-    dom.interruptBtn.textContent = 'Stop';
-    dom.interruptBtn.disabled = false;
-    setStatus('connected', 'Ready');
+/**
+ * Complete reset of an agent's processing state (used for force-stop).
+ */
+function forceReset(agentId) {
+    const agent = getAgent(agentId);
+    finalizeAssistant(agentId);
+    appendMsg('system', 'Force stopped.', {}, agentId);
+
+    if (agent) {
+        agent.isProcessing = false;
+        agent.interruptPending = false;
+        if (agent.interruptTimer) {
+            clearTimeout(agent.interruptTimer);
+            agent.interruptTimer = null;
+        }
+    }
+
+    // Only update global state and UI if this is the active agent
+    const effectiveId = agentId || state.activeAgentId;
+    if (effectiveId === state.activeAgentId) {
+        resetRecordBtn();
+        state.isProcessing = false;
+        state.interruptPending = false;
+        dom.sendTextBtn.disabled = false;
+        dom.interruptBtn.classList.add('hidden');
+        dom.interruptBtn.classList.remove('force', 'stopping');
+        dom.interruptBtn.textContent = 'Stop';
+        dom.interruptBtn.disabled = false;
+        setStatus('connected', 'Ready');
+    }
+
+    setAgentStatus(effectiveId, 'idle');
+}
+
+/**
+ * Mark an agent as "processing complete" and reset UI.
+ */
+function completeProcessing(agentId, statusType) {
+    const agent = state.agents.get(agentId);
+    if (agent) {
+        agent.isProcessing = false;
+        agent.interruptPending = false;
+        if (agent.interruptTimer) {
+            clearTimeout(agent.interruptTimer);
+            agent.interruptTimer = null;
+        }
+    }
+
+    const isActiveAgent = agentId === state.activeAgentId;
+    if (isActiveAgent) {
+        resetRecordBtn();
+        state.isProcessing = false;
+        state.interruptPending = false;
+        dom.sendTextBtn.disabled = false;
+        dom.interruptBtn.classList.add('hidden');
+        dom.interruptBtn.classList.remove('force', 'stopping');
+        dom.interruptBtn.textContent = 'Stop';
+        dom.interruptBtn.disabled = false;
+        setStatus('connected', 'Ready');
+    }
+
+    setAgentStatus(agentId, statusType);
 }
 
 // ---------------------------------------------------------------------------
@@ -142,99 +230,138 @@ function forceReset() {
 
 function sendTextMessage() {
     const text = dom.textInput.value.trim();
-    if (!text || state.isProcessing) return;
-    appendMsg('user', text);
+    if (!text) return;
+
+    const agent = getActiveAgent();
+    if (!agent) return;
+    if (agent.isProcessing) return;
+
+    // Check that agent has a cwd (project selected)
+    if (!agent.cwd) {
+        appendMsg('system', 'Please select a project directory first.', {}, state.activeAgentId);
+        return;
+    }
+
+    appendMsg('user', text, {}, state.activeAgentId);
     sendToRainViaWS(text);
     dom.textInput.value = '';
 }
 
 export function sendToRainViaWS(text) {
+    const agent = getActiveAgent();
+    if (!agent) return;
+
+    // Prevent sending if agent has no cwd
+    if (!agent.cwd) {
+        appendMsg('system', 'Please select a project directory first.', {}, state.activeAgentId);
+        return;
+    }
+
+    agent.isProcessing = true;
     state.isProcessing = true;
     dom.recordBtn.textContent = 'Rain is working...';
     dom.recordBtn.classList.add('processing');
     dom.recordBtn.disabled = true;
     dom.sendTextBtn.disabled = true;
     dom.interruptBtn.classList.remove('hidden');
-    wsSend({ type: 'send_message', text });
+    setAgentStatus(state.activeAgentId, 'working');
+    wsSend({ type: 'send_message', text, agent_id: state.activeAgentId });
 }
 
 // ---------------------------------------------------------------------------
-// Handle server messages
+// Handle server messages (multiplexed by agent_id)
 // ---------------------------------------------------------------------------
 
 export function handleServerMsg(msg) {
+    const agentId = msg.agent_id || state.activeAgentId;
+    const agent = state.agents.get(agentId);
+    const isActiveAgent = agentId === state.activeAgentId;
+
     switch (msg.type) {
         case 'status':
-            setStatus('connected', msg.text);
-            if (msg.cwd) {
-                dom.projectNameEl.textContent = msg.cwd.split(/[/\\]/).pop();
-                // Load history when we get the resolved cwd from server
-                if (state.currentCwd !== msg.cwd) {
-                    state.currentCwd = msg.cwd;
-                    loadHistory(msg.cwd);
+            if (isActiveAgent || !msg.agent_id) {
+                setStatus('connected', msg.text);
+            }
+            if (msg.cwd && agent) {
+                agent.cwd = msg.cwd;
+                if (isActiveAgent) {
+                    dom.projectNameEl.textContent = msg.cwd.split(/[/\\]/).pop();
                 }
+                // Load history when we get the resolved cwd from server
+                loadHistory(msg.cwd, agentId);
+                showTabBar();
             }
             break;
 
         case 'assistant_text':
-            ensureAssistantBubble();
-            state.currentStreamText += msg.text;
-            state.currentAssistantEl.innerHTML = renderMarkdown(state.currentStreamText);
-            scrollToBottom();
+            // Defensive: skip if agent was destroyed
+            if (!agent) break;
+            ensureAssistantBubble(agentId);
+            agent.streamText += msg.text;
+            if (agent.assistantEl) {
+                agent.assistantEl.innerHTML = renderMarkdown(agent.streamText);
+            }
+            if (isActiveAgent) scrollToBottom();
+            incrementUnread(agentId);
             break;
 
         case 'stream_text':
             break;
 
         case 'tool_use':
-            finalizeAssistant();
-            appendToolUse(msg.tool, msg.input);
+            if (!agent) break;
+            finalizeAssistant(agentId);
+            appendToolUse(msg.tool, msg.input, {}, agentId);
+            incrementUnread(agentId);
             break;
 
         case 'tool_result':
-            appendToolResult(msg.content, msg.is_error);
+            if (!agent) break;
+            appendToolResult(msg.content, msg.is_error, {}, agentId);
+            incrementUnread(agentId);
+            break;
+
+        case 'model_info':
+            updateModelInfo(msg.model);
+            break;
+
+        case 'rate_limits':
+            updateRateLimits(msg.limits);
             break;
 
         case 'result':
-            finalizeAssistant();
+            finalizeAssistant(agentId);
+            if (msg.usage) updateUsageInfo(msg.usage);
             if (msg.cost != null || msg.duration_ms != null) {
                 let info = '';
                 if (msg.duration_ms) info += (msg.duration_ms / 1000).toFixed(1) + 's';
                 if (msg.num_turns) info += ' | ' + msg.num_turns + ' turns';
                 if (msg.cost) info += ' | $' + msg.cost.toFixed(4);
-                if (info) appendMsg('system', info);
+                if (info) appendMsg('system', info, {}, agentId);
             }
             sendNotification('Rain has finished', msg.text || 'Response complete');
-            resetRecordBtn();
-            state.isProcessing = false;
-            state.interruptPending = false;
-            dom.sendTextBtn.disabled = false;
-            dom.interruptBtn.classList.add('hidden');
-            dom.interruptBtn.classList.remove('force', 'stopping');
-            dom.interruptBtn.textContent = 'Stop';
-            dom.interruptBtn.disabled = false;
-            setStatus('connected', 'Ready');
+            completeProcessing(agentId, 'done');
             break;
 
         case 'error':
-            finalizeAssistant();
-            appendMsg('system', 'Error: ' + msg.text);
+            finalizeAssistant(agentId);
+            appendMsg('system', 'Error: ' + msg.text, {}, agentId);
             sendNotification('Rain needs attention', 'Error: ' + (msg.text || 'Unknown error'));
-            resetRecordBtn();
-            state.isProcessing = false;
-            state.interruptPending = false;
-            dom.sendTextBtn.disabled = false;
-            dom.interruptBtn.classList.add('hidden');
-            dom.interruptBtn.classList.remove('force', 'stopping');
-            dom.interruptBtn.textContent = 'Stop';
-            dom.interruptBtn.disabled = false;
-            setStatus('error', msg.text);
+            completeProcessing(agentId, 'error');
+
+            if (isActiveAgent) {
+                setStatus('error', msg.text);
+            }
+            break;
+
+        case 'agent_destroyed':
+            // Handled by tabs.js closeAgent
             break;
     }
 }
 
 // ---------------------------------------------------------------------------
-// Init: wire up text input + interrupt
+// Init: wire up text input + interrupt (per-agent scoped)
 // ---------------------------------------------------------------------------
 
 export function initChat() {
@@ -247,23 +374,44 @@ export function initChat() {
     });
 
     dom.interruptBtn.addEventListener('click', () => {
+        const activeAgent = getActiveAgent();
+        if (!activeAgent) return;
+
+        // Force-stop: already in force mode
         if (dom.interruptBtn.classList.contains('force')) {
-            forceReset();
+            forceReset(state.activeAgentId);
             return;
         }
-        wsSend({ type: 'interrupt' });
+
+        // Send interrupt to server for this specific agent
+        wsSend({ type: 'interrupt', agent_id: state.activeAgentId });
         dom.interruptBtn.textContent = 'Stopping...';
         dom.interruptBtn.classList.add('stopping');
         dom.interruptBtn.disabled = true;
-        state.interruptPending = true;
 
-        setTimeout(() => {
-            if (state.interruptPending && state.isProcessing) {
-                dom.interruptBtn.textContent = 'Force Stop';
-                dom.interruptBtn.disabled = false;
-                dom.interruptBtn.classList.remove('stopping');
-                dom.interruptBtn.classList.add('force');
+        state.interruptPending = true;
+        activeAgent.interruptPending = true;
+
+        // Per-agent force-stop timeout: after 5s, show "Force Stop" button
+        // Clear any previous timer for this agent
+        if (activeAgent.interruptTimer) {
+            clearTimeout(activeAgent.interruptTimer);
+        }
+
+        const targetAgentId = state.activeAgentId;
+        activeAgent.interruptTimer = setTimeout(() => {
+            // Re-check the agent still exists and is still processing
+            const agentCheck = state.agents.get(targetAgentId);
+            if (agentCheck && agentCheck.interruptPending && agentCheck.isProcessing) {
+                // Only update UI if this agent is still the active one
+                if (state.activeAgentId === targetAgentId) {
+                    dom.interruptBtn.textContent = 'Force Stop';
+                    dom.interruptBtn.disabled = false;
+                    dom.interruptBtn.classList.remove('stopping');
+                    dom.interruptBtn.classList.add('force');
+                }
             }
+            agentCheck && (agentCheck.interruptTimer = null);
         }, 5000);
     });
 }

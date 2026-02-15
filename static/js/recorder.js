@@ -1,9 +1,10 @@
 // ---------------------------------------------------------------------------
-// Audio recording (MediaRecorder)
+// Audio recording (MediaRecorder) — multi-agent aware
 // ---------------------------------------------------------------------------
 
 import { state, dom, API, authHeaders, setStatus } from './app.js';
 import { appendMsg, sendToRainViaWS, resetRecordBtn } from './chat.js';
+import { getActiveAgent } from './tabs.js';
 
 async function initAudio() {
     try {
@@ -46,7 +47,10 @@ async function initAudio() {
 }
 
 function startRecording() {
-    if (state.isRecording || state.isProcessing || !state.mediaRecorder) return;
+    const agent = getActiveAgent();
+    // Use per-agent processing state (not the global one)
+    if (state.isRecording || (agent && agent.isProcessing) || !state.mediaRecorder) return;
+
     state.audioChunks = [];
     state.mediaRecorder.start(100);
     state.isRecording = true;
@@ -65,6 +69,15 @@ function stopRecording() {
 }
 
 async function sendAudio(blob) {
+    const agent = getActiveAgent();
+
+    // Prevent sending if agent has no project selected
+    if (!agent || !agent.cwd) {
+        setStatus('ready', 'Select a project directory first');
+        resetRecordBtn();
+        return;
+    }
+
     setStatus('connected', 'Transcribing...');
     const fd = new FormData();
     fd.append('audio', blob, 'recording.webm');
@@ -74,7 +87,8 @@ async function sendAudio(blob) {
         const data = await res.json();
 
         if (data.text && data.text.trim()) {
-            appendMsg('user', data.text.trim());
+            // Use the active agent's id for proper routing
+            appendMsg('user', data.text.trim(), {}, state.activeAgentId);
             sendToRainViaWS(data.text.trim());
         } else {
             setStatus('ready', 'No speech detected');

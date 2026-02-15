@@ -6,20 +6,25 @@ export const state = {
     ws: null,
     reconnectTimer: null,
     authToken: sessionStorage.getItem('rain-token') || null,
-    currentBrowsePath: '~',
-    currentCwd: null,
+    currentBrowsePath: '~',        // Global fallback browse path
     mediaRecorder: null,
     audioChunks: [],
     isRecording: false,
+    // Global processing mirrors active agent — kept for backward compat with recorder.js
     isProcessing: false,
     interruptPending: false,
-    currentAssistantEl: null,
-    currentStreamText: '',
     usingApiKey: false,
     notificationsEnabled: false,
     swRegistration: null,
     tabFocused: true,
     unreadCount: 0,
+    // Multi-agent state (source of truth for processing, cwd, etc.)
+    agents: new Map(),          // agentId → agent object
+    activeAgentId: null,        // currently visible agent tab
+    // Rate-limit & usage state
+    currentModel: null,         // e.g. "claude-sonnet-4-20250514"
+    rateLimits: null,           // latest rate-limit data from Anthropic headers
+    lastUsage: null,            // last response usage (input/output tokens)
 };
 
 export const API = window.location.origin + '/api';
@@ -56,6 +61,10 @@ function initDom() {
     dom.interruptBtn  = document.getElementById('interrupt-btn');
     dom.textInput     = document.getElementById('text-input');
     dom.sendTextBtn   = document.getElementById('send-text-btn');
+    // Tab bar refs
+    dom.tabBar        = document.getElementById('tab-bar');
+    dom.tabList       = document.getElementById('tab-list');
+    dom.newAgentBtn   = document.getElementById('new-agent-btn');
 }
 
 export function authHeaders() {
@@ -83,16 +92,20 @@ import { connectWS } from './websocket.js';
 import { initRecorder } from './recorder.js';
 import { initBrowser } from './browser.js';
 import { initChat } from './chat.js';
+import { initTabs } from './tabs.js';
+import { initMetrics } from './metrics.js';
 
 function init() {
     migrateStorageKeys();
     initDom();
     initTheme();
     initAuth();
+    initTabs();
     initBrowser();
     initChat();
     initRecorder();
     initNotifications();
+    initMetrics();
 
     if (state.authToken) {
         dom.pinPanel.classList.add('hidden');
