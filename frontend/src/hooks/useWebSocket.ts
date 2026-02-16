@@ -7,7 +7,7 @@ import { useMetricsStore } from "@/stores/useMetricsStore";
 import { useUIStore } from "@/stores/useUIStore";
 import { useSettingsStore } from "@/stores/useSettingsStore";
 import { useTTSStore } from "@/hooks/useTTS";
-import type { WSReceiveMessage, AnyMessage } from "@/lib/types";
+import type { WSReceiveMessage, AnyMessage, ComputerScreenshotMessage, ComputerActionMessage } from "@/lib/types";
 import { loadMessages, synthesize } from "@/lib/api";
 import { autoSaveConversation } from "@/lib/historyUtils";
 
@@ -40,6 +40,12 @@ export function useWebSocket() {
       if (!agentId) return;
 
       switch (msg.type) {
+        // ── Heartbeat: respond to server pings ──
+        case "ping": {
+          connectionStore.send({ type: "pong" });
+          break;
+        }
+
         case "status": {
           if (agentId === agentStore.activeAgentId || !msg.agent_id) {
             connectionStore.setStatusText(msg.text);
@@ -236,6 +242,72 @@ export function useWebSocket() {
             connectionStore.setStatusText(msg.text);
             connectionStore.setConnectionStatus("error");
           }
+          break;
+        }
+
+        case "permission_request": {
+          if (!agentStore.agents[agentId]) break;
+          agentStore.finalizeStreaming(agentId);
+          const permMsg: AnyMessage = {
+            id: crypto.randomUUID(),
+            type: "permission_request",
+            requestId: msg.request_id,
+            tool: msg.tool,
+            input: msg.input,
+            level: msg.level,
+            reason: msg.reason,
+            status: "pending",
+            timestamp: Date.now(),
+            animate: true,
+          };
+          agentStore.appendMessage(agentId, permMsg);
+          agentStore.incrementUnread(agentId);
+          break;
+        }
+
+        // ── Computer Use messages ──
+        case "mode_changed": {
+          if (!agentStore.agents[agentId]) break;
+          agentStore.setAgentMode(agentId, msg.mode);
+          if (msg.display_info) {
+            agentStore.setDisplayInfo(agentId, msg.display_info);
+          }
+          break;
+        }
+
+        case "computer_screenshot": {
+          if (!agentStore.agents[agentId]) break;
+          agentStore.updateLastScreenshot(agentId, msg.image);
+          const screenshotMsg: ComputerScreenshotMessage = {
+            id: crypto.randomUUID(),
+            type: "computer_screenshot",
+            image: msg.image,
+            action: msg.action,
+            description: msg.description,
+            iteration: msg.iteration || 0,
+            timestamp: Date.now(),
+            animate: true,
+          };
+          agentStore.appendMessage(agentId, screenshotMsg);
+          agentStore.incrementUnread(agentId);
+          break;
+        }
+
+        case "computer_action": {
+          if (!agentStore.agents[agentId]) break;
+          const actionMsg: ComputerActionMessage = {
+            id: crypto.randomUUID(),
+            type: "computer_action",
+            tool: msg.tool,
+            action: msg.action,
+            input: msg.input,
+            description: msg.description,
+            iteration: msg.iteration || 0,
+            timestamp: Date.now(),
+            animate: true,
+          };
+          agentStore.appendMessage(agentId, actionMsg);
+          agentStore.incrementComputerIteration(agentId);
           break;
         }
 

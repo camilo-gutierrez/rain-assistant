@@ -20,7 +20,7 @@ const MessageBubble = React.memo(function MessageBubble({ message }: Props) {
   if (message.type === "system") {
     return (
       <div
-        className={`text-center italic text-xs text-subtext font-[family-name:var(--font-jetbrains)] py-1 ${
+        className={`text-center italic text-xs text-subtext py-1 ${
           message.animate ? "animate-msg-appear" : ""
         }`}
       >
@@ -32,14 +32,11 @@ const MessageBubble = React.memo(function MessageBubble({ message }: Props) {
   if (message.type === "user") {
     return (
       <div
-        className={`self-end max-w-[85%] rounded-2xl rounded-br-md px-4 py-2.5 ${
+        className={`self-end max-w-[85%] rounded-2xl rounded-br-sm px-4 py-2.5 bg-primary text-on-primary ${
           message.animate ? "animate-msg-appear" : ""
         }`}
-        style={{
-          background: "linear-gradient(135deg, rgba(0,212,255,0.15), rgba(191,90,242,0.15))",
-        }}
       >
-        <p className="text-sm text-text whitespace-pre-wrap break-words">
+        <p className="text-sm whitespace-pre-wrap break-words">
           {message.text}
         </p>
       </div>
@@ -54,26 +51,23 @@ const MessageBubble = React.memo(function MessageBubble({ message }: Props) {
 
   return (
     <div
-      className={`self-start max-w-[85%] bg-surface rounded-2xl rounded-bl-md px-4 py-2.5 border border-overlay/50 ${
+      className={`self-start max-w-[85%] bg-surface rounded-2xl rounded-bl-sm px-4 py-2.5 shadow-sm ${
         message.animate ? "animate-msg-appear" : ""
       }`}
     >
       {assistantMsg.isStreaming ? (
-        // During streaming, render raw text for performance
-        <div className="text-sm text-text whitespace-pre-wrap break-words font-[family-name:var(--font-jetbrains)]">
+        <div className="text-sm text-text whitespace-pre-wrap break-words">
           {assistantMsg.text}
-          <span className="inline-block w-1.5 h-4 bg-cyan ml-0.5 animate-pulse" />
+          <span className="inline-block w-1.5 h-4 bg-primary ml-0.5 animate-pulse" />
         </div>
       ) : (
-        // After streaming, render markdown + TTS button
         <>
-          <div className="text-sm text-text prose prose-invert prose-sm max-w-none break-words [&_pre]:bg-surface2 [&_pre]:rounded-lg [&_pre]:p-3 [&_pre]:overflow-x-auto [&_code]:font-[family-name:var(--font-jetbrains)] [&_code]:text-cyan [&_pre_code]:text-text [&_a]:text-cyan [&_a]:no-underline hover:[&_a]:underline [&_table]:border-overlay [&_th]:border-overlay [&_td]:border-overlay [&_blockquote]:border-l-mauve [&_blockquote]:text-text2">
+          <div className="text-sm text-text prose prose-sm max-w-none break-words [&_pre]:bg-surface2 [&_pre]:rounded-lg [&_pre]:p-3 [&_pre]:overflow-x-auto [&_code]:font-[family-name:var(--font-jetbrains)] [&_code]:text-primary [&_pre_code]:text-text [&_a]:text-primary [&_a]:no-underline hover:[&_a]:underline [&_table]:border-overlay [&_th]:border-overlay [&_td]:border-overlay [&_blockquote]:border-l-primary/30 [&_blockquote]:text-text2">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>
               {assistantMsg.text}
             </ReactMarkdown>
           </div>
 
-          {/* TTS Play/Stop button */}
           {ttsEnabled && assistantMsg.text.trim() && (
             <button
               onClick={() =>
@@ -81,12 +75,12 @@ const MessageBubble = React.memo(function MessageBubble({ message }: Props) {
                   ? stop()
                   : play(assistantMsg.text, message.id)
               }
-              className={`mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-md border transition-all font-[family-name:var(--font-jetbrains)] ${
+              className={`mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-md border transition-all ${
                 isPlaying
-                  ? "border-cyan text-cyan"
+                  ? "border-primary text-primary"
                   : isLoading
                   ? "border-overlay text-subtext cursor-wait"
-                  : "border-overlay/50 text-subtext hover:text-cyan hover:border-cyan"
+                  : "border-overlay text-subtext hover:text-primary hover:border-primary"
               }`}
             >
               <svg

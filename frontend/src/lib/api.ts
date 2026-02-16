@@ -5,6 +5,27 @@ function authHeaders(token: string | null): HeadersInit {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+/**
+ * Fetch with automatic retry on 429 (rate limit).
+ * Reads the Retry-After header and waits before retrying.
+ */
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit,
+  maxRetries = 1
+): Promise<Response> {
+  let res = await fetch(url, options);
+  let retries = 0;
+  while (res.status === 429 && retries < maxRetries) {
+    const retryAfter = parseInt(res.headers.get("Retry-After") || "2", 10);
+    const waitMs = Math.min(retryAfter * 1000, 30_000); // cap at 30s
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+    res = await fetch(url, options);
+    retries++;
+  }
+  return res;
+}
+
 export async function authenticate(pin: string): Promise<AuthResponse> {
   const res = await fetch(`${getApiUrl()}/auth`, {
     method: "POST",
@@ -18,7 +39,7 @@ export async function browseDirectory(
   path: string,
   token: string | null
 ): Promise<BrowseResponse> {
-  const res = await fetch(
+  const res = await fetchWithRetry(
     `${getApiUrl()}/browse?path=${encodeURIComponent(path)}`,
     { headers: authHeaders(token) }
   );
@@ -32,7 +53,7 @@ export async function uploadAudio(
 ): Promise<{ text: string; error?: string }> {
   const form = new FormData();
   form.append("audio", blob, "recording.webm");
-  const res = await fetch(`${getApiUrl()}/upload-audio`, {
+  const res = await fetchWithRetry(`${getApiUrl()}/upload-audio`, {
     method: "POST",
     headers: authHeaders(token),
     body: form,
@@ -85,7 +106,7 @@ export async function synthesize(
   rate: string,
   token: string | null
 ): Promise<Blob | null> {
-  const res = await fetch(`${getApiUrl()}/synthesize`, {
+  const res = await fetchWithRetry(`${getApiUrl()}/synthesize`, {
     method: "POST",
     headers: {
       ...authHeaders(token),

@@ -21,10 +21,8 @@ export default function InterruptButton() {
   const interruptPending = activeAgent?.interruptPending || false;
   const interruptTimerId = activeAgent?.interruptTimerId || null;
 
-  // Only visible when processing
   if (!isProcessing || !activeAgentId) return null;
 
-  // Determine state: normal stop, stopping, or force stop
   const isForceMode = interruptPending && interruptTimerId === null;
   const isStopping = interruptPending && interruptTimerId !== null;
 
@@ -32,7 +30,6 @@ export default function InterruptButton() {
     if (!activeAgentId) return;
 
     if (isForceMode) {
-      // Force stop: reset client-side processing state
       finalizeStreaming(activeAgentId);
       setProcessing(activeAgentId, false);
       setInterruptPending(activeAgentId, false);
@@ -47,13 +44,10 @@ export default function InterruptButton() {
       return;
     }
 
-    // Normal stop: send interrupt
     send({ type: "interrupt", agent_id: activeAgentId });
     setInterruptPending(activeAgentId, true);
 
-    // Start 5s timer for force stop mode
     const timerId = setTimeout(() => {
-      // After 5s, clear the timer to enable force mode
       setInterruptTimer(activeAgentId, null);
     }, 5000);
 
@@ -65,32 +59,27 @@ export default function InterruptButton() {
 
   if (isForceMode) {
     buttonText = t("chat.forceStop");
-    buttonClass =
-      "border-yellow text-yellow animate-neon-pulse-yellow";
+    buttonClass = "bg-yellow/10 text-yellow border-yellow/30 hover:bg-yellow/20";
   } else if (isStopping) {
     buttonText = t("chat.stopping");
-    buttonClass =
-      "bg-overlay text-subtext cursor-wait border-overlay";
+    buttonClass = "bg-surface2 text-subtext border-overlay cursor-wait";
   } else {
     buttonText = t("chat.stop");
-    buttonClass =
-      "border-red text-red animate-neon-pulse-red";
+    buttonClass = "bg-red/10 text-red border-red/30 hover:bg-red/20";
   }
 
   return (
-    <button
-      onClick={handleClick}
-      disabled={isStopping}
-      className={`px-5 py-3 rounded-lg font-[family-name:var(--font-orbitron)] text-xs font-bold uppercase tracking-wider border transition-all shrink-0 ${buttonClass}`}
-      style={
-        isForceMode
-          ? { background: "linear-gradient(135deg, rgba(255,204,0,0.15), rgba(255,204,0,0.05))" }
-          : isStopping
-          ? undefined
-          : { background: "linear-gradient(135deg, rgba(255,34,102,0.15), rgba(255,34,102,0.05))" }
-      }
-    >
-      {buttonText}
-    </button>
+    <div className="flex items-center justify-center py-2">
+      <button
+        onClick={handleClick}
+        disabled={isStopping}
+        className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium border transition-all ${buttonClass}`}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+          <rect x="6" y="6" width="12" height="12" rx="2" />
+        </svg>
+        {buttonText}
+      </button>
+    </div>
   );
 }

@@ -13,6 +13,7 @@ import ChatMessages from "@/components/chat/ChatMessages";
 import ChatInput from "@/components/chat/ChatInput";
 import RecordButton from "@/components/chat/RecordButton";
 import InterruptButton from "@/components/chat/InterruptButton";
+import ComputerUseToolbar from "@/components/computer-use/ComputerUseToolbar";
 
 export default function ChatPanel() {
   const agents = useAgentStore((s) => s.agents);
@@ -29,7 +30,6 @@ export default function ChatPanel() {
   const activeAgent = activeAgentId ? agents[activeAgentId] : null;
   const cwd = activeAgent?.cwd;
 
-  // Initialize audio on first render
   useEffect(() => {
     initAudio();
   }, [initAudio]);
@@ -64,53 +64,50 @@ export default function ChatPanel() {
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Chat header */}
-      <div className="flex items-center gap-2 px-4 py-2 bg-surface border-b border-overlay">
-        {/* Project name */}
+      <div className="flex items-center gap-2 px-4 py-2.5 bg-surface border-b border-overlay">
         {folderName && (
-          <span className="text-cyan font-[family-name:var(--font-jetbrains)] text-sm font-bold truncate">
+          <span className="text-sm font-medium text-text truncate">
             {folderName}
           </span>
         )}
 
         <div className="flex-1" />
 
-        {/* Save button */}
         <button
           onClick={() => save()}
           disabled={isSaving || !activeAgent?.messages.length}
-          className="px-3 py-1 text-xs rounded border border-overlay text-text2 hover:text-green hover:border-green transition-colors font-[family-name:var(--font-jetbrains)] disabled:opacity-30"
+          className="px-3 py-1.5 text-xs rounded-md text-text2 hover:bg-surface2 hover:text-green transition-colors disabled:opacity-30"
         >
           {isSaving ? t("history.saving") : t("history.saveBtn")}
         </button>
 
-        {/* Change button */}
         <button
           onClick={handleChange}
-          className="px-3 py-1 text-xs rounded border border-overlay text-text2 hover:text-cyan hover:border-cyan transition-colors font-[family-name:var(--font-jetbrains)]"
+          className="px-3 py-1.5 text-xs rounded-md text-text2 hover:bg-surface2 hover:text-primary transition-colors"
         >
           {t("chat.changeBtn")}
         </button>
 
-        {/* Clear button */}
         <button
           onClick={handleClear}
-          className="px-3 py-1 text-xs rounded border border-overlay text-text2 hover:text-red hover:border-red transition-colors font-[family-name:var(--font-jetbrains)]"
+          className="px-3 py-1.5 text-xs rounded-md text-text2 hover:bg-surface2 hover:text-red transition-colors"
         >
           {t("chat.clearBtn")}
         </button>
       </div>
 
-      {/* Messages area */}
+      {/* Computer Use toolbar (only visible when in computer_use mode) */}
+      <ComputerUseToolbar />
+
+      {/* Messages */}
       <ChatMessages />
 
-      {/* Input + Controls */}
+      {/* Input controls */}
       <div className="shrink-0">
+        <InterruptButton />
         <ChatInput />
-        <div className="flex gap-2 px-4 py-2 bg-surface border-t border-overlay">
-          <div className="flex-1">
-            <RecordButton />
-          </div>
-          <InterruptButton />
+        <div className="px-4 py-2 bg-surface border-t border-overlay">
+          <RecordButton />
         </div>
       </div>
     </div>

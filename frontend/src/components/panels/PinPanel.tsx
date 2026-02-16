@@ -19,7 +19,6 @@ export default function PinPanel() {
   const setActivePanel = useUIStore((s) => s.setActivePanel);
   const { t } = useTranslation();
 
-  // Focus input on mount
   useEffect(() => {
     inputRef.current?.focus();
     return () => {
@@ -27,7 +26,6 @@ export default function PinPanel() {
     };
   }, []);
 
-  // Lockout countdown
   useEffect(() => {
     if (lockoutTime <= 0) return;
 
@@ -90,24 +88,16 @@ export default function PinPanel() {
     <div className="flex-1 flex items-center justify-center p-4">
       <form
         onSubmit={handleSubmit}
-        className="w-full max-w-[420px] flex flex-col items-center gap-6 p-8 bg-surface rounded-2xl border border-overlay"
+        className="w-full max-w-[420px] flex flex-col items-center gap-6 p-8 bg-surface rounded-xl shadow-lg"
       >
-        {/* Title */}
-        <h2
-          className="font-[family-name:var(--font-orbitron)] text-2xl font-bold bg-clip-text text-transparent"
-          style={{
-            backgroundImage: "linear-gradient(135deg, var(--cyan), var(--magenta))",
-          }}
-        >
+        <h2 className="text-2xl font-bold text-text">
           {t("pin.title")}
         </h2>
 
-        {/* Instruction */}
         <p className="text-sm text-text2 text-center">
           {t("pin.instruction")}
         </p>
 
-        {/* PIN input */}
         <input
           ref={inputRef}
           type="password"
@@ -116,29 +106,23 @@ export default function PinPanel() {
           onChange={(e) => setPin(e.target.value)}
           placeholder="------"
           disabled={lockoutTime > 0}
-          className="w-48 text-center text-2xl tracking-[0.5em] font-[family-name:var(--font-jetbrains)] bg-surface2 border border-overlay rounded-lg px-4 py-3 text-text placeholder:text-subtext focus:outline-none focus:border-cyan focus:shadow-[0_0_12px_var(--neon-glow)] transition-all disabled:opacity-50"
+          className="w-48 text-center text-2xl tracking-[0.5em] font-[family-name:var(--font-jetbrains)] bg-surface2 border border-overlay rounded-lg px-4 py-3 text-text placeholder:text-subtext focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all disabled:opacity-50"
         />
 
-        {/* Error message */}
         {error && (
           <p className="text-sm text-red text-center">{error}</p>
         )}
 
-        {/* Lockout timer */}
         {lockoutTime > 0 && (
           <p className="text-xs text-yellow font-[family-name:var(--font-jetbrains)]">
             {lockoutTime}s
           </p>
         )}
 
-        {/* Submit button */}
         <button
           type="submit"
           disabled={!pin.trim() || submitting || lockoutTime > 0}
-          className="w-full py-3 rounded-lg font-[family-name:var(--font-orbitron)] text-sm font-bold text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed hover:shadow-[0_0_20px_var(--neon-glow)]"
-          style={{
-            background: "linear-gradient(135deg, var(--cyan), var(--mauve))",
-          }}
+          className="w-full py-3 rounded-lg text-sm font-semibold bg-primary text-on-primary transition-all disabled:opacity-40 disabled:cursor-not-allowed hover:bg-primary-dark shadow-sm"
         >
           {submitting ? "..." : t("pin.submit")}
         </button>

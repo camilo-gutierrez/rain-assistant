@@ -22,7 +22,7 @@ interface SettingsState {
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
-      theme: "dark" as Theme,
+      theme: "light" as Theme,
       language: "es" as Language,
       voiceLang: "es" as Language,
       ttsEnabled: false,
@@ -50,6 +50,14 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: "rain-settings",
+      version: 2,
+      migrate: (persisted, version) => {
+        if (version < 2) {
+          const state = persisted as Record<string, unknown>;
+          if (state.theme === "ocean") state.theme = "dark";
+        }
+        return persisted as SettingsState;
+      },
     }
   )
 );

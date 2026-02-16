@@ -80,6 +80,14 @@ export const useConnectionStore = create<ConnectionState>()((set, get) => ({
         return;
       }
 
+      // Idle timeout — auto-reconnect after 1s
+      if (e.code === 4002) {
+        set({ consecutiveFails: 0, statusText: "Reconnecting..." });
+        const timerId = setTimeout(() => get().connect(), 1000);
+        set({ reconnectTimerId: timerId });
+        return;
+      }
+
       const fails = get().consecutiveFails + 1;
       set({ consecutiveFails: fails });
 

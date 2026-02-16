@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Agent, AgentPanel, AgentStatus, AnyMessage, WSSendMessage } from "@/lib/types";
+import type { Agent, AgentMode, AgentPanel, AgentStatus, AnyMessage, DisplayInfo, PermissionRequestMessage, WSSendMessage } from "@/lib/types";
 
 interface AgentState {
   agents: Record<string, Agent>;
@@ -25,6 +25,15 @@ interface AgentState {
   setMessages: (agentId: string, messages: AnyMessage[]) => void;
   setHistoryLoaded: (agentId: string, val: boolean) => void;
   setAgentSessionId: (agentId: string, sessionId: string | null) => void;
+
+  // Permission
+  updatePermissionStatus: (agentId: string, requestId: string, status: PermissionRequestMessage["status"]) => void;
+
+  // Computer Use
+  setAgentMode: (agentId: string, mode: AgentMode) => void;
+  setDisplayInfo: (agentId: string, info: DisplayInfo) => void;
+  updateLastScreenshot: (agentId: string, image: string) => void;
+  incrementComputerIteration: (agentId: string) => void;
 
   // Processing state
   setProcessing: (agentId: string, val: boolean) => void;
@@ -63,6 +72,11 @@ function createAgentObject(id: string, label: string): Agent {
     historyLoaded: false,
     sessionId: null,
     activePanel: "fileBrowser",
+    // Computer Use
+    mode: "coding",
+    displayInfo: null,
+    lastScreenshot: null,
+    computerIteration: 0,
   };
 }
 
@@ -351,6 +365,73 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
       agents: {
         ...agents,
         [agentId]: { ...agents[agentId], sessionId },
+      },
+    });
+  },
+
+  // --- Permission ---
+
+  updatePermissionStatus: (agentId, requestId, status) => {
+    const { agents } = get();
+    const agent = agents[agentId];
+    if (!agent) return;
+
+    const messages = agent.messages.map((m) =>
+      m.type === "permission_request" && m.requestId === requestId
+        ? { ...m, status }
+        : m
+    );
+
+    set({
+      agents: {
+        ...agents,
+        [agentId]: { ...agent, messages },
+      },
+    });
+  },
+
+  // --- Computer Use ---
+
+  setAgentMode: (agentId, mode) => {
+    const { agents } = get();
+    if (!agents[agentId]) return;
+    set({
+      agents: {
+        ...agents,
+        [agentId]: { ...agents[agentId], mode, computerIteration: 0, lastScreenshot: null },
+      },
+    });
+  },
+
+  setDisplayInfo: (agentId, info) => {
+    const { agents } = get();
+    if (!agents[agentId]) return;
+    set({
+      agents: {
+        ...agents,
+        [agentId]: { ...agents[agentId], displayInfo: info },
+      },
+    });
+  },
+
+  updateLastScreenshot: (agentId, image) => {
+    const { agents } = get();
+    if (!agents[agentId]) return;
+    set({
+      agents: {
+        ...agents,
+        [agentId]: { ...agents[agentId], lastScreenshot: image },
+      },
+    });
+  },
+
+  incrementComputerIteration: (agentId) => {
+    const { agents } = get();
+    if (!agents[agentId]) return;
+    set({
+      agents: {
+        ...agents,
+        [agentId]: { ...agents[agentId], computerIteration: agents[agentId].computerIteration + 1 },
       },
     });
   },

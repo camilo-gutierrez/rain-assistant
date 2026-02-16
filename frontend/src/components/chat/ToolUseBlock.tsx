@@ -30,7 +30,6 @@ function getToolDetail(tool: string, input: Record<string, unknown>): string {
     case "WebFetch":
       return typeof input.url === "string" ? input.url : "";
     default:
-      // Try common field names
       if (typeof input.file_path === "string") return input.file_path;
       if (typeof input.command === "string") return input.command;
       if (typeof input.pattern === "string") return input.pattern;
@@ -43,19 +42,13 @@ const ToolUseBlock = React.memo(function ToolUseBlock({ message }: Props) {
 
   return (
     <div
-      className={`self-start max-w-[85%] border-l-[3px] border-l-mauve rounded-r-lg px-3 py-2 ${
+      className={`self-start max-w-[85%] border-l-[3px] border-l-primary rounded-r-lg px-3 py-2 bg-primary/5 ${
         message.animate ? "animate-msg-appear" : ""
       }`}
-      style={{
-        background: "rgba(191, 90, 242, 0.08)",
-      }}
     >
-      {/* Tool header */}
-      <div className="text-xs font-bold text-mauve font-[family-name:var(--font-jetbrains)]">
+      <div className="text-xs font-semibold text-primary">
         {message.tool}
       </div>
-
-      {/* Tool detail */}
       {detail && (
         <div className="text-xs text-text2 font-[family-name:var(--font-jetbrains)] mt-0.5 truncate">
           {detail}

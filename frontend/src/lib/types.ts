@@ -1,6 +1,18 @@
 // === Agent Status ===
 export type AgentStatus = "idle" | "working" | "done" | "error";
 
+// === Agent Mode ===
+export type AgentMode = "coding" | "computer_use";
+
+// === Display Info (from server) ===
+export interface DisplayInfo {
+  screen_width: number;
+  screen_height: number;
+  scaled_width: number;
+  scaled_height: number;
+  scale_factor: number;
+}
+
 // === Chat Messages ===
 export interface BaseMessage {
   id: string;
@@ -38,12 +50,43 @@ export interface ToolResultMessage extends BaseMessage {
   toolUseId: string;
 }
 
+export interface PermissionRequestMessage extends BaseMessage {
+  type: "permission_request";
+  requestId: string;
+  tool: string;
+  input: Record<string, unknown>;
+  level: "yellow" | "red" | "computer";
+  reason: string;
+  status: "pending" | "approved" | "denied" | "expired";
+}
+
+// === Computer Use Messages ===
+export interface ComputerScreenshotMessage extends BaseMessage {
+  type: "computer_screenshot";
+  image: string;        // base64 PNG
+  action: string;       // "left_click", "type", "initial", etc.
+  description: string;  // Human-readable description
+  iteration: number;
+}
+
+export interface ComputerActionMessage extends BaseMessage {
+  type: "computer_action";
+  tool: string;
+  action: string;
+  input: Record<string, unknown>;
+  description: string;
+  iteration: number;
+}
+
 export type AnyMessage =
   | UserMessage
   | AssistantMessage
   | SystemMessage
   | ToolUseMessage
-  | ToolResultMessage;
+  | ToolResultMessage
+  | PermissionRequestMessage
+  | ComputerScreenshotMessage
+  | ComputerActionMessage;
 
 // === Agent ===
 export type AgentPanel = "fileBrowser" | "chat";
@@ -65,6 +108,11 @@ export interface Agent {
   historyLoaded: boolean;
   sessionId: string | null;
   activePanel: AgentPanel;
+  // Computer Use fields
+  mode: AgentMode;
+  displayInfo: DisplayInfo | null;
+  lastScreenshot: string | null;
+  computerIteration: number;
 }
 
 // === Rate Limits ===
@@ -111,7 +159,11 @@ export type WSSendMessage =
   | { type: "set_cwd"; path: string; agent_id: string; session_id?: string }
   | { type: "destroy_agent"; agent_id: string }
   | { type: "set_api_key"; key: string }
-  | { type: "set_transcription_lang"; lang: string };
+  | { type: "set_transcription_lang"; lang: string }
+  | { type: "permission_response"; request_id: string; agent_id: string; approved: boolean; pin?: string }
+  | { type: "set_mode"; agent_id: string; mode: AgentMode }
+  | { type: "emergency_stop"; agent_id: string }
+  | { type: "pong" };
 
 // === WebSocket Receive Messages ===
 export type WSReceiveMessage =
@@ -133,10 +185,23 @@ export type WSReceiveMessage =
       agent_id: string;
     }
   | { type: "error"; text: string; agent_id: string }
-  | { type: "agent_destroyed"; agent_id: string };
+  | { type: "agent_destroyed"; agent_id: string }
+  | {
+      type: "permission_request";
+      request_id: string;
+      agent_id: string;
+      tool: string;
+      input: Record<string, unknown>;
+      level: "yellow" | "red" | "computer";
+      reason: string;
+    }
+  | { type: "mode_changed"; agent_id: string; mode: AgentMode; display_info?: DisplayInfo }
+  | { type: "computer_screenshot"; agent_id: string; image: string; action: string; description: string; iteration: number }
+  | { type: "computer_action"; agent_id: string; tool: string; action: string; input: Record<string, unknown>; description: string; iteration: number }
+  | { type: "ping"; ts: number };
 
 // === Theme & Language ===
-export type Theme = "dark" | "light" | "ocean";
+export type Theme = "light" | "dark";
 export type Language = "en" | "es";
 
 // === TTS ===
@@ -149,7 +214,7 @@ export type TTSVoice =
 export type TTSPlaybackState = "idle" | "loading" | "playing";
 
 // === Active Panel ===
-export type ActivePanel = "pin" | "apiKey" | "fileBrowser" | "chat" | "metrics" | "settings";
+export type ActivePanel = "pin" | "apiKey" | "fileBrowser" | "chat";
 
 // === File Browser ===
 export interface FileEntry {

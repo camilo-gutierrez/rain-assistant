@@ -3,46 +3,39 @@ import type { ActivePanel } from "@/lib/types";
 
 interface UIState {
   activePanel: ActivePanel;
-  previousPanel: ActivePanel | null;
   tabFocused: boolean;
   unreadCount: number;
+  metricsDrawerOpen: boolean;
+  settingsDrawerOpen: boolean;
+  mobileSidebarOpen: boolean;
 
   setActivePanel: (panel: ActivePanel) => void;
-  toggleMetrics: () => void;
-  toggleSettings: () => void;
+  toggleMetricsDrawer: () => void;
+  toggleSettingsDrawer: () => void;
+  toggleMobileSidebar: () => void;
   setTabFocused: (val: boolean) => void;
   incrementUnreadCount: () => void;
   resetUnreadCount: () => void;
 }
 
-export const useUIStore = create<UIState>()((set, get) => ({
+export const useUIStore = create<UIState>()((set) => ({
   activePanel: "pin",
-  previousPanel: null,
   tabFocused: true,
   unreadCount: 0,
+  metricsDrawerOpen: false,
+  settingsDrawerOpen: false,
+  mobileSidebarOpen: false,
 
   setActivePanel: (panel) => set({ activePanel: panel }),
 
-  toggleMetrics: () => {
-    const { activePanel } = get();
-    if (activePanel === "metrics") {
-      // Return to previous panel
-      const prev = get().previousPanel || "chat";
-      set({ activePanel: prev, previousPanel: null });
-    } else {
-      set({ previousPanel: activePanel, activePanel: "metrics" });
-    }
-  },
+  toggleMetricsDrawer: () =>
+    set((s) => ({ metricsDrawerOpen: !s.metricsDrawerOpen })),
 
-  toggleSettings: () => {
-    const { activePanel } = get();
-    if (activePanel === "settings") {
-      const prev = get().previousPanel || "chat";
-      set({ activePanel: prev, previousPanel: null });
-    } else {
-      set({ previousPanel: activePanel, activePanel: "settings" });
-    }
-  },
+  toggleSettingsDrawer: () =>
+    set((s) => ({ settingsDrawerOpen: !s.settingsDrawerOpen })),
+
+  toggleMobileSidebar: () =>
+    set((s) => ({ mobileSidebarOpen: !s.mobileSidebarOpen })),
 
   setTabFocused: (tabFocused) => {
     if (tabFocused) {

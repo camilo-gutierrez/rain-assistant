@@ -3,37 +3,10 @@
 import { useEffect, useState } from "react";
 import { useMetricsStore } from "@/stores/useMetricsStore";
 import { useConnectionStore } from "@/stores/useConnectionStore";
-import { useUIStore } from "@/stores/useUIStore";
 import { useTranslation } from "@/hooks/useTranslation";
 import type { MetricsData, MetricsTotals, RateLimits } from "@/lib/types";
 
-// --- Sub-components (kept inline) ---
-
-function MetricCard({
-  label,
-  value,
-  sub,
-}: {
-  label: string;
-  value: string;
-  sub?: string;
-}) {
-  return (
-    <div className="bg-surface rounded-xl border border-overlay p-4 flex flex-col gap-1">
-      <span className="text-xs text-subtext font-[family-name:var(--font-orbitron)] uppercase tracking-wider">
-        {label}
-      </span>
-      <span className="text-xl font-bold text-text font-[family-name:var(--font-jetbrains)]">
-        {value}
-      </span>
-      {sub && (
-        <span className="text-[10px] text-text2 font-[family-name:var(--font-jetbrains)]">
-          {sub}
-        </span>
-      )}
-    </div>
-  );
-}
+// --- Sub-components ---
 
 function BarChart({
   title,
@@ -57,11 +30,11 @@ function BarChart({
   const maxVal = Math.max(...data.map((d) => Number(d[valueKey]) || 0), 0.001);
 
   return (
-    <div className="bg-surface rounded-xl border border-overlay p-4">
-      <h4 className="text-xs text-text2 font-[family-name:var(--font-orbitron)] uppercase tracking-wider mb-3">
+    <div className="bg-surface rounded-xl shadow-sm p-4">
+      <h4 className="text-[11px] text-text2 uppercase tracking-wider font-semibold mb-3">
         {title}
       </h4>
-      <div className="flex items-end gap-1 h-[100px] chart-container-responsive">
+      <div className="flex items-end gap-[3px] h-[140px] border-b border-overlay/50 pb-1">
         {data.map((d, i) => {
           const val = Number(d[valueKey]) || 0;
           const pct = (val / maxVal) * 100;
@@ -73,17 +46,22 @@ function BarChart({
           return (
             <div
               key={i}
-              className="flex-1 flex flex-col items-center justify-end gap-1 min-w-0"
-              title={`${label}: ${formatted}${subFormatted ? ` (${subFormatted})` : ""}`}
+              className="group relative flex-1 flex flex-col items-center justify-end gap-1 min-w-0"
             >
+              {/* Tooltip on hover */}
+              <div className="absolute -top-7 left-1/2 -translate-x-1/2 hidden group-hover:block z-10">
+                <div className="bg-text text-surface text-[9px] font-medium px-1.5 py-0.5 rounded whitespace-nowrap shadow-lg">
+                  {formatted}
+                </div>
+              </div>
               <div
-                className="w-full max-w-[24px] rounded-t transition-all"
+                className="w-full max-w-[20px] rounded-t-sm transition-all duration-300 group-hover:opacity-80"
                 style={{
                   height: `${Math.max(pct, 2)}%`,
-                  background: "linear-gradient(180deg, var(--cyan), var(--mauve))",
+                  background: `linear-gradient(to top, var(--primary-dark), var(--primary))`,
                 }}
               />
-              <span className="text-[8px] text-subtext font-[family-name:var(--font-jetbrains)] truncate w-full text-center">
+              <span className="text-[9px] text-subtext truncate w-full text-center leading-tight">
                 {label}
               </span>
             </div>
@@ -107,28 +85,25 @@ function RateLimitGauge({
 }) {
   if (!limit) return null;
   const pct = Math.round(((remaining ?? 0) / limit) * 100);
-  const fillColor = pct > 50 ? "var(--green)" : pct > 20 ? "var(--yellow)" : "var(--red)";
+  const fillColor =
+    pct > 50 ? "var(--green)" : pct > 20 ? "var(--yellow)" : "var(--red)";
 
   return (
-    <div className="flex flex-col gap-1">
-      <div className="flex justify-between items-baseline">
-        <span className="text-[10px] text-text2 font-[family-name:var(--font-jetbrains)]">
-          {label}
-        </span>
-        <span className="text-[10px] text-subtext font-[family-name:var(--font-jetbrains)]">
+    <div className="flex flex-col gap-1.5">
+      <div className="flex justify-between items-center">
+        <span className="text-[11px] font-medium text-text2">{label}</span>
+        <span className="text-[10px] text-subtext tabular-nums">
           {remaining?.toLocaleString()} / {limit?.toLocaleString()}
         </span>
       </div>
-      <div className="h-2 rounded-full bg-surface2 overflow-hidden">
+      <div className="h-2.5 rounded-full bg-surface2 overflow-hidden">
         <div
-          className="h-full rounded-full transition-all duration-500"
+          className="h-full rounded-full transition-all duration-500 ease-out"
           style={{ width: `${pct}%`, background: fillColor }}
         />
       </div>
       {reset && (
-        <span className="text-[9px] text-subtext font-[family-name:var(--font-jetbrains)]">
-          Reset: {reset}
-        </span>
+        <span className="text-[9px] text-subtext">Reset: {reset}</span>
       )}
     </div>
   );
@@ -149,7 +124,6 @@ export default function MetricsPanel() {
   const currentModel = useMetricsStore((s) => s.currentModel);
   const fetchMetrics = useMetricsStore((s) => s.fetchMetrics);
   const authToken = useConnectionStore((s) => s.authToken);
-  const toggleMetrics = useUIStore((s) => s.toggleMetrics);
   const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
 
@@ -166,33 +140,29 @@ export default function MetricsPanel() {
 
   const totals = metricsData?.totals?.all_time;
 
+  const periodColors = {
+    today: "border-t-primary",
+    this_week: "border-t-green",
+    this_month: "border-t-blue",
+  } as const;
+
   return (
     <div className="flex-1 flex flex-col overflow-y-auto p-4">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <h2
-          className="font-[family-name:var(--font-orbitron)] text-lg font-bold bg-clip-text text-transparent"
-          style={{
-            backgroundImage: "linear-gradient(135deg, var(--cyan), var(--magenta))",
-          }}
-        >
+      <div className="flex items-center justify-between mb-5">
+        <h2 className="text-lg font-semibold text-text">
           {t("metrics.title")}
         </h2>
-        <div className="flex gap-2">
-          <button
-            onClick={handleRefresh}
-            disabled={loading}
-            className="px-3 py-1 text-xs rounded border border-overlay text-text2 hover:text-cyan hover:border-cyan transition-colors font-[family-name:var(--font-jetbrains)] disabled:opacity-50"
-          >
-            {t("metrics.refresh")}
-          </button>
-          <button
-            onClick={toggleMetrics}
-            className="px-3 py-1 text-xs rounded border border-overlay text-text2 hover:text-cyan hover:border-cyan transition-colors font-[family-name:var(--font-jetbrains)]"
-          >
-            {t("metrics.close")}
-          </button>
-        </div>
+        <button
+          onClick={handleRefresh}
+          disabled={loading}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg text-primary hover:bg-primary/10 transition-colors disabled:opacity-50 font-medium"
+        >
+          <span className={loading ? "animate-spin-slow inline-block" : ""}>
+            ↻
+          </span>
+          {!loading && t("metrics.refresh")}
+        </button>
       </div>
 
       {loading && !metricsData ? (
@@ -204,27 +174,50 @@ export default function MetricsPanel() {
           {t("metrics.noData")}
         </div>
       ) : (
-        <div className="space-y-6">
-          {/* Summary cards */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 metrics-cards-responsive">
-            <MetricCard
-              label={t("metrics.totalSpent")}
-              value={`$${totals.cost.toFixed(2)}`}
-              sub={`${t("metrics.avgCost")}: $${totals.avg_cost.toFixed(4)}`}
-            />
-            <MetricCard
-              label={t("metrics.sessions")}
-              value={String(totals.sessions)}
-            />
-            <MetricCard
-              label={t("metrics.avgDuration")}
-              value={formatDuration(totals.avg_duration_ms)}
-            />
-            <MetricCard
-              label={t("metrics.totalTurns")}
-              value={String(totals.total_turns)}
-              sub={`${t("metrics.inputTokens")}: ${totals.total_input_tokens.toLocaleString()}`}
-            />
+        <div className="space-y-5">
+          {/* Hero — Total Cost */}
+          <div className="bg-surface rounded-xl shadow-sm border-l-4 border-l-primary p-5">
+            <span className="text-[11px] text-subtext uppercase tracking-wider font-semibold">
+              {t("metrics.totalSpent")}
+            </span>
+            <div className="text-3xl font-bold text-text mt-1 tabular-nums">
+              ${totals.cost.toFixed(2)}
+            </div>
+            <span className="text-[11px] text-text2">
+              {t("metrics.avgCost")}: ${totals.avg_cost.toFixed(4)}
+            </span>
+          </div>
+
+          {/* Summary row — 3 stats */}
+          <div className="bg-surface rounded-xl shadow-sm flex divide-x divide-overlay/50">
+            <div className="flex-1 p-3.5 text-center">
+              <div className="text-xl font-bold text-text tabular-nums">
+                {totals.sessions}
+              </div>
+              <div className="text-[10px] text-subtext uppercase tracking-wider font-medium mt-0.5">
+                {t("metrics.sessions")}
+              </div>
+            </div>
+            <div className="flex-1 p-3.5 text-center">
+              <div className="text-xl font-bold text-text tabular-nums">
+                {formatDuration(totals.avg_duration_ms)}
+              </div>
+              <div className="text-[10px] text-subtext uppercase tracking-wider font-medium mt-0.5">
+                {t("metrics.avgDuration")}
+              </div>
+            </div>
+            <div className="flex-1 p-3.5 text-center">
+              <div className="text-xl font-bold text-text tabular-nums">
+                {totals.total_turns}
+              </div>
+              <div className="text-[10px] text-subtext uppercase tracking-wider font-medium mt-0.5">
+                {t("metrics.totalTurns")}
+              </div>
+              <div className="text-[9px] text-text2 mt-0.5">
+                {t("metrics.inputTokens")}:{" "}
+                {totals.total_input_tokens.toLocaleString()}
+              </div>
+            </div>
           </div>
 
           {/* Period breakdown */}
@@ -240,15 +233,15 @@ export default function MetricsPanel() {
               return (
                 <div
                   key={period}
-                  className="bg-surface rounded-xl border border-overlay p-3"
+                  className={`bg-surface rounded-xl shadow-sm p-3.5 border-t-[3px] ${periodColors[period]}`}
                 >
-                  <span className="text-[10px] text-subtext font-[family-name:var(--font-orbitron)] uppercase tracking-wider">
+                  <span className="text-[10px] text-subtext uppercase tracking-wider font-semibold">
                     {t(labelKey)}
                   </span>
-                  <div className="text-lg font-bold text-text font-[family-name:var(--font-jetbrains)]">
+                  <div className="text-lg font-bold text-text mt-1 tabular-nums">
                     ${p.cost.toFixed(2)}
                   </div>
-                  <div className="text-[10px] text-text2 font-[family-name:var(--font-jetbrains)]">
+                  <div className="text-[10px] text-text2 mt-0.5">
                     {p.sessions} {t("metrics.sessionsLabel")}
                   </div>
                 </div>
@@ -258,23 +251,18 @@ export default function MetricsPanel() {
 
           {/* Rate limits */}
           {rateLimits && (
-            <div className="bg-surface rounded-xl border border-overlay p-4">
+            <div className="bg-surface rounded-xl shadow-sm p-4">
               <div className="flex items-center justify-between mb-3">
-                <h4 className="text-xs text-text2 font-[family-name:var(--font-orbitron)] uppercase tracking-wider">
+                <h4 className="text-[11px] text-text2 uppercase tracking-wider font-semibold">
                   {t("metrics.rateLimits")}
                 </h4>
                 {currentModel && (
-                  <span
-                    className="px-2 py-0.5 rounded text-[10px] font-bold text-white"
-                    style={{
-                      background: "linear-gradient(135deg, var(--cyan), var(--mauve))",
-                    }}
-                  >
+                  <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-primary/10 text-primary">
                     {currentModel}
                   </span>
                 )}
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 rl-dashboard-responsive">
+              <div className="grid grid-cols-1 gap-3.5">
                 <RateLimitGauge
                   label="Requests"
                   remaining={rateLimits["requests-remaining"]}
@@ -298,7 +286,7 @@ export default function MetricsPanel() {
           )}
 
           {/* Charts */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4">
             <BarChart
               title={t("metrics.usageByHour")}
               data={metricsData.by_hour}
@@ -319,7 +307,7 @@ export default function MetricsPanel() {
             />
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4">
             <BarChart
               title={t("metrics.dailySpend")}
               data={metricsData.by_day}

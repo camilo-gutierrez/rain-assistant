@@ -128,7 +128,6 @@ export function useHistory() {
         }
 
         historyStore.setActiveConversationId(conversationId);
-        historyStore.setSidebarOpen(false);
       } catch (err) {
         console.error("Failed to load conversation:", err);
       } finally {

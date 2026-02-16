@@ -5,13 +5,71 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from contextlib import contextmanager
 
+from cryptography.fernet import Fernet
+
 DB_PATH = Path.home() / ".rain-assistant" / "conversations.db"
+CONFIG_DIR = Path.home() / ".rain-assistant"
+CONFIG_FILE = CONFIG_DIR / "config.json"
+
+
+# ---------------------------------------------------------------------------
+# Encryption key management (Fernet)
+# ---------------------------------------------------------------------------
+
+def _get_fernet() -> Fernet:
+    """Load or auto-generate encryption key from config.json."""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    cfg: dict = {}
+    if CONFIG_FILE.exists():
+        try:
+            cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    enc_key = cfg.get("encryption_key")
+    if not enc_key:
+        enc_key = Fernet.generate_key().decode("utf-8")
+        cfg["encryption_key"] = enc_key
+        CONFIG_FILE.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+
+    return Fernet(enc_key.encode("utf-8"))
+
+
+_fernet: Fernet | None = None
+
+
+def _get_cipher() -> Fernet:
+    global _fernet
+    if _fernet is None:
+        _fernet = _get_fernet()
+    return _fernet
+
+
+def encrypt_field(plaintext: str) -> str:
+    """Encrypt a string field for DB storage. Returns base64 ciphertext."""
+    if not plaintext:
+        return plaintext
+    return _get_cipher().encrypt(plaintext.encode("utf-8")).decode("utf-8")
+
+
+def decrypt_field(ciphertext: str) -> str:
+    """Decrypt a field from DB. Returns original if decryption fails (backward compat)."""
+    if not ciphertext:
+        return ciphertext
+    try:
+        return _get_cipher().decrypt(ciphertext.encode("utf-8")).decode("utf-8")
+    except Exception:
+        # Backward compat: data was stored unencrypted before this feature
+        return ciphertext
 
 
 def _ensure_db():
     """Create tables and indexes if they don't exist."""
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with _connect() as conn:
+        # Enable WAL mode for better concurrent read/write performance
+        conn.execute("PRAGMA journal_mode=WAL")
+
         # Create table with original schema first (safe for existing DBs)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS messages (
@@ -30,6 +88,95 @@ def _ensure_db():
             CREATE INDEX IF NOT EXISTS idx_messages_cwd_agent
             ON messages(cwd, agent_id, timestamp)
         """)
+        # Permission audit log
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS permission_log (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp    REAL NOT NULL,
+                agent_id     TEXT NOT NULL,
+                tool_name    TEXT NOT NULL,
+                tool_input   TEXT NOT NULL,
+                level        TEXT NOT NULL,
+                decision     TEXT NOT NULL,
+                reason       TEXT DEFAULT ''
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_perm_log_ts
+            ON permission_log(timestamp DESC)
+        """)
+
+        # ── Phase 3 tables ──
+
+        # HTTP access log
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS access_log (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp    REAL NOT NULL,
+                method       TEXT NOT NULL,
+                path         TEXT NOT NULL,
+                status_code  INTEGER NOT NULL,
+                response_ms  REAL NOT NULL,
+                client_ip    TEXT NOT NULL,
+                token_prefix TEXT DEFAULT '',
+                user_agent   TEXT DEFAULT ''
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_access_log_ts
+            ON access_log(timestamp DESC)
+        """)
+
+        # Security events / alerts
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS security_events (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp    REAL NOT NULL,
+                event_type   TEXT NOT NULL,
+                severity     TEXT NOT NULL DEFAULT 'info',
+                client_ip    TEXT DEFAULT '',
+                token_prefix TEXT DEFAULT '',
+                details      TEXT DEFAULT '',
+                endpoint     TEXT DEFAULT ''
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sec_events_ts
+            ON security_events(timestamp DESC)
+        """)
+
+        # TTS / audio daily usage quotas
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS usage_quotas (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                token_prefix TEXT NOT NULL,
+                date_key     TEXT NOT NULL,
+                tts_chars    INTEGER NOT NULL DEFAULT 0,
+                audio_seconds REAL NOT NULL DEFAULT 0.0,
+                UNIQUE(token_prefix, date_key)
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_usage_quotas_lookup
+            ON usage_quotas(token_prefix, date_key)
+        """)
+
+        # Active session tracking
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS active_sessions (
+                token_hash    TEXT PRIMARY KEY,
+                created_at    REAL NOT NULL,
+                last_activity REAL NOT NULL,
+                client_ip     TEXT NOT NULL,
+                user_agent    TEXT DEFAULT '',
+                request_count INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sessions_activity
+            ON active_sessions(last_activity DESC)
+        """)
+
         conn.commit()
 
 
@@ -55,13 +202,24 @@ def _connect():
         conn.close()
 
 
+_ENCRYPTED_MSG_TYPES = {"text", "assistant_text", "tool_use", "tool_result"}
+
+
 def save_message(cwd: str, role: str, msg_type: str, content: dict, agent_id: str = "default") -> int:
-    """Insert a message and return its id."""
+    """Insert a message and return its id.
+
+    Content is encrypted at rest for sensitive message types (text, assistant_text,
+    tool_use, tool_result). The 'result' type is NOT encrypted because metrics
+    queries use json_extract() on it.
+    """
+    content_json = json.dumps(content, default=str)
+    if msg_type in _ENCRYPTED_MSG_TYPES:
+        content_json = encrypt_field(content_json)
     with _connect() as conn:
         cur = conn.execute(
             "INSERT INTO messages (cwd, agent_id, role, type, content_json, timestamp) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            (cwd, agent_id, role, msg_type, json.dumps(content, default=str), time.time()),
+            (cwd, agent_id, role, msg_type, content_json, time.time()),
         )
         conn.commit()
         return cur.lastrowid
@@ -75,16 +233,20 @@ def get_messages(cwd: str, agent_id: str = "default") -> list[dict]:
             "FROM messages WHERE cwd = ? AND agent_id = ? ORDER BY timestamp ASC",
             (cwd, agent_id),
         ).fetchall()
-    return [
-        {
+    results = []
+    for r in rows:
+        raw = r["content_json"]
+        # Decrypt if this type is encrypted
+        if r["type"] in _ENCRYPTED_MSG_TYPES:
+            raw = decrypt_field(raw)
+        results.append({
             "id": r["id"],
             "role": r["role"],
             "type": r["type"],
-            "content": json.loads(r["content_json"]),
+            "content": json.loads(raw),
             "timestamp": r["timestamp"],
-        }
-        for r in rows
-    ]
+        })
+    return results
 
 
 def clear_messages(cwd: str, agent_id: str | None = None) -> int:
@@ -223,3 +385,194 @@ def get_metrics_data() -> dict:
         "by_day": by_day,
         "by_month": by_month,
     }
+
+
+# ---------------------------------------------------------------------------
+# Permission audit log
+# ---------------------------------------------------------------------------
+
+def log_permission_decision(
+    agent_id: str,
+    tool_name: str,
+    tool_input: dict,
+    level: str,
+    decision: str,
+    reason: str = "",
+) -> int:
+    """Log a permission decision to the audit trail.
+
+    Args:
+        agent_id: The agent that requested the tool.
+        tool_name: Name of the tool (e.g. "Bash", "Write").
+        tool_input: Tool input parameters (truncated to 2000 chars).
+        level: Permission level ("green", "yellow", "red").
+        decision: "approved", "denied", or "timeout".
+        reason: Human-readable reason for the decision.
+
+    Returns:
+        Row id of the inserted log entry.
+    """
+    with _connect() as conn:
+        tool_input_json = json.dumps(tool_input, default=str)[:2000]
+        cur = conn.execute(
+            "INSERT INTO permission_log "
+            "(timestamp, agent_id, tool_name, tool_input, level, decision, reason) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                time.time(),
+                agent_id,
+                tool_name,
+                encrypt_field(tool_input_json),
+                level,
+                decision,
+                reason,
+            ),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+# ---------------------------------------------------------------------------
+# Access logging
+# ---------------------------------------------------------------------------
+
+def log_access(
+    method: str, path: str, status_code: int, response_ms: float,
+    client_ip: str, token_prefix: str = "", user_agent: str = "",
+) -> None:
+    """Insert an HTTP access log entry."""
+    try:
+        with _connect() as conn:
+            conn.execute(
+                "INSERT INTO access_log "
+                "(timestamp, method, path, status_code, response_ms, client_ip, token_prefix, user_agent) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (time.time(), method, path[:500], status_code, response_ms,
+                 client_ip, token_prefix[:16], user_agent[:200]),
+            )
+            conn.commit()
+    except Exception:
+        pass  # Never let logging break the application
+
+
+# ---------------------------------------------------------------------------
+# Security events
+# ---------------------------------------------------------------------------
+
+def log_security_event(
+    event_type: str, severity: str = "info", client_ip: str = "",
+    token_prefix: str = "", details: str = "", endpoint: str = "",
+) -> None:
+    """Insert a security event for monitoring/alerting."""
+    try:
+        with _connect() as conn:
+            conn.execute(
+                "INSERT INTO security_events "
+                "(timestamp, event_type, severity, client_ip, token_prefix, details, endpoint) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (time.time(), event_type, severity, client_ip,
+                 token_prefix[:16], encrypt_field(details[:2000]), endpoint[:500]),
+            )
+            conn.commit()
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Usage quotas (TTS / audio)
+# ---------------------------------------------------------------------------
+
+def get_or_create_quota(token_prefix: str, date_key: str) -> dict:
+    """Get current quota usage for a token+date, creating row if needed."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT tts_chars, audio_seconds FROM usage_quotas "
+            "WHERE token_prefix = ? AND date_key = ?",
+            (token_prefix[:16], date_key),
+        ).fetchone()
+        if row:
+            return {"tts_chars": row["tts_chars"], "audio_seconds": row["audio_seconds"]}
+        conn.execute(
+            "INSERT OR IGNORE INTO usage_quotas (token_prefix, date_key) VALUES (?, ?)",
+            (token_prefix[:16], date_key),
+        )
+        conn.commit()
+        return {"tts_chars": 0, "audio_seconds": 0.0}
+
+
+def increment_tts_chars(token_prefix: str, date_key: str, chars: int) -> int:
+    """Atomically increment TTS char count. Returns new total."""
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO usage_quotas (token_prefix, date_key, tts_chars) VALUES (?, ?, ?) "
+            "ON CONFLICT(token_prefix, date_key) DO UPDATE SET tts_chars = tts_chars + ?",
+            (token_prefix[:16], date_key, chars, chars),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT tts_chars FROM usage_quotas WHERE token_prefix = ? AND date_key = ?",
+            (token_prefix[:16], date_key),
+        ).fetchone()
+        return row["tts_chars"] if row else chars
+
+
+def increment_audio_seconds(token_prefix: str, date_key: str, seconds: float) -> float:
+    """Atomically increment audio seconds. Returns new total."""
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO usage_quotas (token_prefix, date_key, audio_seconds) VALUES (?, ?, ?) "
+            "ON CONFLICT(token_prefix, date_key) DO UPDATE SET audio_seconds = audio_seconds + ?",
+            (token_prefix[:16], date_key, seconds, seconds),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT audio_seconds FROM usage_quotas WHERE token_prefix = ? AND date_key = ?",
+            (token_prefix[:16], date_key),
+        ).fetchone()
+        return row["audio_seconds"] if row else seconds
+
+
+# ---------------------------------------------------------------------------
+# Session management
+# ---------------------------------------------------------------------------
+
+def create_session(token_hash: str, client_ip: str, user_agent: str = "") -> None:
+    """Record a new active session."""
+    now = time.time()
+    with _connect() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO active_sessions "
+            "(token_hash, created_at, last_activity, client_ip, user_agent, request_count) "
+            "VALUES (?, ?, ?, ?, ?, 0)",
+            (token_hash, now, now, client_ip, user_agent[:200]),
+        )
+        conn.commit()
+
+
+def update_session_activity(token_hash: str) -> None:
+    """Bump last_activity and increment request_count."""
+    try:
+        with _connect() as conn:
+            conn.execute(
+                "UPDATE active_sessions SET last_activity = ?, request_count = request_count + 1 "
+                "WHERE token_hash = ?",
+                (time.time(), token_hash),
+            )
+            conn.commit()
+    except Exception:
+        pass
+
+
+def revoke_session(token_hash: str) -> None:
+    """Delete a session record."""
+    with _connect() as conn:
+        conn.execute("DELETE FROM active_sessions WHERE token_hash = ?", (token_hash,))
+        conn.commit()
+
+
+def revoke_all_sessions() -> int:
+    """Delete all session records. Returns count deleted."""
+    with _connect() as conn:
+        cur = conn.execute("DELETE FROM active_sessions")
+        conn.commit()
+        return cur.rowcount

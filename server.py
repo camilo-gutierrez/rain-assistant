@@ -1,16 +1,20 @@
 import asyncio
+import hashlib
 import json
+import bcrypt
 import os
 import secrets
 import sys
 import tempfile
 import time
 from contextlib import asynccontextmanager
+from datetime import date
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 import httpx
 import uvicorn
 
@@ -29,8 +33,30 @@ from claude_agent_sdk import (
     TextBlock,
     ToolUseBlock,
     ToolResultBlock,
+    PermissionResultAllow,
+    PermissionResultDeny,
+    ToolPermissionContext,
 )
 from claude_agent_sdk.types import StreamEvent
+
+from permission_classifier import PermissionLevel, classify, get_danger_reason
+from rate_limiter import rate_limiter, categorize_endpoint, EndpointCategory
+
+# Computer Use imports (lazy — only used when mode is activated)
+try:
+    from anthropic import AsyncAnthropic
+    from computer_use import (
+        ComputerUseExecutor,
+        describe_action,
+        COMPUTER_USE_BETA,
+        COMPUTER_USE_MODEL,
+        COMPUTER_USE_MAX_TOKENS,
+        COMPUTER_USE_MAX_ITERATIONS,
+        COMPUTER_USE_SYSTEM_PROMPT,
+    )
+    COMPUTER_USE_AVAILABLE = True
+except ImportError:
+    COMPUTER_USE_AVAILABLE = False
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -128,7 +154,39 @@ async def fetch_rate_limits(api_key: str) -> dict | None:
 # PIN & token management
 # ---------------------------------------------------------------------------
 
-active_tokens: set[str] = set()
+# Token storage: { token_string: expiry_timestamp }
+TOKEN_TTL_SECONDS = 24 * 60 * 60  # 24 hours
+active_tokens: dict[str, float] = {}
+
+# TTS / audio daily quotas
+DAILY_TTS_CHAR_LIMIT = 100_000       # 100K chars/day
+DAILY_AUDIO_SECONDS_LIMIT = 3_600    # 60 minutes/day
+MAX_AUDIO_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB
+
+# ---------------------------------------------------------------------------
+# Input validation models (Pydantic)
+# ---------------------------------------------------------------------------
+
+class AuthRequest(BaseModel):
+    pin: str = Field(..., min_length=1, max_length=20)
+
+class SynthesizeRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=5000)
+    voice: str = Field(default="es-MX-DaliaNeural", max_length=100)
+    rate: str = Field(default="+0%", max_length=20)
+
+# WebSocket field limits
+WS_MAX_MESSAGE_BYTES = 16 * 1024        # 16 KB raw message
+WS_MAX_TEXT_LENGTH = 10_000              # send_message text
+WS_MAX_PATH_LENGTH = 500                 # set_cwd path
+WS_MAX_KEY_LENGTH = 500                  # set_api_key key
+WS_MAX_MSG_TYPE_LENGTH = 50              # type field
+WS_MAX_AGENT_ID_LENGTH = 100             # agent_id field
+MAX_BROWSE_PATH_LENGTH = 500             # /api/browse path
+MAX_CWD_LENGTH = 500                     # /api/messages cwd
+WS_HEARTBEAT_INTERVAL = 30              # seconds between pings
+WS_IDLE_TIMEOUT = 600                   # 10 minutes without activity → disconnect
+WS_MAX_CONCURRENT_AGENTS = 5            # max agents per connection
 
 # Rate limiting: track failed PIN attempts per IP
 # { ip: { "attempts": int, "locked_until": float } }
@@ -138,32 +196,82 @@ _auth_attempts: dict[str, dict] = {}
 
 
 def load_or_create_config() -> dict:
-    """Load config from ~/.rain-assistant/config.json or create with new PIN."""
+    """Load config from ~/.rain-assistant/config.json or create with new PIN.
+
+    The PIN is stored as a bcrypt hash. On first creation or migration from
+    a legacy plain-text PIN, the actual PIN is kept in a transient
+    ``_display_pin`` key (never persisted) so it can be printed once at
+    startup.
+    """
     # Migrate from old config directory
     if OLD_CONFIG_DIR.exists() and not CONFIG_DIR.exists():
         import shutil
         shutil.copytree(str(OLD_CONFIG_DIR), str(CONFIG_DIR))
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
     if CONFIG_FILE.exists():
         try:
             cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-            # Ensure PIN is always a string
+
+            # Already migrated to hashed PIN
+            if "pin_hash" in cfg:
+                return cfg
+
+            # Legacy: plain-text PIN — migrate to bcrypt hash
             if "pin" in cfg:
-                cfg["pin"] = str(cfg["pin"])
-            return cfg
+                plain_pin = str(cfg["pin"])
+                hashed = bcrypt.hashpw(
+                    plain_pin.encode("utf-8"), bcrypt.gensalt()
+                ).decode("utf-8")
+                cfg["pin_hash"] = hashed
+                del cfg["pin"]
+                CONFIG_FILE.write_text(
+                    json.dumps(cfg, indent=2), encoding="utf-8"
+                )
+                print(f"\n  [SECURITY] PIN migrated to bcrypt hash.", flush=True)
+                print(f"  [SECURITY] Your existing PIN is: {plain_pin}", flush=True)
+                print(f"  [SECURITY] This is the LAST TIME it will be shown.\n", flush=True)
+                return cfg
+
         except (json.JSONDecodeError, OSError):
             pass
+
+    # Generate new PIN
     pin = f"{secrets.randbelow(900000) + 100000}"
-    config = {"pin": pin}
-    CONFIG_FILE.write_text(json.dumps(config, indent=2), encoding="utf-8")
-    return config
+    hashed = bcrypt.hashpw(pin.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    cfg = {"pin_hash": hashed}
+    CONFIG_FILE.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+
+    # Store pin temporarily for display at startup only (NOT persisted)
+    cfg["_display_pin"] = pin
+    return cfg
 
 
 config = load_or_create_config()
 
 
 def verify_token(token: str | None) -> bool:
-    return token is not None and token in active_tokens
+    """Check if a token exists and has not expired."""
+    if token is None or token not in active_tokens:
+        return False
+    expiry = active_tokens[token]
+    if time.time() > expiry:
+        # Token expired — remove it
+        active_tokens.pop(token, None)
+        return False
+    return True
+
+
+async def _cleanup_expired_tokens():
+    """Periodically remove expired tokens from memory."""
+    while True:
+        await asyncio.sleep(3600)  # Run every hour
+        now = time.time()
+        expired = [t for t, exp in active_tokens.items() if now > exp]
+        for t in expired:
+            active_tokens.pop(t, None)
+        if expired:
+            print(f"  [AUTH] Cleaned up {len(expired)} expired token(s)", flush=True)
 
 
 @asynccontextmanager
@@ -171,10 +279,180 @@ async def lifespan(application: FastAPI):
     database._ensure_db()
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, transcriber.load_model)
+    cleanup_task = asyncio.create_task(_cleanup_expired_tokens())
     yield
+    cleanup_task.cancel()
+    try:
+        await cleanup_task
+    except asyncio.CancelledError:
+        pass
 
 
 app = FastAPI(title="Rain Assistant", lifespan=lifespan)
+
+
+# ---------------------------------------------------------------------------
+# Security headers middleware
+# ---------------------------------------------------------------------------
+
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as StarletteRequest
+from starlette.responses import Response as StarletteResponse
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Add security headers to all HTTP responses."""
+
+    async def dispatch(self, request: StarletteRequest, call_next):
+        response: StarletteResponse = await call_next(request)
+
+        # Detect if request came through HTTPS (Cloudflare tunnel sets these)
+        is_https = (
+            request.headers.get("x-forwarded-proto") == "https"
+            or request.url.scheme == "https"
+        )
+
+        if is_https:
+            # HSTS: tell browser to always use HTTPS for this domain
+            response.headers["Strict-Transport-Security"] = (
+                "max-age=31536000; includeSubDomains"
+            )
+
+        # Prevent MIME-type sniffing
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        # Prevent clickjacking
+        response.headers["X-Frame-Options"] = "DENY"
+        # Basic XSS protection (legacy, but still useful)
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        # Referrer policy
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        # Permissions policy: restrict sensitive browser APIs
+        response.headers["Permissions-Policy"] = (
+            "camera=(), geolocation=(), payment=()"
+        )
+
+        return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
+
+
+# ---------------------------------------------------------------------------
+# Rate limiting middleware
+# ---------------------------------------------------------------------------
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    """Per-token sliding window rate limiting for HTTP endpoints."""
+
+    _EXEMPT_PATHS = {"/", "/sw.js", "/api/auth"}
+
+    async def dispatch(self, request: StarletteRequest, call_next):
+        path = request.url.path
+
+        # Skip static files and exempt paths
+        if path in self._EXEMPT_PATHS or path.startswith("/static"):
+            return await call_next(request)
+
+        # Extract token
+        auth_header = request.headers.get("authorization", "")
+        token = auth_header[7:] if auth_header.startswith("Bearer ") else ""
+        if not token:
+            return await call_next(request)
+
+        category = categorize_endpoint(path)
+        result = rate_limiter.check(token, category)
+
+        if not result.allowed:
+            client_ip = request.client.host if request.client else ""
+            database.log_security_event(
+                "rate_limited", "warning",
+                client_ip=client_ip, token_prefix=token[:8],
+                details=f"category={category.value}, limit={result.limit}",
+                endpoint=path,
+            )
+            response = JSONResponse(
+                {"error": "Rate limit exceeded", "retry_after": result.retry_after},
+                status_code=429,
+            )
+            response.headers["Retry-After"] = str(int(result.retry_after) + 1)
+            response.headers["X-RateLimit-Limit"] = str(result.limit)
+            response.headers["X-RateLimit-Remaining"] = "0"
+            return response
+
+        # Update session activity
+        try:
+            token_hash = hashlib.sha256(token.encode()).hexdigest()
+            database.update_session_activity(token_hash)
+        except Exception:
+            pass
+
+        response = await call_next(request)
+        response.headers["X-RateLimit-Limit"] = str(result.limit)
+        response.headers["X-RateLimit-Remaining"] = str(result.remaining)
+        return response
+
+
+app.add_middleware(RateLimitMiddleware)
+
+
+# ---------------------------------------------------------------------------
+# Access logging middleware
+# ---------------------------------------------------------------------------
+
+class AccessLogMiddleware(BaseHTTPMiddleware):
+    """Log all HTTP requests to the access_log table."""
+
+    _SKIP_PATHS = {"/sw.js"}
+
+    async def dispatch(self, request: StarletteRequest, call_next):
+        path = request.url.path
+        if path in self._SKIP_PATHS or path.startswith("/static"):
+            return await call_next(request)
+
+        start = time.time()
+        response = await call_next(request)
+        elapsed_ms = (time.time() - start) * 1000
+
+        auth = request.headers.get("authorization", "")
+        token_prefix = auth[7:15] if auth.startswith("Bearer ") and len(auth) > 15 else ""
+
+        database.log_access(
+            method=request.method, path=path,
+            status_code=response.status_code,
+            response_ms=round(elapsed_ms, 2),
+            client_ip=request.client.host if request.client else "",
+            token_prefix=token_prefix,
+            user_agent=request.headers.get("user-agent", "")[:200],
+        )
+        return response
+
+
+app.add_middleware(AccessLogMiddleware)
+
+
+# ---------------------------------------------------------------------------
+# CORS middleware
+# ---------------------------------------------------------------------------
+
+from fastapi.middleware.cors import CORSMiddleware
+
+CORS_ORIGINS = [
+    "http://localhost:8000", "http://127.0.0.1:8000",
+    "http://localhost:3000", "http://127.0.0.1:3000",
+]
+# Allow extra origins from config (e.g. Cloudflare tunnel URL)
+_extra_origins = config.get("cors_origins", [])
+if isinstance(_extra_origins, list):
+    CORS_ORIGINS.extend(_extra_origins)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+    max_age=3600,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -219,15 +497,30 @@ async def authenticate(request: Request):
 
     try:
         body = await request.json()
+        auth_req = AuthRequest(**body)
     except Exception:
+        database.log_security_event(
+            "invalid_input", "info", client_ip=client_ip, endpoint="/api/auth",
+        )
         return JSONResponse({"error": "Invalid request body"}, status_code=400)
 
-    pin = str(body.get("pin", "")).strip()
-    expected = str(config.get("pin", "")).strip()
+    pin = auth_req.pin.strip()
+    pin_hash = config.get("pin_hash", "")
 
-    print(f"  [AUTH] pin={repr(pin)} expected={repr(expected)} match={pin == expected} ip={client_ip}", flush=True)
+    # Verify PIN against bcrypt hash (never log PIN values)
+    try:
+        pin_valid = bool(pin) and bcrypt.checkpw(
+            pin.encode("utf-8"), pin_hash.encode("utf-8")
+        )
+    except Exception:
+        pin_valid = False
 
-    if not pin or pin != expected:
+    print(f"  [AUTH] attempt from ip={client_ip} valid={pin_valid}", flush=True)
+
+    if not pin_valid:
+        database.log_security_event(
+            "auth_failed", "warning", client_ip=client_ip, endpoint="/api/auth",
+        )
         # Track failed attempt
         if client_ip not in _auth_attempts:
             _auth_attempts[client_ip] = {"attempts": 0, "locked_until": 0}
@@ -238,6 +531,9 @@ async def authenticate(request: Request):
         if attempts >= MAX_PIN_ATTEMPTS:
             _auth_attempts[client_ip]["locked_until"] = time.time() + LOCKOUT_SECONDS
             print(f"  [AUTH] IP {client_ip} LOCKED OUT after {attempts} failed attempts", flush=True)
+            database.log_security_event(
+                "auth_locked", "critical", client_ip=client_ip, endpoint="/api/auth",
+            )
             return JSONResponse({
                 "error": "Too many failed attempts. Try again later.",
                 "locked": True,
@@ -252,7 +548,13 @@ async def authenticate(request: Request):
     # Successful auth — clear any attempt tracking for this IP
     _auth_attempts.pop(client_ip, None)
     token = secrets.token_urlsafe(32)
-    active_tokens.add(token)
+    active_tokens[token] = time.time() + TOKEN_TTL_SECONDS
+
+    # Track session in database
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    user_agent = request.headers.get("user-agent", "")[:200]
+    database.create_session(token_hash, client_ip, user_agent)
+
     return {"token": token}
 
 
@@ -262,6 +564,71 @@ def get_token(request: Request) -> str | None:
     if auth.startswith("Bearer "):
         return auth[7:]
     return None
+
+
+# ---------------------------------------------------------------------------
+# REST: Logout
+# ---------------------------------------------------------------------------
+
+@app.post("/api/logout")
+async def logout(request: Request):
+    """Revoke the current token."""
+    token = get_token(request)
+    if not token or not verify_token(token):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    client_ip = request.client.host if request.client else "unknown"
+    active_tokens.pop(token, None)
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    database.revoke_session(token_hash)
+    database.log_security_event(
+        "token_revoked", "info", client_ip=client_ip,
+        token_prefix=token[:8], endpoint="/api/logout",
+    )
+    return {"logged_out": True}
+
+
+@app.post("/api/logout-all")
+async def logout_all(request: Request):
+    """Revoke ALL tokens. Requires PIN confirmation."""
+    token = get_token(request)
+    if not token or not verify_token(token):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    client_ip = request.client.host if request.client else "unknown"
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid request body"}, status_code=400)
+
+    pin = str(body.get("pin", "")).strip()
+    pin_hash = config.get("pin_hash", "")
+
+    try:
+        pin_valid = bool(pin) and bcrypt.checkpw(
+            pin.encode("utf-8"), pin_hash.encode("utf-8")
+        )
+    except Exception:
+        pin_valid = False
+
+    if not pin_valid:
+        database.log_security_event(
+            "auth_failed", "warning", client_ip=client_ip,
+            endpoint="/api/logout-all", details="invalid_pin_for_logout_all",
+        )
+        return JSONResponse({"error": "Invalid PIN"}, status_code=401)
+
+    count = len(active_tokens)
+    active_tokens.clear()
+    sessions_cleared = database.revoke_all_sessions()
+    database.log_security_event(
+        "token_revoked", "critical", client_ip=client_ip,
+        token_prefix=token[:8] if token else "",
+        details=f"logout_all: {count} tokens, {sessions_cleared} sessions cleared",
+        endpoint="/api/logout-all",
+    )
+    return {"logged_out_all": True, "tokens_revoked": count}
 
 
 # ---------------------------------------------------------------------------
@@ -275,6 +642,14 @@ MAX_ENTRIES = 200
 async def browse_filesystem(request: Request, path: str = "~"):
     if not verify_token(get_token(request)):
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    if len(path) > MAX_BROWSE_PATH_LENGTH:
+        database.log_security_event(
+            "invalid_input", "info",
+            client_ip=request.client.host if request.client else "",
+            endpoint="/api/browse", details=f"path_len={len(path)}",
+        )
+        return JSONResponse({"error": "Path too long"}, status_code=400)
 
     if path in ("~", ""):
         target = ALLOWED_ROOT
@@ -351,11 +726,51 @@ async def upload_audio(request: Request, audio: UploadFile = File(...)):
     tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
     try:
         content = await audio.read()
+
+        # Enforce upload size limit
+        if len(content) > MAX_AUDIO_UPLOAD_BYTES:
+            tmp.close()
+            os.unlink(tmp.name)
+            database.log_security_event(
+                "invalid_input", "warning",
+                client_ip=request.client.host if request.client else "",
+                endpoint="/api/upload-audio",
+                details=f"size={len(content)}, limit={MAX_AUDIO_UPLOAD_BYTES}",
+            )
+            return JSONResponse(
+                {"error": f"File too large (max {MAX_AUDIO_UPLOAD_BYTES // (1024*1024)}MB)"},
+                status_code=413,
+            )
+
+        # ── Quota check: audio seconds per day ──
+        estimated_seconds = len(content) / 4000  # ~32kbps webm estimate
+        token_str = get_token(request) or ""
+        token_prefix = token_str[:8]
+        date_key = date.today().isoformat()
+        quota = database.get_or_create_quota(token_prefix, date_key)
+        if quota["audio_seconds"] + estimated_seconds > DAILY_AUDIO_SECONDS_LIMIT:
+            tmp.close()
+            os.unlink(tmp.name)
+            database.log_security_event(
+                "quota_exceeded", "warning",
+                client_ip=request.client.host if request.client else "",
+                token_prefix=token_prefix,
+                details=f"audio_seconds: current={quota['audio_seconds']:.0f}, estimated={estimated_seconds:.0f}, limit={DAILY_AUDIO_SECONDS_LIMIT}",
+                endpoint="/api/upload-audio",
+            )
+            return JSONResponse(
+                {"error": f"Daily audio quota exceeded ({DAILY_AUDIO_SECONDS_LIMIT // 60} min/day)"},
+                status_code=429,
+            )
+
         tmp.write(content)
         tmp.close()
 
         loop = asyncio.get_event_loop()
         text = await loop.run_in_executor(None, transcriber.transcribe, tmp.name)
+
+        # Record usage after success
+        database.increment_audio_seconds(token_prefix, date_key, estimated_seconds)
 
         return {"text": text}
     except Exception as e:
@@ -378,15 +793,39 @@ async def synthesize_text(request: Request):
 
     try:
         body = await request.json()
+        synth_req = SynthesizeRequest(**body)
     except Exception:
-        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+        database.log_security_event(
+            "invalid_input", "info",
+            client_ip=request.client.host if request.client else "",
+            endpoint="/api/synthesize",
+        )
+        return JSONResponse({"error": "Invalid JSON or text too long (max 5000 chars)"}, status_code=400)
 
-    text = body.get("text", "").strip()
+    text = synth_req.text.strip()
     if not text:
         return JSONResponse({"error": "No text provided"}, status_code=400)
 
-    voice = body.get("voice", "es-MX-DaliaNeural")
-    rate = body.get("rate", "+0%")
+    voice = synth_req.voice
+    rate = synth_req.rate
+
+    # ── Quota check: TTS chars per day ──
+    token_str = get_token(request) or ""
+    token_prefix = token_str[:8]
+    date_key = date.today().isoformat()
+    quota = database.get_or_create_quota(token_prefix, date_key)
+    if quota["tts_chars"] + len(text) > DAILY_TTS_CHAR_LIMIT:
+        database.log_security_event(
+            "quota_exceeded", "warning",
+            client_ip=request.client.host if request.client else "",
+            token_prefix=token_prefix,
+            details=f"tts_chars: current={quota['tts_chars']}, requested={len(text)}, limit={DAILY_TTS_CHAR_LIMIT}",
+            endpoint="/api/synthesize",
+        )
+        return JSONResponse(
+            {"error": f"Daily TTS quota exceeded ({DAILY_TTS_CHAR_LIMIT:,} chars/day)"},
+            status_code=429,
+        )
 
     audio_path = None
     try:
@@ -396,6 +835,9 @@ async def synthesize_text(request: Request):
                 {"error": "Nothing to synthesize (mostly code)"},
                 status_code=204,
             )
+
+        # Record usage after success
+        database.increment_tts_chars(token_prefix, date_key, len(text))
 
         return FileResponse(
             audio_path,
@@ -422,6 +864,8 @@ async def get_messages(request: Request, cwd: str = "", agent_id: str = "default
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
     if not cwd:
         return JSONResponse({"error": "cwd parameter is required"}, status_code=400)
+    if len(cwd) > MAX_CWD_LENGTH or len(agent_id) > WS_MAX_AGENT_ID_LENGTH:
+        return JSONResponse({"error": "Parameter too long"}, status_code=400)
     messages = database.get_messages(cwd, agent_id=agent_id)
     return {"messages": messages}
 
@@ -432,6 +876,8 @@ async def delete_messages(request: Request, cwd: str = "", agent_id: str = ""):
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
     if not cwd:
         return JSONResponse({"error": "cwd parameter is required"}, status_code=400)
+    if len(cwd) > MAX_CWD_LENGTH or len(agent_id) > WS_MAX_AGENT_ID_LENGTH:
+        return JSONResponse({"error": "Parameter too long"}, status_code=400)
     count = database.clear_messages(cwd, agent_id=agent_id or None)
     return {"deleted": count}
 
@@ -570,12 +1016,118 @@ async def websocket_endpoint(ws: WebSocket):
     # Agent registry: agent_id → { client, cwd, streaming_task }
     agents: dict[str, dict] = {}
     api_key: str | None = None
+    last_activity: float = time.time()
+
+    # Permission request tracking
+    pending_permissions: dict[str, asyncio.Event] = {}   # request_id → Event
+    permission_responses: dict[str, dict] = {}            # request_id → {approved, pin}
 
     async def send(msg: dict):
         try:
             await ws.send_json(msg)
         except Exception:
             pass
+
+    # Heartbeat loop: ping every 30s, close after idle timeout
+    async def heartbeat_loop():
+        nonlocal last_activity
+        while True:
+            await asyncio.sleep(WS_HEARTBEAT_INTERVAL)
+            # Check idle timeout
+            if time.time() - last_activity > WS_IDLE_TIMEOUT:
+                try:
+                    await ws.close(code=4002, reason="Idle timeout")
+                except Exception:
+                    pass
+                return
+            # Send ping
+            await send({"type": "ping", "ts": time.time()})
+
+    heartbeat_task = asyncio.create_task(heartbeat_loop())
+
+    def _get_active_streaming_agent() -> str | None:
+        """Find the agent that currently has an active streaming task."""
+        for aid, agent_data in agents.items():
+            task = agent_data.get("streaming_task")
+            if task and not task.done():
+                return aid
+        return None
+
+    async def can_use_tool_callback(
+        tool_name: str,
+        tool_input: dict,
+        context: ToolPermissionContext,
+    ) -> PermissionResultAllow | PermissionResultDeny:
+        """Permission callback invoked by the SDK before each tool execution."""
+        level = classify(tool_name, tool_input)
+        active_agent_id = _get_active_streaming_agent() or "default"
+
+        # GREEN: auto-approve silently
+        if level == PermissionLevel.GREEN:
+            database.log_permission_decision(
+                active_agent_id, tool_name, tool_input, level.value, "approved",
+            )
+            return PermissionResultAllow()
+
+        # YELLOW or RED: send permission request to frontend and wait
+        request_id = f"perm_{secrets.token_hex(8)}"
+        event = asyncio.Event()
+        pending_permissions[request_id] = event
+
+        await send({
+            "type": "permission_request",
+            "request_id": request_id,
+            "agent_id": active_agent_id,
+            "tool": tool_name,
+            "input": tool_input,
+            "level": level.value,
+            "reason": get_danger_reason(tool_name, tool_input) if level == PermissionLevel.RED else "",
+        })
+
+        # Wait for frontend response (5 min timeout)
+        try:
+            await asyncio.wait_for(event.wait(), timeout=300)
+        except asyncio.TimeoutError:
+            pending_permissions.pop(request_id, None)
+            permission_responses.pop(request_id, None)
+            database.log_permission_decision(
+                active_agent_id, tool_name, tool_input, level.value, "timeout",
+            )
+            return PermissionResultDeny(
+                message="Permission request timed out (5 minutes). Operation denied."
+            )
+
+        response = permission_responses.pop(request_id, {})
+        pending_permissions.pop(request_id, None)
+        approved = response.get("approved", False)
+
+        # For RED level, verify PIN
+        if level == PermissionLevel.RED and approved:
+            pin = response.get("pin", "")
+            pin_hash = config.get("pin_hash", "")
+            try:
+                pin_valid = bool(pin) and bcrypt.checkpw(
+                    pin.encode("utf-8"), pin_hash.encode("utf-8")
+                )
+            except Exception:
+                pin_valid = False
+
+            if not pin_valid:
+                database.log_permission_decision(
+                    active_agent_id, tool_name, tool_input, "red", "denied", "invalid_pin",
+                )
+                return PermissionResultDeny(message="Invalid PIN. Operation denied.")
+
+        if approved:
+            database.log_permission_decision(
+                active_agent_id, tool_name, tool_input, level.value, "approved",
+            )
+            return PermissionResultAllow()
+        else:
+            database.log_permission_decision(
+                active_agent_id, tool_name, tool_input, level.value, "denied", "user_denied",
+            )
+            return PermissionResultDeny(message="Operation denied by user.")
 
     async def stream_claude_response(stream_client: ClaudeSDKClient, agent_id: str):
         """Stream Claude's response to the frontend. Runs as a background task."""
@@ -695,9 +1247,29 @@ async def websocket_endpoint(ws: WebSocket):
         if agent_id in agents:
             agents[agent_id]["streaming_task"] = None
 
+    async def cancel_computer_use_task(agent_id: str):
+        """Cancel a running computer use agent loop."""
+        agent = agents.get(agent_id)
+        if not agent:
+            return
+        task = agent.get("computer_task")
+        if task and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        if agent_id in agents:
+            agents[agent_id]["computer_task"] = None
+        # Release held keys/mouse
+        executor = agent.get("computer_executor")
+        if executor:
+            executor.release_all()
+
     async def destroy_agent(agent_id: str):
         """Fully disconnect and remove an agent."""
         await cancel_agent_streaming(agent_id)
+        await cancel_computer_use_task(agent_id)
         agent = agents.pop(agent_id, None)
         if agent and agent.get("client"):
             try:
@@ -705,20 +1277,342 @@ async def websocket_endpoint(ws: WebSocket):
             except Exception:
                 pass
 
+    # ── Computer Use agent loop ─────────────────────────────────────
+    async def _computer_use_loop(
+        agent_id: str,
+        user_text: str,
+        api_key_str: str,
+        executor: "ComputerUseExecutor",
+        send_ws,
+        agents_ref: dict,
+        pending_perms: dict,
+        perm_responses: dict,
+    ):
+        """Agent loop for Computer Use mode.
+
+        Sends messages to Claude API with the computer tool and executes
+        actions on the local PC, streaming screenshots to the frontend.
+        """
+        client = AsyncAnthropic(api_key=api_key_str)
+
+        tools = [
+            executor.get_tool_definition(),
+            {"type": "bash_20250124", "name": "bash"},
+            {"type": "text_editor_20250124", "name": "str_replace_based_edit_tool"},
+        ]
+
+        # Initial screenshot for context
+        initial_screenshot = await executor.take_screenshot()
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": initial_screenshot,
+                        },
+                    },
+                    {"type": "text", "text": user_text},
+                ],
+            }
+        ]
+
+        # Send initial screenshot to frontend
+        await send_ws({
+            "type": "computer_screenshot",
+            "agent_id": agent_id,
+            "image": initial_screenshot,
+            "action": "initial",
+            "description": "Estado inicial de la pantalla",
+            "iteration": 0,
+        })
+
+        iterations = 0
+        total_input_tokens = 0
+        total_output_tokens = 0
+        start_time = time.time()
+
+        try:
+            while iterations < COMPUTER_USE_MAX_ITERATIONS:
+                iterations += 1
+
+                response = await client.beta.messages.create(
+                    model=COMPUTER_USE_MODEL,
+                    max_tokens=COMPUTER_USE_MAX_TOKENS,
+                    system=COMPUTER_USE_SYSTEM_PROMPT,
+                    tools=tools,
+                    messages=messages,
+                    betas=[COMPUTER_USE_BETA],
+                )
+
+                total_input_tokens += response.usage.input_tokens
+                total_output_tokens += response.usage.output_tokens
+
+                # Build assistant content for conversation history
+                assistant_content = []
+                for block in response.content:
+                    assistant_content.append(block)
+
+                messages.append({"role": "assistant", "content": response.content})
+
+                tool_results = []
+
+                for block in response.content:
+                    # Text blocks
+                    if hasattr(block, "text") and block.type == "text":
+                        await send_ws({
+                            "type": "assistant_text",
+                            "agent_id": agent_id,
+                            "text": block.text,
+                        })
+
+                    # Tool use blocks
+                    elif block.type == "tool_use":
+                        tool_name = block.name
+                        tool_input = block.input if hasattr(block, "input") else {}
+
+                        action_desc = describe_action(tool_name, tool_input)
+
+                        # Send action preview to frontend
+                        await send_ws({
+                            "type": "computer_action",
+                            "agent_id": agent_id,
+                            "tool": tool_name,
+                            "action": tool_input.get("action", tool_name),
+                            "input": tool_input,
+                            "description": action_desc,
+                            "iteration": iterations,
+                        })
+
+                        # ── Permission check via existing system ──
+                        level = classify(tool_name, tool_input)
+
+                        # For computer tool, always request permission unless screenshot
+                        if tool_name == "computer" and tool_input.get("action") != "screenshot":
+                            if level == PermissionLevel.GREEN:
+                                level = PermissionLevel.YELLOW
+
+                        if level != PermissionLevel.GREEN:
+                            request_id = f"perm_{secrets.token_hex(8)}"
+                            event = asyncio.Event()
+                            pending_perms[request_id] = event
+
+                            await send_ws({
+                                "type": "permission_request",
+                                "request_id": request_id,
+                                "agent_id": agent_id,
+                                "tool": f"computer:{tool_input.get('action', tool_name)}" if tool_name == "computer" else tool_name,
+                                "input": tool_input,
+                                "level": level.value,
+                                "reason": action_desc if level == PermissionLevel.RED else "",
+                            })
+
+                            try:
+                                await asyncio.wait_for(event.wait(), timeout=300)
+                            except asyncio.TimeoutError:
+                                pending_perms.pop(request_id, None)
+                                perm_responses.pop(request_id, None)
+                                tool_results.append({
+                                    "type": "tool_result",
+                                    "tool_use_id": block.id,
+                                    "content": "Permission request timed out.",
+                                    "is_error": True,
+                                })
+                                database.log_permission_decision(
+                                    agent_id, tool_name, tool_input, level.value, "timeout",
+                                )
+                                continue
+
+                            resp = perm_responses.pop(request_id, {})
+                            pending_perms.pop(request_id, None)
+                            approved = resp.get("approved", False)
+
+                            # PIN check for RED level
+                            if level == PermissionLevel.RED and approved:
+                                pin_val = resp.get("pin", "")
+                                pin_hash = config.get("pin_hash", "")
+                                try:
+                                    pin_valid = bool(pin_val) and bcrypt.checkpw(
+                                        pin_val.encode("utf-8"), pin_hash.encode("utf-8")
+                                    )
+                                except Exception:
+                                    pin_valid = False
+                                if not pin_valid:
+                                    approved = False
+
+                            if not approved:
+                                tool_results.append({
+                                    "type": "tool_result",
+                                    "tool_use_id": block.id,
+                                    "content": "Action denied by user.",
+                                    "is_error": True,
+                                })
+                                database.log_permission_decision(
+                                    agent_id, tool_name, tool_input, level.value, "denied",
+                                )
+                                continue
+
+                            database.log_permission_decision(
+                                agent_id, tool_name, tool_input, level.value, "approved",
+                            )
+
+                        # ── Execute the action ──
+                        if tool_name == "computer":
+                            action = tool_input.get("action", "screenshot")
+                            result_content = await executor.execute_action(action, tool_input)
+
+                            # Send screenshot to frontend
+                            for item in result_content:
+                                if item.get("type") == "image":
+                                    await send_ws({
+                                        "type": "computer_screenshot",
+                                        "agent_id": agent_id,
+                                        "image": item["source"]["data"],
+                                        "action": action,
+                                        "description": action_desc,
+                                        "iteration": iterations,
+                                    })
+
+                        elif tool_name == "bash":
+                            cmd = tool_input.get("command", "")
+                            try:
+                                proc = await asyncio.create_subprocess_shell(
+                                    cmd,
+                                    stdout=asyncio.subprocess.PIPE,
+                                    stderr=asyncio.subprocess.PIPE,
+                                )
+                                stdout, stderr = await asyncio.wait_for(
+                                    proc.communicate(), timeout=30,
+                                )
+                                output = (stdout or b"").decode(errors="replace") + (stderr or b"").decode(errors="replace")
+                                result_content = [{"type": "text", "text": output[:10000]}]
+                            except asyncio.TimeoutError:
+                                result_content = [{"type": "text", "text": "Command timed out (30s)."}]
+                            except Exception as e:
+                                result_content = [{"type": "text", "text": f"Error: {e}"}]
+
+                        elif tool_name == "str_replace_based_edit_tool":
+                            # Text editor tool — not yet implemented in computer use mode
+                            result_content = [{"type": "text", "text": "Text editor tool not yet implemented in computer use mode. Use Bash instead."}]
+
+                        else:
+                            result_content = [{"type": "text", "text": f"Unknown tool: {tool_name}"}]
+
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": result_content,
+                        })
+
+                # If no tools were used, Claude is done
+                if not tool_results:
+                    break
+
+                messages.append({"role": "user", "content": tool_results})
+
+            # ── Send final result ──
+            elapsed_ms = int((time.time() - start_time) * 1000)
+            input_cost = total_input_tokens * 3.0 / 1_000_000
+            output_cost = total_output_tokens * 15.0 / 1_000_000
+            total_cost = input_cost + output_cost
+
+            await send_ws({
+                "type": "result",
+                "agent_id": agent_id,
+                "text": "",
+                "session_id": None,
+                "cost": round(total_cost, 4),
+                "duration_ms": elapsed_ms,
+                "num_turns": iterations,
+                "is_error": False,
+                "usage": {
+                    "input_tokens": total_input_tokens,
+                    "output_tokens": total_output_tokens,
+                },
+            })
+
+        except asyncio.CancelledError:
+            await send_ws({
+                "type": "result",
+                "agent_id": agent_id,
+                "text": "Computer use cancelled.",
+                "session_id": None,
+                "cost": None,
+                "duration_ms": None,
+                "num_turns": iterations,
+                "is_error": False,
+            })
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            await send_ws({
+                "type": "error",
+                "agent_id": agent_id,
+                "text": f"Computer use error: {str(e)}",
+            })
+
+    # ── End of computer use loop ─────────────────────────────────────
+
     try:
         await send({"type": "status", "agent_id": None, "text": "Connected. Select a project directory."})
 
         while True:
             raw = await ws.receive_text()
+            last_activity = time.time()
+
+            # ── 6a. Message size limit (16 KB) ──
+            if len(raw) > WS_MAX_MESSAGE_BYTES:
+                database.log_security_event(
+                    "ws_message_too_large", "warning",
+                    token_prefix=token[:8] if token else "",
+                    details=f"size={len(raw)}, limit={WS_MAX_MESSAGE_BYTES}",
+                )
+                await send({"type": "error", "agent_id": "default", "text": "Message too large"})
+                continue
+
             data = json.loads(raw)
-            msg_type = data.get("type")
+            msg_type = data.get("type", "")
             agent_id = data.get("agent_id", "default")
+
+            # ── Pong response — skip processing ──
+            if msg_type == "pong":
+                continue
+
+            # ── 6b. WebSocket field validation ──
+            if len(str(msg_type)) > WS_MAX_MSG_TYPE_LENGTH or len(str(agent_id)) > WS_MAX_AGENT_ID_LENGTH:
+                database.log_security_event(
+                    "invalid_input", "info",
+                    token_prefix=token[:8] if token else "",
+                    details=f"type_len={len(str(msg_type))}, agent_id_len={len(str(agent_id))}",
+                )
+                await send({"type": "error", "agent_id": agent_id, "text": "Invalid field length"})
+                continue
+
+            # ── 6c. WebSocket rate limiting (60/min) ──
+            rl_result = rate_limiter.check(token or "", EndpointCategory.WEBSOCKET_MSG)
+            if not rl_result.allowed:
+                database.log_security_event(
+                    "ws_rate_limited", "warning",
+                    token_prefix=token[:8] if token else "",
+                    details=f"limit={rl_result.limit}",
+                )
+                await send({
+                    "type": "error", "agent_id": agent_id,
+                    "text": f"Rate limit exceeded. Retry in {int(rl_result.retry_after)}s",
+                })
+                continue
 
             # ---- Set API key (global, not per-agent) ----
             if msg_type == "set_api_key":
                 key = data.get("key", "").strip()
                 if not key:
                     await send({"type": "error", "agent_id": agent_id, "text": "API key is required."})
+                    continue
+                if len(key) > WS_MAX_KEY_LENGTH:
+                    await send({"type": "error", "agent_id": agent_id, "text": "API key too long."})
                     continue
                 api_key = key
                 await send({"type": "status", "agent_id": agent_id, "text": "API key set."})
@@ -733,10 +1627,23 @@ async def websocket_endpoint(ws: WebSocket):
             # ---- Set working directory for an agent ----
             elif msg_type == "set_cwd":
                 new_cwd = data.get("path", "")
+
+                if len(new_cwd) > WS_MAX_PATH_LENGTH:
+                    await send({"type": "error", "agent_id": agent_id, "text": "Path too long."})
+                    continue
+
                 cwd_path = Path(new_cwd)
 
                 if not cwd_path.is_dir():
                     await send({"type": "error", "agent_id": agent_id, "text": f"Not a directory: {new_cwd}"})
+                    continue
+
+                # ── 6d. Max concurrent agents ──
+                if agent_id not in agents and len(agents) >= WS_MAX_CONCURRENT_AGENTS:
+                    await send({
+                        "type": "error", "agent_id": agent_id,
+                        "text": f"Max {WS_MAX_CONCURRENT_AGENTS} concurrent agents reached. Close one first.",
+                    })
                     continue
 
                 # Destroy previous agent with this id if exists
@@ -749,7 +1656,8 @@ async def websocket_endpoint(ws: WebSocket):
                 env = {"ANTHROPIC_API_KEY": api_key} if api_key else {}
                 options = ClaudeAgentOptions(
                     cwd=resolved_cwd,
-                    permission_mode="bypassPermissions",
+                    permission_mode="default",
+                    can_use_tool=can_use_tool_callback,
                     include_partial_messages=True,
                     env=env,
                     system_prompt=RAIN_SYSTEM_PROMPT,
@@ -762,6 +1670,10 @@ async def websocket_endpoint(ws: WebSocket):
                     "client": client,
                     "cwd": resolved_cwd,
                     "streaming_task": None,
+                    # Computer Use fields
+                    "mode": "coding",
+                    "computer_executor": None,
+                    "computer_task": None,
                 }
 
                 await send({
@@ -776,6 +1688,9 @@ async def websocket_endpoint(ws: WebSocket):
                 text = data.get("text", "").strip()
                 if not text:
                     continue
+                if len(text) > WS_MAX_TEXT_LENGTH:
+                    await send({"type": "error", "agent_id": agent_id, "text": f"Message too long (max {WS_MAX_TEXT_LENGTH} chars)."})
+                    continue
 
                 agent = agents.get(agent_id)
                 if not agent or not agent.get("client"):
@@ -786,6 +1701,27 @@ async def websocket_endpoint(ws: WebSocket):
                 if agent.get("cwd"):
                     database.save_message(agent["cwd"], "user", "text", {"text": text}, agent_id=agent_id)
 
+                # ── Computer Use mode: separate agent loop ──
+                if agent.get("mode") == "computer_use" and COMPUTER_USE_AVAILABLE:
+                    await cancel_computer_use_task(agent_id)
+                    await send({"type": "status", "agent_id": agent_id, "text": "Rain is controlling the PC..."})
+
+                    cu_task = asyncio.create_task(
+                        _computer_use_loop(
+                            agent_id=agent_id,
+                            user_text=text,
+                            api_key_str=api_key or "",
+                            executor=agent["computer_executor"],
+                            send_ws=send,
+                            agents_ref=agents,
+                            pending_perms=pending_permissions,
+                            perm_responses=permission_responses,
+                        )
+                    )
+                    agents[agent_id]["computer_task"] = cu_task
+                    continue
+
+                # ── Coding mode (default): existing flow ──
                 # Cancel any previous streaming for this agent
                 await cancel_agent_streaming(agent_id)
 
@@ -827,11 +1763,88 @@ async def websocket_endpoint(ws: WebSocket):
                 await destroy_agent(agent_id)
                 await send({"type": "agent_destroyed", "agent_id": agent_id})
 
+            # ---- Set agent mode (coding / computer_use) ----
+            elif msg_type == "set_mode":
+                mode = data.get("mode", "coding")
+                agent = agents.get(agent_id)
+                if not agent:
+                    await send({"type": "error", "agent_id": agent_id, "text": "Agent not found."})
+                    continue
+
+                if mode == "computer_use":
+                    if not COMPUTER_USE_AVAILABLE:
+                        await send({"type": "error", "agent_id": agent_id, "text": "Computer Use not available. Install: pip install anthropic pyautogui mss Pillow pyperclip"})
+                        continue
+                    if not api_key:
+                        await send({"type": "error", "agent_id": agent_id, "text": "API key required for Computer Use mode."})
+                        continue
+
+                    executor = ComputerUseExecutor()
+                    agents[agent_id]["mode"] = "computer_use"
+                    agents[agent_id]["computer_executor"] = executor
+                    await send({
+                        "type": "mode_changed",
+                        "agent_id": agent_id,
+                        "mode": "computer_use",
+                        "display_info": executor.get_display_info(),
+                    })
+                else:
+                    # Switch back to coding
+                    await cancel_computer_use_task(agent_id)
+                    agents[agent_id]["mode"] = "coding"
+                    agents[agent_id]["computer_executor"] = None
+                    await send({
+                        "type": "mode_changed",
+                        "agent_id": agent_id,
+                        "mode": "coding",
+                    })
+
+            # ---- Emergency stop for computer use ----
+            elif msg_type == "emergency_stop":
+                agent = agents.get(agent_id)
+                if agent:
+                    await cancel_computer_use_task(agent_id)
+                    await cancel_agent_streaming(agent_id)
+                    await send({
+                        "type": "status",
+                        "agent_id": agent_id,
+                        "text": "EMERGENCY STOP - All actions halted.",
+                    })
+                    database.log_security_event(
+                        "computer_use_emergency_stop", "critical",
+                        client_ip="local",
+                        token_prefix=token[:8] if token else "",
+                        details=f"Emergency stop for agent {agent_id}",
+                    )
+
+            # ---- Permission response from frontend ----
+            elif msg_type == "permission_response":
+                request_id = data.get("request_id", "")
+                if request_id in pending_permissions:
+                    permission_responses[request_id] = {
+                        "approved": data.get("approved", False),
+                        "pin": data.get("pin"),
+                    }
+                    pending_permissions[request_id].set()
+                else:
+                    await send({
+                        "type": "error",
+                        "agent_id": agent_id,
+                        "text": "Permission request expired or not found.",
+                    })
+
     except WebSocketDisconnect:
         pass
     except Exception:
         pass
     finally:
+        # Cancel heartbeat
+        heartbeat_task.cancel()
+        try:
+            await heartbeat_task
+        except asyncio.CancelledError:
+            pass
+
         # Cleanup all agents on disconnect
         for aid in list(agents.keys()):
             agent = agents.get(aid)
@@ -839,6 +1852,12 @@ async def websocket_endpoint(ws: WebSocket):
                 task = agent.get("streaming_task")
                 if task and not task.done():
                     task.cancel()
+                cu_task = agent.get("computer_task")
+                if cu_task and not cu_task.done():
+                    cu_task.cancel()
+                executor = agent.get("computer_executor")
+                if executor:
+                    executor.release_all()
                 if agent.get("client"):
                     try:
                         await agent["client"].disconnect()
@@ -875,7 +1894,11 @@ if __name__ == "__main__":
     print("  Rain Assistant Server", flush=True)
     print(f"  Local:   http://localhost:{PORT}", flush=True)
     print(f"  Network: http://{local_ip}:{PORT}", flush=True)
-    print(f"  PIN:     {config['pin']}", flush=True)
+    display_pin = config.pop("_display_pin", None)
+    if display_pin:
+        print(f"  PIN:     {display_pin}  (new — shown only once)", flush=True)
+    else:
+        print(f"  PIN:     [hashed — see initial creation log]", flush=True)
     print(flush=True)
 
     # cloudflared quick-tunnel binds the --url port on Windows, so we must

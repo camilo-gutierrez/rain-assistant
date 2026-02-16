@@ -25,7 +25,6 @@ export default function ChatInput() {
     const trimmed = text.trim();
     if (!trimmed || !activeAgentId || !hasCwd || isProcessing) return;
 
-    // Append user message to store
     appendMessage(activeAgentId, {
       id: crypto.randomUUID(),
       type: "user",
@@ -34,7 +33,6 @@ export default function ChatInput() {
       animate: true,
     });
 
-    // Send via WebSocket
     const sent = send({
       type: "send_message",
       text: trimmed,
@@ -46,7 +44,6 @@ export default function ChatInput() {
       setAgentStatus(activeAgentId, "working");
       setText("");
     } else {
-      // WebSocket not connected — remove the optimistic message
       appendMessage(activeAgentId, {
         id: crypto.randomUUID(),
         type: "system",
@@ -67,7 +64,7 @@ export default function ChatInput() {
   };
 
   return (
-    <div className="flex items-center gap-2 px-4 py-2 bg-surface border-t border-overlay">
+    <div className="flex items-center gap-2 px-4 py-3 bg-surface border-t border-overlay">
       <input
         ref={inputRef}
         type="text"
@@ -76,18 +73,17 @@ export default function ChatInput() {
         onKeyDown={handleKeyDown}
         placeholder={t("chat.inputPlaceholder")}
         disabled={isProcessing || !hasCwd}
-        className="flex-1 bg-surface2 text-text border border-cyan/20 rounded-lg px-4 py-2.5 text-sm placeholder:text-subtext focus:outline-none focus:border-cyan focus:shadow-[0_0_12px_var(--neon-glow)] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+        className="flex-1 bg-surface2 text-text border border-overlay rounded-full px-4 py-2.5 text-sm placeholder:text-subtext focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
       />
       <button
         onClick={handleSend}
         disabled={!text.trim() || isProcessing || !hasCwd}
-        className="px-5 py-2.5 rounded-lg font-[family-name:var(--font-orbitron)] text-xs font-bold uppercase tracking-wider border transition-all disabled:opacity-30 disabled:cursor-not-allowed hover:shadow-[0_0_16px_rgba(0,255,136,0.3)]"
-        style={{
-          borderImage: "linear-gradient(135deg, var(--green), var(--cyan)) 1",
-          color: "var(--green)",
-        }}
+        className="w-10 h-10 flex items-center justify-center rounded-full bg-primary text-on-primary transition-all disabled:opacity-30 disabled:cursor-not-allowed hover:bg-primary-dark shrink-0"
       >
-        {t("chat.sendBtn")}
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <line x1="22" y1="2" x2="11" y2="13" />
+          <polygon points="22 2 15 22 11 13 2 9 22 2" />
+        </svg>
       </button>
     </div>
   );

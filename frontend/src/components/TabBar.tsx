@@ -5,17 +5,18 @@ import { useConnectionStore } from "@/stores/useConnectionStore";
 import { useUIStore } from "@/stores/useUIStore";
 import { useTranslation } from "@/hooks/useTranslation";
 import type { AgentStatus } from "@/lib/types";
+import ModeToggle from "@/components/computer-use/ModeToggle";
 
 function statusDotClass(status: AgentStatus): string {
   switch (status) {
     case "idle":
-      return "bg-green shadow-[0_0_4px_var(--green)]";
+      return "bg-green";
     case "working":
-      return "bg-cyan animate-dot-pulse-cyan";
+      return "bg-primary animate-pulse";
     case "done":
-      return "bg-green animate-dot-flash-green";
+      return "bg-green";
     case "error":
-      return "bg-red animate-dot-pulse-red";
+      return "bg-red";
     default:
       return "bg-subtext";
   }
@@ -43,60 +44,36 @@ export default function TabBar() {
   const handleNewAgent = () => {
     const newId = createAgent();
     switchToAgent(newId);
-    // New agent defaults to "fileBrowser" panel — sync UI to match
     setActivePanel("fileBrowser");
   };
 
   return (
-    <nav className="relative flex items-center bg-bg border-b border-overlay overflow-x-auto scrollbar-none">
-      {/* Neon underline */}
-      <div
-        className="absolute bottom-0 left-0 right-0 h-px opacity-40"
-        style={{
-          background: "linear-gradient(90deg, var(--cyan), var(--magenta))",
-        }}
-      />
-
-      {/* Tabs */}
+    <nav className="flex items-center bg-surface border-b border-overlay overflow-x-auto scrollbar-none">
       {agentEntries.map((agent) => {
         const isActive = agent.id === activeAgentId;
         return (
           <div
             key={agent.id}
             onClick={() => switchToAgent(agent.id)}
-            className={`group relative flex items-center gap-1.5 px-3 py-2 rounded-t-lg cursor-pointer transition-colors select-none shrink-0 ${
+            className={`group relative flex items-center gap-2 px-4 py-2.5 cursor-pointer transition-colors select-none shrink-0 border-b-2 ${
               isActive
-                ? "bg-surface border border-b-0 border-overlay"
-                : "hover:bg-surface2/50"
+                ? "border-b-primary text-text bg-surface2/50"
+                : "border-b-transparent text-text2 hover:bg-surface2/30 hover:text-text"
             }`}
           >
-            {/* Neon top edge for active tab */}
-            {isActive && (
-              <div
-                className="absolute top-0 left-0 right-0 h-0.5 rounded-t-lg"
-                style={{
-                  background: "linear-gradient(90deg, var(--cyan), var(--magenta))",
-                }}
-              />
-            )}
-
             {/* Status dot */}
             <div
-              className={`w-[7px] h-[7px] rounded-full shrink-0 ${statusDotClass(agent.status)}`}
+              className={`w-2 h-2 rounded-full shrink-0 ${statusDotClass(agent.status)}`}
             />
 
             {/* Label */}
-            <span
-              className={`font-[family-name:var(--font-jetbrains)] text-xs truncate max-w-[120px] ${
-                isActive ? "text-text" : "text-text2"
-              }`}
-            >
+            <span className={`text-sm truncate max-w-[140px] ${isActive ? "font-medium" : ""}`}>
               {folderName(agent.cwd, agent.label)}
             </span>
 
             {/* Unread badge */}
             {agent.unread > 0 && !isActive && (
-              <span className="min-w-[16px] h-4 flex items-center justify-center px-1 rounded-full bg-magenta text-white text-[10px] font-bold animate-badge-pop">
+              <span className="min-w-[18px] h-[18px] flex items-center justify-center px-1 rounded-full bg-primary text-on-primary text-[10px] font-bold animate-fade-in">
                 {agent.unread > 99 ? "99+" : agent.unread}
               </span>
             )}
@@ -108,7 +85,7 @@ export default function TabBar() {
                   e.stopPropagation();
                   closeAgent(agent.id, send);
                 }}
-                className="ml-1 w-4 h-4 flex items-center justify-center rounded text-subtext hover:text-red hover:bg-red/10 opacity-0 group-hover:opacity-100 transition-opacity text-xs"
+                className="ml-0.5 w-5 h-5 flex items-center justify-center rounded-full text-subtext hover:text-red hover:bg-red/10 opacity-0 group-hover:opacity-100 transition-all text-xs"
                 title="Close"
               >
                 &times;
@@ -118,10 +95,13 @@ export default function TabBar() {
         );
       })}
 
-      {/* New agent "+" button */}
+      {/* Mode toggle */}
+      <ModeToggle />
+
+      {/* New agent button */}
       <button
         onClick={handleNewAgent}
-        className="shrink-0 w-8 h-8 mx-1 flex items-center justify-center rounded border border-dashed border-overlay text-subtext hover:border-cyan hover:text-cyan transition-colors text-lg"
+        className="shrink-0 w-8 h-8 mx-2 flex items-center justify-center rounded-full text-subtext hover:bg-primary/10 hover:text-primary transition-colors text-lg"
         title={t("btn.newAgent.title")}
       >
         +

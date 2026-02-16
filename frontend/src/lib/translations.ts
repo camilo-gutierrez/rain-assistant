@@ -91,9 +91,8 @@ const translations: Record<Language, Record<string, string>> = {
     "settings.close": "Close",
     "settings.language": "Language",
     "settings.theme": "Theme",
-    "settings.theme.dark": "Cyberpunk",
+    "settings.theme.dark": "Dark",
     "settings.theme.light": "Light",
-    "settings.theme.ocean": "Ocean",
     "settings.voiceLang": "Voice Recognition",
 
     // TTS settings
@@ -109,6 +108,10 @@ const translations: Record<Language, Record<string, string>> = {
     "tts.stop": "Stop",
     "tts.loading": "Loading audio...",
 
+    // Sidebar
+    "sidebar.newChat": "New conversation",
+    "sidebar.emptyHint": "Your conversations will appear here",
+
     // History sidebar
     "btn.history.title": "Conversation History",
     "history.title": "History",
@@ -119,6 +122,28 @@ const translations: Record<Language, Record<string, string>> = {
     "history.confirmDelete": "Click again to confirm",
     "history.saveBtn": "Save",
     "history.saving": "Saving...",
+
+    // Permissions
+    "perm.requestTitle": "Permission Required",
+    "perm.levelYellow": "Confirmation",
+    "perm.levelRed": "Dangerous Operation",
+    "perm.approve": "Approve",
+    "perm.deny": "Deny",
+    "perm.enterPin": "PIN",
+    "perm.processing": "Processing...",
+    "perm.approved": "Approved",
+    "perm.denied": "Denied",
+    "perm.expired": "Expired",
+
+    // Computer Use
+    "cu.title": "Computer Use",
+    "cu.modeCoding": "Coding",
+    "cu.modeComputer": "Computer",
+    "cu.switchToCoding": "Switch to Coding mode",
+    "cu.switchToComputerUse": "Switch to Computer Use mode",
+    "cu.emergencyStop": "EMERGENCY STOP",
+    "cu.iteration": "Step",
+    "cu.permLevel": "COMPUTER ACCESS",
 
     // Months
     "month.0": "Jan", "month.1": "Feb", "month.2": "Mar", "month.3": "Apr",
@@ -215,9 +240,8 @@ const translations: Record<Language, Record<string, string>> = {
     "settings.close": "Cerrar",
     "settings.language": "Idioma",
     "settings.theme": "Tema",
-    "settings.theme.dark": "Cyberpunk",
+    "settings.theme.dark": "Oscuro",
     "settings.theme.light": "Claro",
-    "settings.theme.ocean": "Oc\u00e9ano",
     "settings.voiceLang": "Reconocimiento de Voz",
 
     // TTS settings
@@ -233,6 +257,10 @@ const translations: Record<Language, Record<string, string>> = {
     "tts.stop": "Detener",
     "tts.loading": "Cargando audio...",
 
+    // Sidebar
+    "sidebar.newChat": "Nueva conversaci\u00f3n",
+    "sidebar.emptyHint": "Tus conversaciones aparecer\u00e1n aqu\u00ed",
+
     // History sidebar
     "btn.history.title": "Historial de Conversaciones",
     "history.title": "Historial",
@@ -243,6 +271,28 @@ const translations: Record<Language, Record<string, string>> = {
     "history.confirmDelete": "Click de nuevo para confirmar",
     "history.saveBtn": "Guardar",
     "history.saving": "Guardando...",
+
+    // Permissions
+    "perm.requestTitle": "Permiso Requerido",
+    "perm.levelYellow": "Confirmación",
+    "perm.levelRed": "Operación Peligrosa",
+    "perm.approve": "Aprobar",
+    "perm.deny": "Denegar",
+    "perm.enterPin": "PIN",
+    "perm.processing": "Procesando...",
+    "perm.approved": "Aprobado",
+    "perm.denied": "Denegado",
+    "perm.expired": "Expirado",
+
+    // Computer Use
+    "cu.title": "Uso de Computadora",
+    "cu.modeCoding": "Codigo",
+    "cu.modeComputer": "Computadora",
+    "cu.switchToCoding": "Cambiar a modo Codigo",
+    "cu.switchToComputerUse": "Cambiar a modo Computer Use",
+    "cu.emergencyStop": "PARADA DE EMERGENCIA",
+    "cu.iteration": "Paso",
+    "cu.permLevel": "ACCESO A COMPUTADORA",
 
     // Months
     "month.0": "Ene", "month.1": "Feb", "month.2": "Mar", "month.3": "Abr",

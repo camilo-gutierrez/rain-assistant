@@ -7,8 +7,13 @@ import { useAgentStore } from "@/stores/useAgentStore";
 import { useConnectionStore } from "@/stores/useConnectionStore";
 import { useUIStore } from "@/stores/useUIStore";
 import { useSettingsStore } from "@/stores/useSettingsStore";
+import { useTranslation } from "@/hooks/useTranslation";
+import SecurityBanner from "@/components/SecurityBanner";
 import StatusBar from "@/components/StatusBar";
 import HistorySidebar from "@/components/HistorySidebar";
+import SidebarNav from "@/components/SidebarNav";
+import MobileBottomNav from "@/components/MobileBottomNav";
+import DrawerOverlay from "@/components/DrawerOverlay";
 import TabBar from "@/components/TabBar";
 import PinPanel from "@/components/panels/PinPanel";
 import ApiKeyPanel from "@/components/panels/ApiKeyPanel";
@@ -18,12 +23,15 @@ import MetricsPanel from "@/components/panels/MetricsPanel";
 import SettingsPanel from "@/components/panels/SettingsPanel";
 
 export default function HomePage() {
-  // Initialize central hooks (call once)
   useWebSocket();
   useNotifications();
 
   const activePanel = useUIStore((s) => s.activePanel);
   const setActivePanel = useUIStore((s) => s.setActivePanel);
+  const metricsDrawerOpen = useUIStore((s) => s.metricsDrawerOpen);
+  const settingsDrawerOpen = useUIStore((s) => s.settingsDrawerOpen);
+  const toggleMetricsDrawer = useUIStore((s) => s.toggleMetricsDrawer);
+  const toggleSettingsDrawer = useUIStore((s) => s.toggleSettingsDrawer);
   const ensureDefaultAgent = useAgentStore((s) => s.ensureDefaultAgent);
   const activeAgentId = useAgentStore((s) => s.activeAgentId);
   const activeAgentPanel = useAgentStore((s) => {
@@ -33,28 +41,23 @@ export default function HomePage() {
   const authToken = useConnectionStore((s) => s.authToken);
   const connect = useConnectionStore((s) => s.connect);
   const theme = useSettingsStore((s) => s.theme);
+  const { t } = useTranslation();
 
-  // On mount: ensure a default agent exists, apply theme, and auto-connect if we have a token
   useEffect(() => {
     ensureDefaultAgent();
-
-    // Apply theme to document
     document.documentElement.setAttribute("data-theme", theme);
 
     if (authToken) {
-      // We already have a token from a previous session, skip PIN
       setActivePanel("apiKey");
       connect();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Keep theme in sync when it changes
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
 
-  // When switching agents, restore that agent's panel (chat or fileBrowser)
   useEffect(() => {
     if (activeAgentPanel && (activePanel === "chat" || activePanel === "fileBrowser")) {
       setActivePanel(activeAgentPanel);
@@ -63,20 +66,58 @@ export default function HomePage() {
   }, [activeAgentId]);
 
   const showTabBar = activePanel === "chat" || activePanel === "fileBrowser";
+  const showSidebar = activePanel === "chat" || activePanel === "fileBrowser";
 
   return (
-    <div className="flex flex-col h-dvh overflow-hidden">
+    <div className="flex flex-col h-dvh overflow-hidden bg-bg">
+      <SecurityBanner />
       <StatusBar />
-      <HistorySidebar />
-      {showTabBar && <TabBar />}
-      <main className="flex-1 flex flex-col overflow-hidden">
-        {activePanel === "pin" && <PinPanel />}
-        {activePanel === "apiKey" && <ApiKeyPanel />}
-        {activePanel === "fileBrowser" && <FileBrowserPanel />}
-        {activePanel === "chat" && <ChatPanel />}
-        {activePanel === "metrics" && <MetricsPanel />}
-        {activePanel === "settings" && <SettingsPanel />}
-      </main>
+
+      <div className="flex flex-1 overflow-hidden">
+        {/* Desktop sidebar */}
+        {showSidebar && (
+          <aside className="hidden md:flex w-[280px] shrink-0 flex-col bg-surface border-r border-overlay">
+            <SidebarNav />
+            <div className="h-px bg-overlay/60 mx-3" />
+            <HistorySidebar mode="inline" />
+          </aside>
+        )}
+
+        {/* Main content area */}
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {showTabBar && <TabBar />}
+          <main className="flex-1 flex flex-col overflow-hidden">
+            {activePanel === "pin" && <PinPanel />}
+            {activePanel === "apiKey" && <ApiKeyPanel />}
+            {activePanel === "fileBrowser" && <FileBrowserPanel />}
+            {activePanel === "chat" && <ChatPanel />}
+          </main>
+        </div>
+      </div>
+
+      {/* Mobile bottom nav */}
+      {showTabBar && <MobileBottomNav />}
+
+      {/* Mobile history drawer */}
+      <HistorySidebar mode="drawer" />
+
+      {/* Metrics drawer */}
+      <DrawerOverlay
+        open={metricsDrawerOpen}
+        onClose={toggleMetricsDrawer}
+        title={t("metrics.title")}
+      >
+        <MetricsPanel />
+      </DrawerOverlay>
+
+      {/* Settings drawer */}
+      <DrawerOverlay
+        open={settingsDrawerOpen}
+        onClose={toggleSettingsDrawer}
+        title={t("btn.settings.title")}
+      >
+        <SettingsPanel />
+      </DrawerOverlay>
     </div>
   );
 }

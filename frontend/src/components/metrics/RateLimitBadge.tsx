@@ -33,12 +33,7 @@ export default function RateLimitBadge() {
     <div className="hidden sm:flex items-center gap-2">
       {/* Model badge */}
       {currentModel && (
-        <span
-          className="px-2 py-0.5 rounded text-[10px] font-bold text-white"
-          style={{
-            background: "linear-gradient(135deg, var(--cyan), var(--mauve))",
-          }}
-        >
+        <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-primary/10 text-primary">
           {currentModel}
         </span>
       )}
@@ -47,7 +42,7 @@ export default function RateLimitBadge() {
       <div className="flex items-center gap-1.5 rate-bars-responsive">
         {bars.map((bar) => (
           <div key={bar.label} className="flex items-center gap-1">
-            <span className="text-[9px] text-subtext font-[family-name:var(--font-jetbrains)]">
+            <span className="text-[9px] text-subtext font-medium">
               {bar.label}
             </span>
             <div className="w-8 h-1.5 rounded-full bg-surface2 overflow-hidden">
@@ -56,7 +51,7 @@ export default function RateLimitBadge() {
                 style={{ width: `${bar.pct}%` }}
               />
             </div>
-            <span className="text-[9px] text-subtext font-[family-name:var(--font-jetbrains)]">
+            <span className="text-[9px] text-subtext">
               {bar.pct}%
             </span>
           </div>
