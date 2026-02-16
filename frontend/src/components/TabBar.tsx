@@ -43,6 +43,7 @@ export default function TabBar() {
   const handleNewAgent = () => {
     const newId = createAgent();
     switchToAgent(newId);
+    // New agent defaults to "fileBrowser" panel — sync UI to match
     setActivePanel("fileBrowser");
   };
 

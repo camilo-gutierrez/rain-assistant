@@ -396,6 +396,114 @@ async def get_metrics(request: Request):
 
 
 # ---------------------------------------------------------------------------
+# Conversation History (JSON file-based, max 5)
+# ---------------------------------------------------------------------------
+
+HISTORY_DIR = CONFIG_DIR / "history"
+HISTORY_GLOB = "*.json"
+MAX_CONVERSATIONS = 5
+
+
+@app.get("/api/history")
+async def list_conversations(request: Request):
+    if not verify_token(get_token(request)):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+    conversations = []
+    for f in sorted(HISTORY_DIR.glob(HISTORY_GLOB), key=lambda p: p.stat().st_mtime, reverse=True):
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+            conversations.append({
+                "id": data["id"],
+                "createdAt": data["createdAt"],
+                "updatedAt": data["updatedAt"],
+                "label": data.get("label", ""),
+                "cwd": data.get("cwd", ""),
+                "messageCount": data.get("messageCount", 0),
+                "preview": data.get("preview", ""),
+                "totalCost": data.get("totalCost", 0),
+            })
+        except (json.JSONDecodeError, KeyError, OSError):
+            continue
+    return {"conversations": conversations}
+
+
+@app.post("/api/history")
+async def save_conversation(request: Request):
+    if not verify_token(get_token(request)):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+
+    conv_id = body.get("id", f"conv_{int(time.time() * 1000)}")
+    body["id"] = conv_id
+
+    # Find existing file for this id, or create new filename
+    target = None
+    for f in HISTORY_DIR.glob(HISTORY_GLOB):
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+            if data.get("id") == conv_id:
+                target = f
+                break
+        except (json.JSONDecodeError, OSError):
+            continue
+
+    if not target:
+        safe_agent = str(body.get("agentId", "default")).replace("/", "_").replace("\\", "_")
+        target = HISTORY_DIR / f"{int(time.time() * 1000)}_{safe_agent}.json"
+
+    target.write_text(json.dumps(body, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # Enforce max conversations — delete oldest beyond limit
+    deleted = []
+    files = sorted(HISTORY_DIR.glob(HISTORY_GLOB), key=lambda p: p.stat().st_mtime, reverse=True)
+    for f in files[MAX_CONVERSATIONS:]:
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+            deleted.append(data.get("id", f.stem))
+        except Exception:
+            deleted.append(f.stem)
+        f.unlink()
+
+    return {"saved": True, "id": conv_id, "deleted": deleted}
+
+
+@app.get("/api/history/{conversation_id}")
+async def load_conversation(request: Request, conversation_id: str):
+    if not verify_token(get_token(request)):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+    for f in HISTORY_DIR.glob(HISTORY_GLOB):
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+            if data.get("id") == conversation_id:
+                return data
+        except (json.JSONDecodeError, OSError):
+            continue
+    return JSONResponse({"error": "Not found"}, status_code=404)
+
+
+@app.delete("/api/history/{conversation_id}")
+async def delete_conversation(request: Request, conversation_id: str):
+    if not verify_token(get_token(request)):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+    for f in HISTORY_DIR.glob(HISTORY_GLOB):
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+            if data.get("id") == conversation_id:
+                f.unlink()
+                return {"deleted": True}
+        except (json.JSONDecodeError, OSError):
+            continue
+    return JSONResponse({"error": "Not found"}, status_code=404)
+
+
+# ---------------------------------------------------------------------------
 # WebSocket: Multi-agent Claude Code interaction
 # ---------------------------------------------------------------------------
 
@@ -587,6 +695,7 @@ async def websocket_endpoint(ws: WebSocket):
                     await destroy_agent(agent_id)
 
                 resolved_cwd = str(cwd_path.resolve())
+                resume_session_id = data.get("session_id")
 
                 env = {"ANTHROPIC_API_KEY": api_key} if api_key else {}
                 options = ClaudeAgentOptions(
@@ -595,6 +704,7 @@ async def websocket_endpoint(ws: WebSocket):
                     include_partial_messages=True,
                     env=env,
                     system_prompt=RAIN_SYSTEM_PROMPT,
+                    resume=resume_session_id or None,
                 )
                 client = ClaudeSDKClient(options=options)
                 await client.connect()

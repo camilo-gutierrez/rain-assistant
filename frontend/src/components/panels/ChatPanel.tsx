@@ -6,6 +6,8 @@ import { useConnectionStore } from "@/stores/useConnectionStore";
 import { useUIStore } from "@/stores/useUIStore";
 import { useAudioRecorder } from "@/hooks/useAudioRecorder";
 import { useTranslation } from "@/hooks/useTranslation";
+import { useHistory } from "@/hooks/useHistory";
+import { useHistoryStore } from "@/stores/useHistoryStore";
 import { clearMessages as apiClearMessages } from "@/lib/api";
 import ChatMessages from "@/components/chat/ChatMessages";
 import ChatInput from "@/components/chat/ChatInput";
@@ -17,9 +19,12 @@ export default function ChatPanel() {
   const activeAgentId = useAgentStore((s) => s.activeAgentId);
   const clearMessagesStore = useAgentStore((s) => s.clearMessages);
   const authToken = useConnectionStore((s) => s.authToken);
+  const setAgentPanel = useAgentStore((s) => s.setAgentPanel);
   const setActivePanel = useUIStore((s) => s.setActivePanel);
   const { t } = useTranslation();
   const { initAudio } = useAudioRecorder();
+  const { save } = useHistory();
+  const isSaving = useHistoryStore((s) => s.isSaving);
 
   const activeAgent = activeAgentId ? agents[activeAgentId] : null;
   const cwd = activeAgent?.cwd;
@@ -34,6 +39,7 @@ export default function ChatPanel() {
     : null;
 
   const handleChange = () => {
+    if (activeAgentId) setAgentPanel(activeAgentId, "fileBrowser");
     setActivePanel("fileBrowser");
   };
 
@@ -67,6 +73,15 @@ export default function ChatPanel() {
         )}
 
         <div className="flex-1" />
+
+        {/* Save button */}
+        <button
+          onClick={() => save()}
+          disabled={isSaving || !activeAgent?.messages.length}
+          className="px-3 py-1 text-xs rounded border border-overlay text-text2 hover:text-green hover:border-green transition-colors font-[family-name:var(--font-jetbrains)] disabled:opacity-30"
+        >
+          {isSaving ? t("history.saving") : t("history.saveBtn")}
+        </button>
 
         {/* Change button */}
         <button

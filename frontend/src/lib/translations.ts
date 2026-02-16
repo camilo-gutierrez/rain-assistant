@@ -59,6 +59,7 @@ const translations: Record<Language, Record<string, string>> = {
     "chat.forceStopped": "Force stopped.",
     "chat.showFullOutput": "Show full output",
     "chat.selectDirFirst": "Please select a project directory first.",
+    "chat.sendError": "Could not send — connection lost. Try again.",
 
     // Metrics panel
     "metrics.title": "Usage Metrics",
@@ -94,6 +95,17 @@ const translations: Record<Language, Record<string, string>> = {
     "settings.theme.light": "Light",
     "settings.theme.ocean": "Ocean",
     "settings.voiceLang": "Voice Recognition",
+
+    // History sidebar
+    "btn.history.title": "Conversation History",
+    "history.title": "History",
+    "history.loading": "Loading...",
+    "history.empty": "No saved conversations",
+    "history.count": "{n} of {max} conversations",
+    "history.delete": "Delete",
+    "history.confirmDelete": "Click again to confirm",
+    "history.saveBtn": "Save",
+    "history.saving": "Saving...",
 
     // Months
     "month.0": "Jan", "month.1": "Feb", "month.2": "Mar", "month.3": "Apr",
@@ -158,6 +170,7 @@ const translations: Record<Language, Record<string, string>> = {
     "chat.forceStopped": "Detenido forzosamente.",
     "chat.showFullOutput": "Ver salida completa",
     "chat.selectDirFirst": "Selecciona un directorio de proyecto primero.",
+    "chat.sendError": "No se pudo enviar — conexión perdida. Intenta de nuevo.",
 
     // Metrics panel
     "metrics.title": "M\u00e9tricas de Uso",
@@ -193,6 +206,17 @@ const translations: Record<Language, Record<string, string>> = {
     "settings.theme.light": "Claro",
     "settings.theme.ocean": "Oc\u00e9ano",
     "settings.voiceLang": "Reconocimiento de Voz",
+
+    // History sidebar
+    "btn.history.title": "Historial de Conversaciones",
+    "history.title": "Historial",
+    "history.loading": "Cargando...",
+    "history.empty": "No hay conversaciones guardadas",
+    "history.count": "{n} de {max} conversaciones",
+    "history.delete": "Eliminar",
+    "history.confirmDelete": "Click de nuevo para confirmar",
+    "history.saveBtn": "Guardar",
+    "history.saving": "Guardando...",
 
     // Months
     "month.0": "Ene", "month.1": "Feb", "month.2": "Mar", "month.3": "Abr",

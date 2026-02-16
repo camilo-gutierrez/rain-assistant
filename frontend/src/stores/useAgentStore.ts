@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Agent, AgentStatus, AnyMessage, WSSendMessage } from "@/lib/types";
+import type { Agent, AgentPanel, AgentStatus, AnyMessage, WSSendMessage } from "@/lib/types";
 
 interface AgentState {
   agents: Record<string, Agent>;
@@ -15,6 +15,7 @@ interface AgentState {
   incrementUnread: (agentId: string) => void;
   setAgentCwd: (agentId: string, cwd: string) => void;
   setAgentBrowsePath: (agentId: string, path: string) => void;
+  setAgentPanel: (agentId: string, panel: AgentPanel) => void;
 
   // Message actions
   appendMessage: (agentId: string, message: AnyMessage) => void;
@@ -23,6 +24,7 @@ interface AgentState {
   clearMessages: (agentId: string) => void;
   setMessages: (agentId: string, messages: AnyMessage[]) => void;
   setHistoryLoaded: (agentId: string, val: boolean) => void;
+  setAgentSessionId: (agentId: string, sessionId: string | null) => void;
 
   // Processing state
   setProcessing: (agentId: string, val: boolean) => void;
@@ -59,6 +61,8 @@ function createAgentObject(id: string, label: string): Agent {
     interruptPending: false,
     interruptTimerId: null,
     historyLoaded: false,
+    sessionId: null,
+    activePanel: "fileBrowser",
   };
 }
 
@@ -191,6 +195,17 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
       agents: {
         ...agents,
         [agentId]: { ...agents[agentId], currentBrowsePath: path },
+      },
+    });
+  },
+
+  setAgentPanel: (agentId, panel) => {
+    const { agents } = get();
+    if (!agents[agentId]) return;
+    set({
+      agents: {
+        ...agents,
+        [agentId]: { ...agents[agentId], activePanel: panel },
       },
     });
   },
@@ -329,6 +344,17 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
     });
   },
 
+  setAgentSessionId: (agentId, sessionId) => {
+    const { agents } = get();
+    if (!agents[agentId]) return;
+    set({
+      agents: {
+        ...agents,
+        [agentId]: { ...agents[agentId], sessionId },
+      },
+    });
+  },
+
   // --- Processing state ---
 
   setProcessing: (agentId, val) => {
@@ -390,7 +416,9 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
 
     for (const [agentId, agent] of Object.entries(agents)) {
       if (agent.cwd) {
-        sendFn({ type: "set_cwd", path: agent.cwd, agent_id: agentId });
+        const msg: WSSendMessage = { type: "set_cwd", path: agent.cwd, agent_id: agentId };
+        if (agent.sessionId) msg.session_id = agent.sessionId;
+        sendFn(msg);
       }
       // Reset processing state since server lost context
       if (agent.isProcessing) {

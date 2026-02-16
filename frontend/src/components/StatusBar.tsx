@@ -3,6 +3,7 @@
 import { useConnectionStore } from "@/stores/useConnectionStore";
 import { useUIStore } from "@/stores/useUIStore";
 import { useMetricsStore } from "@/stores/useMetricsStore";
+import { useHistoryStore } from "@/stores/useHistoryStore";
 import { useTranslation } from "@/hooks/useTranslation";
 import RateLimitBadge from "@/components/metrics/RateLimitBadge";
 
@@ -12,6 +13,7 @@ export default function StatusBar() {
   const rateLimits = useMetricsStore((s) => s.rateLimits);
   const toggleMetrics = useUIStore((s) => s.toggleMetrics);
   const toggleSettings = useUIStore((s) => s.toggleSettings);
+  const toggleHistory = useHistoryStore((s) => s.toggleSidebar);
   const { t } = useTranslation();
 
   // Connection dot color/glow
@@ -46,6 +48,28 @@ export default function StatusBar() {
 
       {/* Rate limit badge */}
       {rateLimits && <RateLimitBadge />}
+
+      {/* History toggle */}
+      <button
+        onClick={toggleHistory}
+        className="p-1.5 rounded-md hover:bg-surface2 transition-colors text-text2 hover:text-cyan"
+        title={t("btn.history.title")}
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <circle cx="12" cy="12" r="10" />
+          <polyline points="12 6 12 12 16 14" />
+        </svg>
+      </button>
 
       {/* Metrics toggle */}
       <button

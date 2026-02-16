@@ -46,6 +46,8 @@ export type AnyMessage =
   | ToolResultMessage;
 
 // === Agent ===
+export type AgentPanel = "fileBrowser" | "chat";
+
 export interface Agent {
   id: string;
   cwd: string | null;
@@ -61,6 +63,8 @@ export interface Agent {
   interruptPending: boolean;
   interruptTimerId: ReturnType<typeof setTimeout> | null;
   historyLoaded: boolean;
+  sessionId: string | null;
+  activePanel: AgentPanel;
 }
 
 // === Rate Limits ===
@@ -104,7 +108,7 @@ export interface MetricsData {
 export type WSSendMessage =
   | { type: "send_message"; text: string; agent_id: string }
   | { type: "interrupt"; agent_id: string }
-  | { type: "set_cwd"; path: string; agent_id: string }
+  | { type: "set_cwd"; path: string; agent_id: string; session_id?: string }
   | { type: "destroy_agent"; agent_id: string }
   | { type: "set_api_key"; key: string }
   | { type: "set_transcription_lang"; lang: string };
@@ -167,4 +171,23 @@ export interface HistoryMessage {
   type: string;
   content: Record<string, unknown>;
   timestamp: number;
+}
+
+// === Conversation History ===
+export interface ConversationMeta {
+  id: string;
+  createdAt: number;
+  updatedAt: number;
+  label: string;
+  cwd: string;
+  messageCount: number;
+  preview: string;
+  totalCost: number;
+}
+
+export interface ConversationFull extends ConversationMeta {
+  version: number;
+  agentId: string;
+  sessionId: string | null;
+  messages: AnyMessage[];
 }

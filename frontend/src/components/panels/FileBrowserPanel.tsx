@@ -27,6 +27,7 @@ export default function FileBrowserPanel() {
   const setAgentCwd = useAgentStore((s) => s.setAgentCwd);
   const authToken = useConnectionStore((s) => s.authToken);
   const send = useConnectionStore((s) => s.send);
+  const setAgentPanel = useAgentStore((s) => s.setAgentPanel);
   const setActivePanel = useUIStore((s) => s.setActivePanel);
   const { t } = useTranslation();
 
@@ -86,6 +87,7 @@ export default function FileBrowserPanel() {
     send({ type: "set_cwd", path: currentPath, agent_id: activeAgentId });
 
     // Switch to chat
+    setAgentPanel(activeAgentId, "chat");
     setActivePanel("chat");
   };
 

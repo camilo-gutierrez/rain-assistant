@@ -7,6 +7,7 @@ import { useMetricsStore } from "@/stores/useMetricsStore";
 import { useUIStore } from "@/stores/useUIStore";
 import type { WSReceiveMessage, AnyMessage } from "@/lib/types";
 import { loadMessages } from "@/lib/api";
+import { autoSaveConversation } from "@/lib/historyUtils";
 
 /**
  * Central WebSocket hook — call once in page.tsx.
@@ -44,8 +45,10 @@ export function useWebSocket() {
           }
           if (msg.cwd && agentStore.agents[agentId]) {
             agentStore.setAgentCwd(agentId, msg.cwd);
-            // Load history when we get the resolved cwd from server
-            loadHistoryForAgent(msg.cwd, agentId, authToken);
+            // Only load history once per agent to avoid overwriting local messages
+            if (!agentStore.agents[agentId].historyLoaded) {
+              loadHistoryForAgent(msg.cwd, agentId, authToken);
+            }
           }
           break;
         }
@@ -121,6 +124,14 @@ export function useWebSocket() {
             }
           }
 
+          // Store session_id for conversation resumption on reconnect
+          if (msg.session_id) {
+            agentStore.setAgentSessionId(agentId, msg.session_id);
+          }
+
+          // Auto-save conversation to history
+          autoSaveConversation(agentId, authToken);
+
           // Complete processing
           agentStore.setProcessing(agentId, false);
           agentStore.setInterruptPending(agentId, false);
@@ -195,6 +206,9 @@ async function loadHistoryForAgent(
 ) {
   try {
     const data = await loadMessages(cwd, agentId, authToken);
+    const agentState = useAgentStore.getState();
+    // Mark history as loaded even if empty, to prevent future reloads
+    agentState.setHistoryLoaded(agentId, true);
     if (!data.messages || data.messages.length === 0) return;
 
     const messages: AnyMessage[] = [];
@@ -246,6 +260,7 @@ async function loadHistoryForAgent(
             cost?: number;
             duration_ms?: number;
             num_turns?: number;
+            session_id?: string;
           };
           if (r.cost != null || r.duration_ms != null) {
             let info = "";
@@ -276,7 +291,23 @@ async function loadHistoryForAgent(
       }
     }
 
+    // Safety: if user sent messages while history was loading, don't overwrite them
+    const currentAgent = useAgentStore.getState().agents[agentId];
+    if (!currentAgent || currentAgent.messages.length > 0) return;
+
     useAgentStore.getState().setMessages(agentId, messages);
+
+    // Extract session_id from the last result message for conversation resumption
+    for (let i = data.messages.length - 1; i >= 0; i--) {
+      const m = data.messages[i];
+      if (m.type === "result") {
+        const sid = (m.content as { session_id?: string }).session_id;
+        if (sid) {
+          useAgentStore.getState().setAgentSessionId(agentId, sid);
+        }
+        break;
+      }
+    }
   } catch (err) {
     console.warn("Failed to load history:", err);
   }

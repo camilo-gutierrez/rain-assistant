@@ -101,13 +101,24 @@ async function sendAudio(blob: Blob) {
       });
 
       // Send to server
-      agentStore.setProcessing(activeId, true);
-      agentStore.setAgentStatus(activeId, "working");
-      connStore.send({
+      const sent = connStore.send({
         type: "send_message",
         text: data.text.trim(),
         agent_id: activeId,
       });
+
+      if (sent) {
+        agentStore.setProcessing(activeId, true);
+        agentStore.setAgentStatus(activeId, "working");
+      } else {
+        agentStore.appendMessage(activeId, {
+          id: crypto.randomUUID(),
+          type: "system",
+          text: "Could not send — connection lost.",
+          timestamp: Date.now(),
+          animate: true,
+        });
+      }
     } else {
       connStore.setStatusText("No speech detected");
     }

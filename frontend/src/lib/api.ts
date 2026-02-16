@@ -1,4 +1,4 @@
-import type { AuthResponse, BrowseResponse, HistoryMessage, MetricsData } from "./types";
+import type { AuthResponse, BrowseResponse, ConversationFull, ConversationMeta, HistoryMessage, MetricsData } from "./types";
 import { getApiUrl } from "./constants";
 
 function authHeaders(token: string | null): HeadersInit {
@@ -74,5 +74,54 @@ export async function fetchMetrics(
     headers: authHeaders(token),
   });
   if (!res.ok) throw new Error(`Fetch metrics failed: ${res.status}`);
+  return res.json();
+}
+
+// === Conversation History ===
+
+export async function listConversations(
+  token: string | null
+): Promise<{ conversations: ConversationMeta[] }> {
+  const res = await fetch(`${getApiUrl()}/history`, {
+    headers: authHeaders(token),
+  });
+  if (!res.ok) throw new Error(`List conversations failed: ${res.status}`);
+  return res.json();
+}
+
+export async function saveConversation(
+  conversation: ConversationFull,
+  token: string | null
+): Promise<{ saved: boolean; id: string; deleted: string[] }> {
+  const res = await fetch(`${getApiUrl()}/history`, {
+    method: "POST",
+    headers: { ...authHeaders(token), "Content-Type": "application/json" },
+    body: JSON.stringify(conversation),
+  });
+  if (!res.ok) throw new Error(`Save conversation failed: ${res.status}`);
+  return res.json();
+}
+
+export async function loadConversation(
+  conversationId: string,
+  token: string | null
+): Promise<ConversationFull> {
+  const res = await fetch(
+    `${getApiUrl()}/history/${encodeURIComponent(conversationId)}`,
+    { headers: authHeaders(token) }
+  );
+  if (!res.ok) throw new Error(`Load conversation failed: ${res.status}`);
+  return res.json();
+}
+
+export async function deleteConversation(
+  conversationId: string,
+  token: string | null
+): Promise<{ deleted: boolean }> {
+  const res = await fetch(
+    `${getApiUrl()}/history/${encodeURIComponent(conversationId)}`,
+    { method: "DELETE", headers: authHeaders(token) }
+  );
+  if (!res.ok) throw new Error(`Delete conversation failed: ${res.status}`);
   return res.json();
 }

@@ -35,15 +35,27 @@ export default function ChatInput() {
     });
 
     // Send via WebSocket
-    setProcessing(activeAgentId, true);
-    setAgentStatus(activeAgentId, "working");
-    send({
+    const sent = send({
       type: "send_message",
       text: trimmed,
       agent_id: activeAgentId,
     });
 
-    setText("");
+    if (sent) {
+      setProcessing(activeAgentId, true);
+      setAgentStatus(activeAgentId, "working");
+      setText("");
+    } else {
+      // WebSocket not connected — remove the optimistic message
+      appendMessage(activeAgentId, {
+        id: crypto.randomUUID(),
+        type: "system",
+        text: t("chat.sendError"),
+        timestamp: Date.now(),
+        animate: true,
+      });
+    }
+
     inputRef.current?.focus();
   };
 

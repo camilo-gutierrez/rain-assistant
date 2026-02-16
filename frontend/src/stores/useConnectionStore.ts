@@ -19,7 +19,7 @@ interface ConnectionState {
   setUsingApiKey: (val: boolean) => void;
   connect: () => void;
   disconnect: () => void;
-  send: (msg: WSSendMessage) => void;
+  send: (msg: WSSendMessage) => boolean;
   resetToPin: () => void;
 }
 
@@ -113,7 +113,9 @@ export const useConnectionStore = create<ConnectionState>()((set, get) => ({
     const { ws } = get();
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(msg));
+      return true;
     }
+    return false;
   },
 
   resetToPin: () => {
