@@ -1,0 +1,274 @@
+@import "tailwindcss";
+
+/* =========================================================================
+   THEME VARIABLES
+   ========================================================================= */
+
+/* Dark theme (default) - Cyberpunk */
+:root {
+  --bg: #0a0a14;
+  --surface: #0f0f1e;
+  --surface2: #1a1a2e;
+  --overlay: #252540;
+  --text: #e0e0f0;
+  --text2: #a0a0c0;
+  --subtext: #606080;
+  --blue: #00d4ff;
+  --green: #00ff88;
+  --red: #ff2266;
+  --yellow: #ffcc00;
+  --mauve: #bf5af2;
+  --cyan: #00d4ff;
+  --magenta: #ff00aa;
+  --neon-glow: rgba(0, 212, 255, 0.15);
+  --grid-color: rgba(0, 212, 255, 0.03);
+}
+
+/* Light theme */
+[data-theme="light"] {
+  --bg: #e8eaf0;
+  --surface: #d8dce6;
+  --surface2: #c0c8d8;
+  --overlay: #a8b0c4;
+  --text: #1a1a2e;
+  --text2: #2a2a4e;
+  --subtext: #5a5a7e;
+  --blue: #0099cc;
+  --green: #00aa66;
+  --red: #cc1144;
+  --yellow: #cc9900;
+  --mauve: #8833cc;
+  --cyan: #0099cc;
+  --magenta: #cc0088;
+  --neon-glow: rgba(0, 153, 204, 0.1);
+  --grid-color: rgba(0, 153, 204, 0.03);
+}
+
+/* Ocean theme */
+[data-theme="ocean"] {
+  --bg: #0a1628;
+  --surface: #0f1f3d;
+  --surface2: #162d50;
+  --overlay: #1e3a5f;
+  --text: #c8ddf0;
+  --text2: #8ab4d8;
+  --subtext: #4a7a9e;
+  --blue: #4fc3f7;
+  --green: #26c6a0;
+  --red: #ef5350;
+  --yellow: #ffca28;
+  --mauve: #7e57c2;
+  --cyan: #4fc3f7;
+  --magenta: #ab47bc;
+  --neon-glow: rgba(79, 195, 247, 0.12);
+  --grid-color: rgba(79, 195, 247, 0.03);
+}
+
+/* =========================================================================
+   TAILWIND THEME EXTENSION
+   ========================================================================= */
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface2: var(--surface2);
+  --color-overlay: var(--overlay);
+  --color-text: var(--text);
+  --color-text2: var(--text2);
+  --color-subtext: var(--subtext);
+  --color-blue: var(--blue);
+  --color-green: var(--green);
+  --color-red: var(--red);
+  --color-yellow: var(--yellow);
+  --color-mauve: var(--mauve);
+  --color-cyan: var(--cyan);
+  --color-magenta: var(--magenta);
+  --color-neon-glow: var(--neon-glow);
+  --color-grid-color: var(--grid-color);
+
+  --font-orbitron: var(--font-orbitron);
+  --font-jetbrains: var(--font-jetbrains);
+
+  --animate-msg-appear: msg-appear 0.3s ease-out;
+  --animate-neon-pulse-red: neon-pulse-red 1.5s ease-in-out infinite;
+  --animate-neon-pulse-yellow: neon-pulse-yellow 0.8s ease-in-out infinite;
+  --animate-dot-pulse-cyan: dot-pulse-cyan 1.2s ease-in-out infinite;
+  --animate-dot-flash-green: dot-flash-green 0.6s ease-out 3;
+  --animate-dot-pulse-red: dot-pulse-red 1s ease-in-out infinite;
+  --animate-scan-line: scan-line 2s linear infinite;
+  --animate-badge-pop: badge-pop 0.3s ease-out;
+}
+
+/* =========================================================================
+   BASE STYLES
+   ========================================================================= */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  background: var(--bg);
+  background-image:
+    linear-gradient(var(--grid-color) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+  background-size: 40px 40px;
+  color: var(--text);
+  height: 100dvh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Scanline overlay */
+body::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 9999;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 212, 255, 0.006) 2px,
+    rgba(0, 212, 255, 0.006) 4px
+  );
+}
+
+/* Ambient glow corners */
+body::after {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: -1;
+  background:
+    radial-gradient(ellipse at 0% 0%, rgba(0, 212, 255, 0.06) 0%, transparent 50%),
+    radial-gradient(ellipse at 100% 100%, rgba(191, 90, 242, 0.06) 0%, transparent 50%);
+}
+
+/* Ocean theme scanline & glow overrides */
+[data-theme="ocean"] body::before {
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(79, 195, 247, 0.004) 2px,
+    rgba(79, 195, 247, 0.004) 4px
+  );
+}
+
+[data-theme="ocean"] body::after {
+  background:
+    radial-gradient(ellipse at 0% 0%, rgba(79, 195, 247, 0.06) 0%, transparent 50%),
+    radial-gradient(ellipse at 100% 100%, rgba(126, 87, 194, 0.06) 0%, transparent 50%);
+}
+
+/* =========================================================================
+   SCROLLBAR
+   ========================================================================= */
+
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, var(--cyan), var(--mauve));
+  border-radius: 2px;
+}
+
+/* =========================================================================
+   SMOOTH THEME TRANSITIONS
+   ========================================================================= */
+
+body, .theme-transition {
+  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+}
+
+/* =========================================================================
+   KEYFRAMES
+   ========================================================================= */
+
+@keyframes msg-appear {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes neon-pulse-red {
+  0%, 100% { box-shadow: 0 0 20px rgba(255, 34, 102, 0.3), 0 0 40px rgba(255, 34, 102, 0.1); }
+  50% { box-shadow: 0 0 30px rgba(255, 34, 102, 0.5), 0 0 60px rgba(255, 34, 102, 0.2); }
+}
+
+@keyframes neon-pulse-yellow {
+  0%, 100% { box-shadow: 0 0 20px rgba(255, 204, 0, 0.3); }
+  50% { box-shadow: 0 0 30px rgba(255, 204, 0, 0.5); }
+}
+
+@keyframes dot-pulse-cyan {
+  0%, 100% {
+    box-shadow: 0 0 6px var(--cyan), 0 0 12px rgba(0, 212, 255, 0.4);
+    opacity: 1;
+  }
+  50% {
+    box-shadow: 0 0 10px var(--cyan), 0 0 20px rgba(0, 212, 255, 0.6);
+    opacity: 0.7;
+  }
+}
+
+@keyframes dot-flash-green {
+  0% {
+    box-shadow: 0 0 8px var(--green), 0 0 16px rgba(0, 255, 136, 0.5);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 16px var(--green), 0 0 32px rgba(0, 255, 136, 0.7);
+    transform: scale(1.4);
+  }
+  100% {
+    box-shadow: 0 0 8px var(--green), 0 0 16px rgba(0, 255, 136, 0.5);
+    transform: scale(1);
+  }
+}
+
+@keyframes dot-pulse-red {
+  0%, 100% {
+    box-shadow: 0 0 6px var(--red), 0 0 12px rgba(255, 34, 102, 0.4);
+    opacity: 1;
+  }
+  50% {
+    box-shadow: 0 0 10px var(--red), 0 0 20px rgba(255, 34, 102, 0.6);
+    opacity: 0.7;
+  }
+}
+
+@keyframes scan-line {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+@keyframes badge-pop {
+  0% { transform: scale(0); }
+  60% { transform: scale(1.2); }
+  100% { transform: scale(1); }
+}
+
+/* =========================================================================
+   RESPONSIVE
+   ========================================================================= */
+
+@media (max-width: 480px) {
+  .rate-bars-responsive { display: none; }
+  .metrics-cards-responsive {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+  .chart-container-responsive { height: 100px !important; }
+  .rl-dashboard-responsive { grid-template-columns: 1fr !important; }
+}
