@@ -1,4 +1,6 @@
 faster-whisper
+filelock>=3.13
+huggingface_hub>=0.24
 sounddevice
 numpy
 fastapi

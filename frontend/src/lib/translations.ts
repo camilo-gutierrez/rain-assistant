@@ -145,6 +145,13 @@ const translations: Record<Language, Record<string, string>> = {
     "cu.iteration": "Step",
     "cu.permLevel": "COMPUTER ACCESS",
 
+    // MCP Tools
+    "mcp.title": "MCP Tools",
+    "mcp.hub": "Hub",
+    "mcp.email": "Email",
+    "mcp.browser": "Browser",
+    "mcp.smarthome": "Smart Home",
+
     // Months
     "month.0": "Jan", "month.1": "Feb", "month.2": "Mar", "month.3": "Apr",
     "month.4": "May", "month.5": "Jun", "month.6": "Jul", "month.7": "Aug",
@@ -293,6 +300,13 @@ const translations: Record<Language, Record<string, string>> = {
     "cu.emergencyStop": "PARADA DE EMERGENCIA",
     "cu.iteration": "Paso",
     "cu.permLevel": "ACCESO A COMPUTADORA",
+
+    // MCP Tools
+    "mcp.title": "Herramientas MCP",
+    "mcp.hub": "Hub",
+    "mcp.email": "Email",
+    "mcp.browser": "Navegador",
+    "mcp.smarthome": "Smart Home",
 
     // Months
     "month.0": "Ene", "month.1": "Feb", "month.2": "Mar", "month.3": "Abr",

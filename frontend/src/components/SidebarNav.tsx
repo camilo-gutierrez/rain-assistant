@@ -3,6 +3,7 @@
 import { useUIStore } from "@/stores/useUIStore";
 import { useAgentStore } from "@/stores/useAgentStore";
 import { useTranslation } from "@/hooks/useTranslation";
+import McpToolsSection from "./McpToolsSection";
 
 export default function SidebarNav() {
   const activePanel = useUIStore((s) => s.activePanel);
@@ -129,6 +130,12 @@ export default function SidebarNav() {
           </button>
         ))}
       </div>
+
+      {/* Divider */}
+      <div className="h-px bg-overlay/60 mx-2 my-1.5" />
+
+      {/* MCP Tools */}
+      <McpToolsSection />
     </div>
   );
 }

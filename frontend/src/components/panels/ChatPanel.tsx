@@ -1,10 +1,8 @@
 "use client";
 
-import { useEffect } from "react";
 import { useAgentStore } from "@/stores/useAgentStore";
 import { useConnectionStore } from "@/stores/useConnectionStore";
 import { useUIStore } from "@/stores/useUIStore";
-import { useAudioRecorder } from "@/hooks/useAudioRecorder";
 import { useTranslation } from "@/hooks/useTranslation";
 import { useHistory } from "@/hooks/useHistory";
 import { useHistoryStore } from "@/stores/useHistoryStore";
@@ -23,16 +21,11 @@ export default function ChatPanel() {
   const setAgentPanel = useAgentStore((s) => s.setAgentPanel);
   const setActivePanel = useUIStore((s) => s.setActivePanel);
   const { t } = useTranslation();
-  const { initAudio } = useAudioRecorder();
   const { save } = useHistory();
   const isSaving = useHistoryStore((s) => s.isSaving);
 
   const activeAgent = activeAgentId ? agents[activeAgentId] : null;
   const cwd = activeAgent?.cwd;
-
-  useEffect(() => {
-    initAudio();
-  }, [initAudio]);
 
   const folderName = cwd
     ? cwd.replace(/\\/g, "/").split("/").filter(Boolean).pop() || cwd

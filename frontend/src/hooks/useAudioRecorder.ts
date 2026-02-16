@@ -1,79 +1,143 @@
 "use client";
 
-import { useRef, useCallback } from "react";
+import { useCallback, useEffect } from "react";
 import { useRecorderStore } from "@/stores/useRecorderStore";
 import { useAgentStore } from "@/stores/useAgentStore";
 import { useConnectionStore } from "@/stores/useConnectionStore";
 import { uploadAudio } from "@/lib/api";
 
+// Module-level singleton — shared across all hook instances.
+// The mic is acquired on-demand per recording and released immediately after.
+let sharedRecorder: MediaRecorder | null = null;
+let sharedStream: MediaStream | null = null;
+let sharedChunks: Blob[] = [];
+
+/** Stop all tracks and free the microphone */
+function releaseStream() {
+  sharedStream?.getTracks().forEach((t) => t.stop());
+  sharedStream = null;
+  sharedRecorder = null;
+}
+
+/** Detect best supported audio mimeType */
+function detectMimeType() {
+  if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus"))
+    return "audio/webm;codecs=opus";
+  if (MediaRecorder.isTypeSupported("audio/webm")) return "audio/webm";
+  if (MediaRecorder.isTypeSupported("audio/mp4")) return "audio/mp4";
+  return "";
+}
+
+/**
+ * Lazy-acquisition audio recorder.
+ * The microphone is requested only when the user starts recording
+ * and released immediately after each recording ends, so the mic
+ * stays free for other applications between recordings.
+ */
 export function useAudioRecorder() {
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
   const isRecording = useRecorderStore((s) => s.isRecording);
   const setIsRecording = useRecorderStore((s) => s.setIsRecording);
 
-  const initAudio = useCallback(async () => {
+  /**
+   * Acquire mic, create MediaRecorder and start recording.
+   * Returns immediately if already recording or agent is busy.
+   */
+  const startRecording = useCallback(async () => {
+    const agentStore = useAgentStore.getState();
+    const agent = agentStore.getActiveAgent();
+    if (
+      useRecorderStore.getState().isRecording ||
+      agent?.isProcessing ||
+      !agent?.cwd
+    )
+      return;
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+        },
       });
+      sharedStream = stream;
 
-      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-        ? "audio/webm;codecs=opus"
-        : MediaRecorder.isTypeSupported("audio/webm")
-        ? "audio/webm"
-        : MediaRecorder.isTypeSupported("audio/mp4")
-        ? "audio/mp4"
-        : "";
-
+      const mimeType = detectMimeType();
       const options = mimeType ? { mimeType } : {};
       const recorder = new MediaRecorder(stream, options);
 
       recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data);
+        if (e.data.size > 0) sharedChunks.push(e.data);
       };
 
       recorder.onstop = async () => {
-        const blob = new Blob(chunksRef.current, { type: recorder.mimeType });
-        chunksRef.current = [];
+        const blob = new Blob(sharedChunks, { type: recorder.mimeType });
+        sharedChunks = [];
+
+        // Release mic immediately after recording ends
+        releaseStream();
 
         if (blob.size < 3000) {
-          const connStore = useConnectionStore.getState();
-          connStore.setStatusText("Recording too short");
-          setIsRecording(false);
+          useConnectionStore.getState().setStatusText("Recording too short");
           return;
         }
 
         await sendAudio(blob);
       };
 
-      recorderRef.current = recorder;
-      return true;
+      sharedRecorder = recorder;
+      sharedChunks = [];
+      recorder.start(100);
+      setIsRecording(true);
     } catch (err) {
-      console.error("Audio init error:", err);
-      return false;
+      console.error("Mic access error:", err);
+      releaseStream();
+      useConnectionStore.getState().setStatusText("Microphone access denied");
     }
   }, [setIsRecording]);
 
-  const startRecording = useCallback(() => {
-    const agentStore = useAgentStore.getState();
-    const agent = agentStore.getActiveAgent();
-    if (isRecording || (agent && agent.isProcessing) || !recorderRef.current) return;
-
-    chunksRef.current = [];
-    recorderRef.current.start(100);
-    setIsRecording(true);
-  }, [isRecording, setIsRecording]);
-
+  /** Stop current recording (triggers onstop → releaseStream) */
   const stopRecording = useCallback(() => {
-    if (!isRecording || !recorderRef.current) return;
-    recorderRef.current.stop();
-    setIsRecording(false);
-  }, [isRecording, setIsRecording]);
+    if (
+      !useRecorderStore.getState().isRecording ||
+      !sharedRecorder ||
+      sharedRecorder.state === "inactive"
+    )
+      return;
 
-  return { initAudio, startRecording, stopRecording, isRecording };
+    sharedRecorder.stop();
+    setIsRecording(false);
+  }, [setIsRecording]);
+
+  // ── Auto-release on visibility loss / blur ──────────────────────
+  useEffect(() => {
+    const abort = () => {
+      if (!useRecorderStore.getState().isRecording) return;
+      if (sharedRecorder && sharedRecorder.state !== "inactive") {
+        sharedRecorder.stop();
+      }
+      useRecorderStore.getState().setIsRecording(false);
+      // releaseStream is called inside recorder.onstop
+    };
+
+    const onVisChange = () => {
+      if (document.hidden) abort();
+    };
+
+    document.addEventListener("visibilitychange", onVisChange);
+    window.addEventListener("blur", abort);
+
+    return () => {
+      document.removeEventListener("visibilitychange", onVisChange);
+      window.removeEventListener("blur", abort);
+      releaseStream();
+    };
+  }, []);
+
+  return { startRecording, stopRecording, isRecording };
 }
 
+// ── Helper: upload transcribed audio ──────────────────────────────
 async function sendAudio(blob: Blob) {
   const agentStore = useAgentStore.getState();
   const connStore = useConnectionStore.getState();
@@ -91,7 +155,6 @@ async function sendAudio(blob: Blob) {
 
     if (data.text && data.text.trim()) {
       const activeId = agentStore.activeAgentId!;
-      // Append user message
       agentStore.appendMessage(activeId, {
         id: crypto.randomUUID(),
         type: "user",
@@ -100,7 +163,6 @@ async function sendAudio(blob: Blob) {
         animate: true,
       });
 
-      // Send to server
       const sent = connStore.send({
         type: "send_message",
         text: data.text.trim(),

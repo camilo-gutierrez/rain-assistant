@@ -43,7 +43,7 @@ export default function RecordButton() {
   return (
     <button
       onPointerDown={() => {
-        if (!disabled && !isRecording) startRecording();
+        if (!disabled && !isRecording) void startRecording();
       }}
       onPointerUp={() => {
         if (isRecording) stopRecording();

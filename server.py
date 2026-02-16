@@ -1654,6 +1654,13 @@ async def websocket_endpoint(ws: WebSocket):
                 resume_session_id = data.get("session_id")
 
                 env = {"ANTHROPIC_API_KEY": api_key} if api_key else {}
+
+                # Load MCP server configuration from .mcp.json
+                mcp_config_path = Path(__file__).parent / ".mcp.json"
+                mcp_servers: dict | str = {}
+                if mcp_config_path.exists():
+                    mcp_servers = str(mcp_config_path)
+
                 options = ClaudeAgentOptions(
                     cwd=resolved_cwd,
                     permission_mode="default",
@@ -1662,6 +1669,7 @@ async def websocket_endpoint(ws: WebSocket):
                     env=env,
                     system_prompt=RAIN_SYSTEM_PROMPT,
                     resume=resume_session_id or None,
+                    mcp_servers=mcp_servers,
                 )
                 client = ClaudeSDKClient(options=options)
                 await client.connect()

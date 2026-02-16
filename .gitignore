@@ -23,3 +23,7 @@ nul
 # IDE
 .vscode/
 .idea/
+
+# Release artifacts
+rain-assistant.zip
+_release_helper.ps1
