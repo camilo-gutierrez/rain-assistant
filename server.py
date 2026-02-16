@@ -16,7 +16,10 @@ import uvicorn
 
 import database
 
+from starlette.background import BackgroundTask
+
 from transcriber import Transcriber
+from synthesizer import Synthesizer
 from claude_agent_sdk import (
     ClaudeSDKClient,
     ClaudeAgentOptions,
@@ -58,6 +61,7 @@ RAIN_SYSTEM_PROMPT = (
 )
 
 transcriber = Transcriber(model_size="base", language="es")
+synthesizer = Synthesizer()
 
 # ---------------------------------------------------------------------------
 # Rate limit fetching (Anthropic API headers via lightweight GET /v1/models)
@@ -361,6 +365,51 @@ async def upload_audio(request: Request, audio: UploadFile = File(...)):
             os.unlink(tmp.name)
         except OSError:
             pass
+
+
+# ---------------------------------------------------------------------------
+# REST: Text-to-speech synthesis
+# ---------------------------------------------------------------------------
+
+@app.post("/api/synthesize")
+async def synthesize_text(request: Request):
+    if not verify_token(get_token(request)):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+
+    text = body.get("text", "").strip()
+    if not text:
+        return JSONResponse({"error": "No text provided"}, status_code=400)
+
+    voice = body.get("voice", "es-MX-DaliaNeural")
+    rate = body.get("rate", "+0%")
+
+    audio_path = None
+    try:
+        audio_path = await synthesizer.synthesize(text, voice=voice, rate=rate)
+        if not audio_path:
+            return JSONResponse(
+                {"error": "Nothing to synthesize (mostly code)"},
+                status_code=204,
+            )
+
+        return FileResponse(
+            audio_path,
+            media_type="audio/mpeg",
+            filename="speech.mp3",
+            background=BackgroundTask(lambda p=audio_path: os.unlink(p)),
+        )
+    except Exception as e:
+        if audio_path:
+            try:
+                os.unlink(audio_path)
+            except OSError:
+                pass
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 # ---------------------------------------------------------------------------

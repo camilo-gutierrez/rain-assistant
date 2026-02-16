@@ -4,7 +4,7 @@ import { useSettingsStore } from "@/stores/useSettingsStore";
 import { useUIStore } from "@/stores/useUIStore";
 import { useTranslation } from "@/hooks/useTranslation";
 import { useConnectionStore } from "@/stores/useConnectionStore";
-import type { Theme, Language } from "@/lib/types";
+import type { Theme, Language, TTSVoice } from "@/lib/types";
 
 interface ThemeOption {
   id: Theme;
@@ -25,6 +25,12 @@ export default function SettingsPanel() {
   const setTheme = useSettingsStore((s) => s.setTheme);
   const setLanguage = useSettingsStore((s) => s.setLanguage);
   const setVoiceLang = useSettingsStore((s) => s.setVoiceLang);
+  const ttsEnabled = useSettingsStore((s) => s.ttsEnabled);
+  const ttsAutoPlay = useSettingsStore((s) => s.ttsAutoPlay);
+  const ttsVoice = useSettingsStore((s) => s.ttsVoice);
+  const setTtsEnabled = useSettingsStore((s) => s.setTtsEnabled);
+  const setTtsAutoPlay = useSettingsStore((s) => s.setTtsAutoPlay);
+  const setTtsVoice = useSettingsStore((s) => s.setTtsVoice);
   const toggleSettings = useUIStore((s) => s.toggleSettings);
   const send = useConnectionStore((s) => s.send);
   const { t } = useTranslation();
@@ -121,6 +127,68 @@ export default function SettingsPanel() {
             <option value="en">English</option>
             <option value="es">Espa&#241;ol</option>
           </select>
+        </div>
+
+        {/* Text-to-Speech */}
+        <div>
+          <label className="block text-sm text-text2 font-[family-name:var(--font-orbitron)] mb-3">
+            {t("settings.tts")}
+          </label>
+
+          {/* Enable toggle */}
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-sm text-text">{t("settings.ttsEnabled")}</span>
+            <button
+              onClick={() => setTtsEnabled(!ttsEnabled)}
+              className={`w-12 h-6 rounded-full transition-colors relative ${
+                ttsEnabled ? "bg-cyan" : "bg-overlay"
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 w-5 h-5 bg-white rounded-full transition-transform shadow-sm ${
+                  ttsEnabled ? "translate-x-6" : "translate-x-0.5"
+                }`}
+              />
+            </button>
+          </div>
+
+          {/* Auto-play toggle + Voice selector (only when TTS is enabled) */}
+          {ttsEnabled && (
+            <>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-sm text-text">{t("settings.ttsAutoPlay")}</span>
+                <button
+                  onClick={() => setTtsAutoPlay(!ttsAutoPlay)}
+                  className={`w-12 h-6 rounded-full transition-colors relative ${
+                    ttsAutoPlay ? "bg-cyan" : "bg-overlay"
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 w-5 h-5 bg-white rounded-full transition-transform shadow-sm ${
+                      ttsAutoPlay ? "translate-x-6" : "translate-x-0.5"
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {/* Voice selector */}
+              <div>
+                <label className="block text-xs text-text2 mb-1.5">
+                  {t("settings.ttsVoice")}
+                </label>
+                <select
+                  value={ttsVoice}
+                  onChange={(e) => setTtsVoice(e.target.value as TTSVoice)}
+                  className="w-full bg-surface2 border border-overlay rounded-lg px-4 py-2.5 text-sm text-text focus:outline-none focus:border-cyan transition-colors cursor-pointer"
+                >
+                  <option value="es-MX-DaliaNeural">{t("settings.ttsVoice.esFemale")}</option>
+                  <option value="es-MX-JorgeNeural">{t("settings.ttsVoice.esMale")}</option>
+                  <option value="en-US-JennyNeural">{t("settings.ttsVoice.enFemale")}</option>
+                  <option value="en-US-GuyNeural">{t("settings.ttsVoice.enMale")}</option>
+                </select>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>

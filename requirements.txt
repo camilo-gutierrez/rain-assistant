@@ -6,3 +6,4 @@ uvicorn[standard]
 python-multipart
 claude-agent-sdk
 pycloudflared
+edge-tts

@@ -77,6 +77,30 @@ export async function fetchMetrics(
   return res.json();
 }
 
+// === TTS Synthesis ===
+
+export async function synthesize(
+  text: string,
+  voice: string,
+  rate: string,
+  token: string | null
+): Promise<Blob | null> {
+  const res = await fetch(`${getApiUrl()}/synthesize`, {
+    method: "POST",
+    headers: {
+      ...authHeaders(token),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ text, voice, rate }),
+  });
+
+  // 204 = nothing to synthesize (mostly code)
+  if (res.status === 204) return null;
+  if (!res.ok) throw new Error(`Synthesize failed: ${res.status}`);
+
+  return res.blob();
+}
+
 // === Conversation History ===
 
 export async function listConversations(

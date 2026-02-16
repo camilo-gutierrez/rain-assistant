@@ -96,6 +96,19 @@ const translations: Record<Language, Record<string, string>> = {
     "settings.theme.ocean": "Ocean",
     "settings.voiceLang": "Voice Recognition",
 
+    // TTS settings
+    "settings.tts": "Text-to-Speech",
+    "settings.ttsEnabled": "Enable TTS",
+    "settings.ttsAutoPlay": "Auto-play responses",
+    "settings.ttsVoice": "Voice",
+    "settings.ttsVoice.esFemale": "Spanish Female (Dalia)",
+    "settings.ttsVoice.esMale": "Spanish Male (Jorge)",
+    "settings.ttsVoice.enFemale": "English Female (Jenny)",
+    "settings.ttsVoice.enMale": "English Male (Guy)",
+    "tts.play": "Play",
+    "tts.stop": "Stop",
+    "tts.loading": "Loading audio...",
+
     // History sidebar
     "btn.history.title": "Conversation History",
     "history.title": "History",
@@ -206,6 +219,19 @@ const translations: Record<Language, Record<string, string>> = {
     "settings.theme.light": "Claro",
     "settings.theme.ocean": "Oc\u00e9ano",
     "settings.voiceLang": "Reconocimiento de Voz",
+
+    // TTS settings
+    "settings.tts": "Texto a Voz",
+    "settings.ttsEnabled": "Activar TTS",
+    "settings.ttsAutoPlay": "Reproducir respuestas autom\u00e1ticamente",
+    "settings.ttsVoice": "Voz",
+    "settings.ttsVoice.esFemale": "Espa\u00f1ol Femenina (Dalia)",
+    "settings.ttsVoice.esMale": "Espa\u00f1ol Masculina (Jorge)",
+    "settings.ttsVoice.enFemale": "Ingl\u00e9s Femenina (Jenny)",
+    "settings.ttsVoice.enMale": "Ingl\u00e9s Masculina (Guy)",
+    "tts.play": "Reproducir",
+    "tts.stop": "Detener",
+    "tts.loading": "Cargando audio...",
 
     // History sidebar
     "btn.history.title": "Historial de Conversaciones",

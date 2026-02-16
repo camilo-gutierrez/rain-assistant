@@ -5,8 +5,10 @@ import { useConnectionStore } from "@/stores/useConnectionStore";
 import { useAgentStore } from "@/stores/useAgentStore";
 import { useMetricsStore } from "@/stores/useMetricsStore";
 import { useUIStore } from "@/stores/useUIStore";
+import { useSettingsStore } from "@/stores/useSettingsStore";
+import { useTTSStore } from "@/hooks/useTTS";
 import type { WSReceiveMessage, AnyMessage } from "@/lib/types";
-import { loadMessages } from "@/lib/api";
+import { loadMessages, synthesize } from "@/lib/api";
 import { autoSaveConversation } from "@/lib/historyUtils";
 
 /**
@@ -131,6 +133,68 @@ export function useWebSocket() {
 
           // Auto-save conversation to history
           autoSaveConversation(agentId, authToken);
+
+          // Auto-play TTS if enabled
+          const settings = useSettingsStore.getState();
+          if (settings.ttsEnabled && settings.ttsAutoPlay && !msg.is_error) {
+            const updatedAgent = useAgentStore.getState().agents[agentId];
+            if (updatedAgent) {
+              const lastAssistantMsg = [...updatedAgent.messages]
+                .reverse()
+                .find((m) => m.type === "assistant");
+
+              if (
+                lastAssistantMsg &&
+                lastAssistantMsg.type === "assistant" &&
+                lastAssistantMsg.text.trim()
+              ) {
+                const ttsMessageId = lastAssistantMsg.id;
+                const ttsStore = useTTSStore.getState();
+                ttsStore.setPlaybackState("loading");
+                ttsStore.setPlayingMessageId(ttsMessageId);
+
+                synthesize(
+                  lastAssistantMsg.text,
+                  settings.ttsVoice,
+                  "+0%",
+                  connectionStore.authToken
+                )
+                  .then((blob) => {
+                    if (!blob) {
+                      ttsStore.setPlaybackState("idle");
+                      ttsStore.setPlayingMessageId(null);
+                      return;
+                    }
+                    const url = URL.createObjectURL(blob);
+                    const audio = new Audio(url);
+
+                    audio.onplay = () =>
+                      useTTSStore.getState().setPlaybackState("playing");
+                    audio.onended = () => {
+                      URL.revokeObjectURL(url);
+                      useTTSStore.getState().setPlaybackState("idle");
+                      useTTSStore.getState().setPlayingMessageId(null);
+                    };
+                    audio.onerror = () => {
+                      URL.revokeObjectURL(url);
+                      useTTSStore.getState().setPlaybackState("idle");
+                      useTTSStore.getState().setPlayingMessageId(null);
+                    };
+
+                    audio.play().catch(() => {
+                      // Browser may block autoplay without recent user interaction
+                      URL.revokeObjectURL(url);
+                      useTTSStore.getState().setPlaybackState("idle");
+                      useTTSStore.getState().setPlayingMessageId(null);
+                    });
+                  })
+                  .catch(() => {
+                    useTTSStore.getState().setPlaybackState("idle");
+                    useTTSStore.getState().setPlayingMessageId(null);
+                  });
+              }
+            }
+          }
 
           // Complete processing
           agentStore.setProcessing(agentId, false);

@@ -139,6 +139,15 @@ export type WSReceiveMessage =
 export type Theme = "dark" | "light" | "ocean";
 export type Language = "en" | "es";
 
+// === TTS ===
+export type TTSVoice =
+  | "es-MX-DaliaNeural"
+  | "es-MX-JorgeNeural"
+  | "en-US-JennyNeural"
+  | "en-US-GuyNeural";
+
+export type TTSPlaybackState = "idle" | "loading" | "playing";
+
 // === Active Panel ===
 export type ActivePanel = "pin" | "apiKey" | "fileBrowser" | "chat" | "metrics" | "settings";
 
