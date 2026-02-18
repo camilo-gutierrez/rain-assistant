@@ -1,0 +1,93 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rain-assistant"
+version = "1.0.0"
+description = "AI-powered coding assistant with voice, plugins, web UI, and Telegram bot"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.11"
+authors = [
+    { name = "Rain Assistant Contributors" },
+]
+keywords = ["ai", "assistant", "claude", "openai", "gemini", "voice", "coding", "plugins"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "fastapi>=0.100",
+    "uvicorn[standard]>=0.20",
+    "python-multipart",
+    "claude-agent-sdk",
+    "openai>=1.0.0",
+    "google-generativeai>=0.8.0",
+    "faster-whisper",
+    "edge-tts",
+    "bcrypt",
+    "cryptography",
+    "pyyaml>=6.0",
+    "httpx>=0.24",
+]
+
+[project.optional-dependencies]
+telegram = ["aiogram>=3.0.0"]
+computer-use = [
+    "anthropic>=0.79.0",
+    "pyautogui>=0.9.54",
+    "mss>=9.0.0",
+    "Pillow>=10.0.0",
+    "pyperclip>=1.8.0",
+]
+tunnel = ["pycloudflared"]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "ruff",
+]
+all = [
+    "rain-assistant[telegram,computer-use,tunnel]",
+]
+
+[project.scripts]
+rain = "server:main"
+rain-assistant = "server:main"
+
+[project.urls]
+Homepage = "https://github.com/camilo-gutierrez/rain-assistant"
+Documentation = "https://github.com/camilo-gutierrez/rain-assistant#readme"
+"Bug Tracker" = "https://github.com/camilo-gutierrez/rain-assistant/issues"
+
+[tool.setuptools]
+py-modules = [
+    "server",
+    "database",
+    "transcriber",
+    "synthesizer",
+    "permission_classifier",
+    "rate_limiter",
+    "tunnel",
+    "computer_use",
+    "telegram_bot",
+    "telegram_config",
+]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["plugins*", "providers*", "tools*", "static"]
+
+[tool.setuptools.package-data]
+static = ["**/*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]

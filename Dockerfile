@@ -39,8 +39,14 @@ COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/pytho
 COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Copy application source
-COPY server.py transcriber.py tunnel.py ./
+COPY server.py transcriber.py synthesizer.py tunnel.py ./
+COPY permission_classifier.py rate_limiter.py database.py computer_use.py ./
+COPY telegram_bot.py telegram_config.py ./
+COPY providers/ providers/
+COPY tools/ tools/
+COPY plugins/ plugins/
 COPY static/ static/
+COPY .mcp.json ./
 
 EXPOSE 8000
 

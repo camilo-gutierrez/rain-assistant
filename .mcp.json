@@ -1,16 +1,28 @@
 {
   "mcpServers": {
-    "home-assistant": {
-      "command": "uvx",
-      "args": ["ha-mcp@latest"],
-      "env": {
-        "HOMEASSISTANT_URL": "http://homeassistant.local:8123",
-        "HOMEASSISTANT_TOKEN": "YOUR_HA_TOKEN_HERE"
-      }
+    "rain-hub": {
+      "command": "node",
+      "args": [
+        "C:/Users/USER/Desktop/rain-mcp-servers/rain-hub/dist/index.js"
+      ]
     },
-    "gmail": {
-      "command": "npx",
-      "args": ["-y", "@gongrzhe/server-gmail-autoauth-mcp"]
+    "rain-email": {
+      "command": "node",
+      "args": [
+        "C:/Users/USER/Desktop/rain-mcp-servers/email-server/dist/index.js"
+      ]
+    },
+    "rain-browser": {
+      "command": "node",
+      "args": [
+        "C:/Users/USER/Desktop/rain-mcp-servers/browser-server/dist/index.js"
+      ]
+    },
+    "rain-calendar": {
+      "command": "node",
+      "args": [
+        "C:/Users/USER/Desktop/rain-mcp-servers/calendar-server/dist/index.js"
+      ]
     }
   }
 }

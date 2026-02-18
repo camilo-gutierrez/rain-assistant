@@ -1,5 +1,6 @@
 "use client";
 
+import { Square, OctagonX } from "lucide-react";
 import { useAgentStore } from "@/stores/useAgentStore";
 import { useConnectionStore } from "@/stores/useConnectionStore";
 import { useTranslation } from "@/hooks/useTranslation";
@@ -73,13 +74,12 @@ export default function InterruptButton() {
       <button
         onClick={handleClick}
         disabled={isStopping}
-        className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium border transition-all ${buttonClass}`}
+        className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-full text-sm font-medium border transition-all focus-ring ${buttonClass}`}
       >
-        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-          <rect x="6" y="6" width="12" height="12" rx="2" />
-        </svg>
+        {isForceMode ? <OctagonX size={16} /> : <Square size={14} fill="currentColor" />}
         {buttonText}
       </button>
+      <span className="ml-2 text-[11px] text-subtext hidden sm:inline">Esc</span>
     </div>
   );
 }

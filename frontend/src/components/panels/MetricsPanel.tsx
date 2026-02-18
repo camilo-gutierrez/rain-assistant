@@ -4,7 +4,37 @@ import { useEffect, useState } from "react";
 import { useMetricsStore } from "@/stores/useMetricsStore";
 import { useConnectionStore } from "@/stores/useConnectionStore";
 import { useTranslation } from "@/hooks/useTranslation";
-import type { MetricsData, MetricsTotals, RateLimits } from "@/lib/types";
+import { RefreshCw } from "lucide-react";
+
+// --- Skeleton ---
+
+function MetricsSkeleton() {
+  return (
+    <div className="space-y-5">
+      <div className="bg-surface rounded-xl shadow-sm p-5">
+        <div className="h-3 w-24 rounded shimmer-bg mb-3" />
+        <div className="h-8 w-32 rounded shimmer-bg mb-2" />
+        <div className="h-3 w-40 rounded shimmer-bg" />
+      </div>
+      <div className="bg-surface rounded-xl shadow-sm flex divide-x divide-overlay/50">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <div key={i} className="flex-1 p-3.5 flex flex-col items-center gap-2">
+            <div className="h-6 w-12 rounded shimmer-bg" />
+            <div className="h-3 w-16 rounded shimmer-bg" />
+          </div>
+        ))}
+      </div>
+      <div className="grid grid-cols-3 gap-3">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <div key={i} className="bg-surface rounded-xl shadow-sm p-3.5">
+            <div className="h-3 w-12 rounded shimmer-bg mb-2" />
+            <div className="h-6 w-16 rounded shimmer-bg" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 // --- Sub-components ---
 
@@ -156,19 +186,15 @@ export default function MetricsPanel() {
         <button
           onClick={handleRefresh}
           disabled={loading}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg text-primary hover:bg-primary/10 transition-colors disabled:opacity-50 font-medium"
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg text-primary hover:bg-primary/10 transition-colors disabled:opacity-50 font-medium focus-ring"
         >
-          <span className={loading ? "animate-spin-slow inline-block" : ""}>
-            ↻
-          </span>
+          <RefreshCw size={14} className={loading ? "animate-spin-slow" : ""} />
           {!loading && t("metrics.refresh")}
         </button>
       </div>
 
       {loading && !metricsData ? (
-        <div className="flex-1 flex items-center justify-center text-text2 text-sm">
-          {t("metrics.loading")}
-        </div>
+        <MetricsSkeleton />
       ) : !metricsData || !totals ? (
         <div className="flex-1 flex items-center justify-center text-text2 text-sm">
           {t("metrics.noData")}

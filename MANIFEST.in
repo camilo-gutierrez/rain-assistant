@@ -1,0 +1,25 @@
+# Root Python modules
+include server.py
+include database.py
+include transcriber.py
+include synthesizer.py
+include permission_classifier.py
+include rate_limiter.py
+include tunnel.py
+include computer_use.py
+include telegram_bot.py
+include telegram_config.py
+
+# Config
+include .mcp.json
+include requirements.txt
+include LICENSE
+include README.md
+
+# Frontend static build
+recursive-include static *
+
+# Python packages
+recursive-include plugins *.py *.yaml
+recursive-include providers *.py
+recursive-include tools *.py

@@ -24,6 +24,12 @@ nul
 .vscode/
 .idea/
 
+# Claude Code local settings
+.claude/settings.local.json
+
+# Backups
+static_backup/
+
 # Release artifacts
 rain-assistant.zip
 _release_helper.ps1

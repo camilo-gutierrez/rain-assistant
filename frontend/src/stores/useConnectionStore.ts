@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { WSSendMessage } from "@/lib/types";
+import type { WSSendMessage, AIProvider } from "@/lib/types";
 import { getWsUrl } from "@/lib/constants";
 
 type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
@@ -12,11 +12,13 @@ interface ConnectionState {
   statusText: string;
   consecutiveFails: number;
   usingApiKey: boolean;
+  currentProvider: AIProvider | null;
 
   setAuthToken: (token: string | null) => void;
   setConnectionStatus: (status: ConnectionStatus) => void;
   setStatusText: (text: string) => void;
   setUsingApiKey: (val: boolean) => void;
+  setCurrentProvider: (provider: AIProvider | null) => void;
   connect: () => void;
   disconnect: () => void;
   send: (msg: WSSendMessage) => boolean;
@@ -34,6 +36,7 @@ export const useConnectionStore = create<ConnectionState>()((set, get) => ({
   statusText: "",
   consecutiveFails: 0,
   usingApiKey: false,
+  currentProvider: null,
 
   setAuthToken: (token) => {
     if (token) {
@@ -47,6 +50,7 @@ export const useConnectionStore = create<ConnectionState>()((set, get) => ({
   setConnectionStatus: (connectionStatus) => set({ connectionStatus }),
   setStatusText: (statusText) => set({ statusText }),
   setUsingApiKey: (usingApiKey) => set({ usingApiKey }),
+  setCurrentProvider: (currentProvider) => set({ currentProvider }),
 
   connect: () => {
     const { reconnectTimerId, authToken } = get();

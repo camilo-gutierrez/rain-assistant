@@ -9,6 +9,16 @@ import PermissionRequestBlock from "@/components/chat/PermissionRequestBlock";
 import ScreenshotViewer from "@/components/computer-use/ScreenshotViewer";
 import ComputerActionBubble from "@/components/computer-use/ComputerActionBubble";
 
+function MessageSkeleton() {
+  return (
+    <div className="flex flex-col gap-4 p-4 animate-fade-in">
+      <div className="self-end w-48 h-10 rounded-2xl shimmer-bg" />
+      <div className="self-start w-64 h-16 rounded-2xl shimmer-bg" />
+      <div className="self-start w-40 h-10 rounded-2xl shimmer-bg" />
+    </div>
+  );
+}
+
 export default function ChatMessages() {
   const agents = useAgentStore((s) => s.agents);
   const activeAgentId = useAgentStore((s) => s.activeAgentId);
@@ -60,6 +70,9 @@ export default function ChatMessages() {
       className="flex-1 overflow-y-auto px-4 md:px-8 py-3 flex flex-col gap-2 bg-bg"
     >
       <div className="max-w-3xl mx-auto w-full flex flex-col gap-2">
+        {messages.length === 0 && activeAgent?.isProcessing && (
+          <MessageSkeleton />
+        )}
         {messages.map((msg) => {
           switch (msg.type) {
             case "user":

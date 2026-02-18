@@ -5,6 +5,7 @@ import { authenticate } from "@/lib/api";
 import { useConnectionStore } from "@/stores/useConnectionStore";
 import { useUIStore } from "@/stores/useUIStore";
 import { useTranslation } from "@/hooks/useTranslation";
+import { Lock, AlertTriangle, Timer } from "lucide-react";
 
 export default function PinPanel() {
   const [pin, setPin] = useState("");
@@ -90,7 +91,8 @@ export default function PinPanel() {
         onSubmit={handleSubmit}
         className="w-full max-w-[420px] flex flex-col items-center gap-6 p-8 bg-surface rounded-xl shadow-lg"
       >
-        <h2 className="text-2xl font-bold text-text">
+        <h2 className="text-2xl font-bold text-text flex items-center gap-2.5">
+          <Lock className="w-6 h-6 text-primary" />
           {t("pin.title")}
         </h2>
 
@@ -106,23 +108,29 @@ export default function PinPanel() {
           onChange={(e) => setPin(e.target.value)}
           placeholder="------"
           disabled={lockoutTime > 0}
-          className="w-48 text-center text-2xl tracking-[0.5em] font-[family-name:var(--font-jetbrains)] bg-surface2 border border-overlay rounded-lg px-4 py-3 text-text placeholder:text-subtext focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all disabled:opacity-50"
+          className="w-48 text-center text-2xl tracking-[0.5em] font-[family-name:var(--font-jetbrains)] bg-surface2 border border-overlay rounded-lg px-4 py-3 text-text placeholder:text-subtext focus-ring transition-all disabled:opacity-50"
         />
 
         {error && (
-          <p className="text-sm text-red text-center">{error}</p>
+          <div className="w-full flex items-center gap-2.5 px-3.5 py-3 rounded-xl bg-red/10 border border-red/30">
+            <AlertTriangle className="w-[18px] h-[18px] shrink-0 text-red" />
+            <p className="text-sm text-red">{error}</p>
+          </div>
         )}
 
         {lockoutTime > 0 && (
-          <p className="text-xs text-yellow font-[family-name:var(--font-jetbrains)]">
-            {lockoutTime}s
-          </p>
+          <div className="w-full flex items-center gap-2.5 px-3.5 py-3 rounded-xl bg-yellow/10 border border-yellow/30">
+            <Timer className="w-[18px] h-[18px] shrink-0 text-yellow" />
+            <p className="text-sm text-yellow font-[family-name:var(--font-jetbrains)]">
+              {lockoutTime}s
+            </p>
+          </div>
         )}
 
         <button
           type="submit"
           disabled={!pin.trim() || submitting || lockoutTime > 0}
-          className="w-full py-3 rounded-lg text-sm font-semibold bg-primary text-on-primary transition-all disabled:opacity-40 disabled:cursor-not-allowed hover:bg-primary-dark shadow-sm"
+          className="w-full min-h-[44px] py-3 rounded-lg text-sm font-semibold bg-primary text-on-primary transition-all disabled:opacity-40 disabled:cursor-not-allowed hover:bg-primary-dark shadow-sm focus-ring"
         >
           {submitting ? "..." : t("pin.submit")}
         </button>

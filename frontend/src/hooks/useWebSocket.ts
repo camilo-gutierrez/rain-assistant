@@ -6,10 +6,12 @@ import { useAgentStore } from "@/stores/useAgentStore";
 import { useMetricsStore } from "@/stores/useMetricsStore";
 import { useUIStore } from "@/stores/useUIStore";
 import { useSettingsStore } from "@/stores/useSettingsStore";
+import { useToastStore } from "@/stores/useToastStore";
 import { useTTSStore } from "@/hooks/useTTS";
 import type { WSReceiveMessage, AnyMessage, ComputerScreenshotMessage, ComputerActionMessage } from "@/lib/types";
 import { loadMessages, synthesize } from "@/lib/api";
 import { autoSaveConversation } from "@/lib/historyUtils";
+import { translate } from "@/lib/translations";
 
 /**
  * Central WebSocket hook — call once in page.tsx.
@@ -43,6 +45,20 @@ export function useWebSocket() {
         // ── Heartbeat: respond to server pings ──
         case "ping": {
           connectionStore.send({ type: "pong" });
+          break;
+        }
+
+        // ── API key pre-loaded from server config (setup wizard) ──
+        case "api_key_loaded": {
+          const provider = msg.provider || "claude";
+          useSettingsStore.getState().setAIProvider(provider);
+          connectionStore.setUsingApiKey(true);
+          connectionStore.setCurrentProvider(provider);
+          // Skip the apiKey panel — go straight to fileBrowser
+          const ui = useUIStore.getState();
+          if (ui.activePanel === "apiKey") {
+            ui.setActivePanel("fileBrowser");
+          }
           break;
         }
 
@@ -228,6 +244,12 @@ export function useWebSocket() {
             animate: true,
           });
 
+          // Toast notification for the error
+          useToastStore.getState().addToast({
+            type: "error",
+            message: msg.text,
+          });
+
           // Complete processing with error status
           agentStore.setProcessing(agentId, false);
           agentStore.setInterruptPending(agentId, false);
@@ -314,6 +336,12 @@ export function useWebSocket() {
         case "agent_destroyed":
           // Handled client-side by closeAgent
           break;
+
+        case "alter_ego_changed": {
+          const egoId = msg.ego_id || "rain";
+          useSettingsStore.getState().setActiveEgoId(egoId);
+          break;
+        }
       }
     };
 
@@ -321,16 +349,49 @@ export function useWebSocket() {
     return () => ws.removeEventListener("message", handleMessage);
   }, [ws, authToken]);
 
-  // On connect, reinit agents on server
+  // On connect, reinit agents on server (re-send API key + provider)
   useEffect(() => {
     if (connectionStatus === "connected" && !notifiedRef.current) {
       notifiedRef.current = true;
-      const agentStore = useAgentStore.getState();
       const send = useConnectionStore.getState().send;
+
+      // Re-send API key with provider/model if one was stored
+      const { aiProvider, aiModel } = useSettingsStore.getState();
+      const storedKey = typeof window !== "undefined"
+        ? sessionStorage.getItem(`rain-api-key-${aiProvider}`)
+        : null;
+      if (storedKey) {
+        send({ type: "set_api_key", key: storedKey, provider: aiProvider, model: aiModel });
+      }
+
+      const agentStore = useAgentStore.getState();
       agentStore.reinitAgentsOnServer(send);
     }
     if (connectionStatus !== "connected") {
       notifiedRef.current = false;
+    }
+  }, [connectionStatus]);
+
+  // Track connection status changes for toast notifications
+  const prevStatusRef = useRef<string>(connectionStatus);
+  useEffect(() => {
+    const prev = prevStatusRef.current;
+    prevStatusRef.current = connectionStatus;
+
+    const lang = useSettingsStore.getState().language;
+
+    if (connectionStatus === "disconnected" && prev === "connected") {
+      useToastStore.getState().addToast({
+        type: "warning",
+        message: translate(lang, "toast.connectionLost"),
+      });
+    }
+
+    if (connectionStatus === "connected" && (prev === "disconnected" || prev === "error")) {
+      useToastStore.getState().addToast({
+        type: "success",
+        message: translate(lang, "toast.connectionRestored"),
+      });
     }
   }, [connectionStatus]);
 }

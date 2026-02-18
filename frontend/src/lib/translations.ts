@@ -33,6 +33,8 @@ const translations: Record<Language, Record<string, string>> = {
     "apiKey.title": "Rain Assistant",
     "apiKey.instruction":
       "Enter your Anthropic API key to connect. You can get one at",
+    "apiKey.instructionGeneric":
+      "Enter your {provider} API key to connect. Get one at",
     "apiKey.show": "Show",
     "apiKey.hide": "Hide",
     "apiKey.savedInfo": "Key saved from last session.",
@@ -40,9 +42,14 @@ const translations: Record<Language, Record<string, string>> = {
     "apiKey.connect": "Connect",
     "apiKey.skip": "Use without key (local mode)",
 
+    // Provider
+    "provider.model": "Model",
+    "provider.claudeOnly": "Only available with Claude",
+
     // File browser
     "browser.title": "Select Project Directory",
     "browser.loading": "Loading...",
+    "browser.empty": "Empty directory",
     "browser.selectBtn": "Select This Directory",
 
     // Chat panel
@@ -60,6 +67,7 @@ const translations: Record<Language, Record<string, string>> = {
     "chat.showFullOutput": "Show full output",
     "chat.selectDirFirst": "Please select a project directory first.",
     "chat.sendError": "Could not send — connection lost. Try again.",
+    "chat.shiftEnterHint": "Shift+Enter for new line",
 
     // Metrics panel
     "metrics.title": "Usage Metrics",
@@ -145,6 +153,12 @@ const translations: Record<Language, Record<string, string>> = {
     "cu.iteration": "Step",
     "cu.permLevel": "COMPUTER ACCESS",
 
+    // Model Switcher
+    "modelSwitcher.keyConfigured": "Key configured",
+    "modelSwitcher.noKey": "No API key",
+    "modelSwitcher.configure": "Configure",
+    "modelSwitcher.appliesNext": "Applies to next conversation",
+
     // MCP Tools
     "mcp.title": "MCP Tools",
     "mcp.hub": "Hub",
@@ -156,6 +170,42 @@ const translations: Record<Language, Record<string, string>> = {
     "month.0": "Jan", "month.1": "Feb", "month.2": "Mar", "month.3": "Apr",
     "month.4": "May", "month.5": "Jun", "month.6": "Jul", "month.7": "Aug",
     "month.8": "Sep", "month.9": "Oct", "month.10": "Nov", "month.11": "Dec",
+
+    // Toast notifications
+    "toast.connectionLost": "Connection lost. Reconnecting...",
+    "toast.connectionRestored": "Connection restored",
+    "toast.copySuccess": "Copied to clipboard",
+    "toast.saveSuccess": "Conversation saved",
+    "toast.saveFailed": "Could not save conversation",
+    "toast.clearSuccess": "Conversation cleared",
+    "toast.sendFailed": "Could not send message",
+    "toast.deletedConversation": "Conversation deleted",
+    "toast.connectSuccess": "Connected successfully",
+
+    // Security banner
+    "security.httpWarning": "Insecure connection (HTTP). Use HTTPS in production.",
+    "security.dismiss": "Dismiss",
+    "memories.title": "Memories",
+    "memories.empty": "No memories stored yet",
+    "memories.emptyHint": "Tell Rain to remember something!",
+    "memories.add": "Add Memory",
+    "memories.addPlaceholder": "e.g. I prefer TypeScript...",
+    "memories.clearAll": "Clear All",
+    "memories.clearConfirm": "Delete all memories?",
+    "memories.category.preference": "Preference",
+    "memories.category.fact": "Fact",
+    "memories.category.pattern": "Pattern",
+    "memories.category.project": "Project",
+    "memories.count": "{count} memories",
+    "alterEgo.title": "Alter Egos",
+    "alterEgo.active": "Active",
+    "alterEgo.switch": "Switch",
+    "alterEgo.builtin": "Built-in",
+    "alterEgo.custom": "Custom",
+    "alterEgo.switchingTo": "Switching to {name}...",
+    "alterEgo.delete": "Delete",
+    "alterEgo.deleteConfirm": "Delete ego \"{name}\"?",
+    "alterEgo.cannotDeleteDefault": "Cannot delete the default Rain ego",
   },
   es: {
     // Status bar
@@ -189,6 +239,8 @@ const translations: Record<Language, Record<string, string>> = {
     "apiKey.title": "Rain Assistant",
     "apiKey.instruction":
       "Ingresa tu API key de Anthropic para conectar. Obt\u00e9n una en",
+    "apiKey.instructionGeneric":
+      "Ingresa tu API key de {provider} para conectar. Obt\u00e9n una en",
     "apiKey.show": "Ver",
     "apiKey.hide": "Ocultar",
     "apiKey.savedInfo": "Key guardada de la sesi\u00f3n anterior.",
@@ -196,9 +248,14 @@ const translations: Record<Language, Record<string, string>> = {
     "apiKey.connect": "Conectar",
     "apiKey.skip": "Usar sin key (modo local)",
 
+    // Provider
+    "provider.model": "Modelo",
+    "provider.claudeOnly": "Solo disponible con Claude",
+
     // File browser
     "browser.title": "Seleccionar Directorio del Proyecto",
     "browser.loading": "Cargando...",
+    "browser.empty": "Directorio vac\u00edo",
     "browser.selectBtn": "Seleccionar Este Directorio",
 
     // Chat panel
@@ -216,6 +273,7 @@ const translations: Record<Language, Record<string, string>> = {
     "chat.showFullOutput": "Ver salida completa",
     "chat.selectDirFirst": "Selecciona un directorio de proyecto primero.",
     "chat.sendError": "No se pudo enviar — conexión perdida. Intenta de nuevo.",
+    "chat.shiftEnterHint": "Shift+Enter nueva linea",
 
     // Metrics panel
     "metrics.title": "M\u00e9tricas de Uso",
@@ -301,6 +359,12 @@ const translations: Record<Language, Record<string, string>> = {
     "cu.iteration": "Paso",
     "cu.permLevel": "ACCESO A COMPUTADORA",
 
+    // Model Switcher
+    "modelSwitcher.keyConfigured": "Key configurada",
+    "modelSwitcher.noKey": "Sin API key",
+    "modelSwitcher.configure": "Configurar",
+    "modelSwitcher.appliesNext": "Se aplica a la siguiente conversación",
+
     // MCP Tools
     "mcp.title": "Herramientas MCP",
     "mcp.hub": "Hub",
@@ -312,6 +376,42 @@ const translations: Record<Language, Record<string, string>> = {
     "month.0": "Ene", "month.1": "Feb", "month.2": "Mar", "month.3": "Abr",
     "month.4": "May", "month.5": "Jun", "month.6": "Jul", "month.7": "Ago",
     "month.8": "Sep", "month.9": "Oct", "month.10": "Nov", "month.11": "Dic",
+
+    // Toast notifications
+    "toast.connectionLost": "Conexi\u00f3n perdida. Reconectando...",
+    "toast.connectionRestored": "Conexi\u00f3n restaurada",
+    "toast.copySuccess": "Copiado al portapapeles",
+    "toast.saveSuccess": "Conversaci\u00f3n guardada",
+    "toast.saveFailed": "No se pudo guardar la conversaci\u00f3n",
+    "toast.clearSuccess": "Conversaci\u00f3n limpiada",
+    "toast.sendFailed": "No se pudo enviar el mensaje",
+    "toast.deletedConversation": "Conversaci\u00f3n eliminada",
+    "toast.connectSuccess": "Conectado exitosamente",
+
+    // Security banner
+    "security.httpWarning": "Conexi\u00f3n insegura (HTTP). Usa HTTPS en producci\u00f3n.",
+    "security.dismiss": "Cerrar",
+    "memories.title": "Memorias",
+    "memories.empty": "Sin memorias guardadas",
+    "memories.emptyHint": "\u00a1Dile a Rain que recuerde algo!",
+    "memories.add": "Agregar Memoria",
+    "memories.addPlaceholder": "ej. Prefiero TypeScript...",
+    "memories.clearAll": "Borrar todo",
+    "memories.clearConfirm": "\u00bfEliminar todas las memorias?",
+    "memories.category.preference": "Preferencia",
+    "memories.category.fact": "Hecho",
+    "memories.category.pattern": "Patr\u00f3n",
+    "memories.category.project": "Proyecto",
+    "memories.count": "{count} memorias",
+    "alterEgo.title": "Alter Egos",
+    "alterEgo.active": "Activo",
+    "alterEgo.switch": "Cambiar",
+    "alterEgo.builtin": "Integrado",
+    "alterEgo.custom": "Personalizado",
+    "alterEgo.switchingTo": "Cambiando a {name}...",
+    "alterEgo.delete": "Eliminar",
+    "alterEgo.deleteConfirm": "\u00bfEliminar ego \"{name}\"?",
+    "alterEgo.cannotDeleteDefault": "No se puede eliminar el ego Rain predeterminado",
   },
 };
 

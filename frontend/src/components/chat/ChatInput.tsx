@@ -1,13 +1,15 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
+import { Send } from "lucide-react";
 import { useAgentStore } from "@/stores/useAgentStore";
 import { useConnectionStore } from "@/stores/useConnectionStore";
+import { useToastStore } from "@/stores/useToastStore";
 import { useTranslation } from "@/hooks/useTranslation";
 
 export default function ChatInput() {
   const [text, setText] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const agents = useAgentStore((s) => s.agents);
   const activeAgentId = useAgentStore((s) => s.activeAgentId);
@@ -20,6 +22,21 @@ export default function ChatInput() {
   const activeAgent = activeAgentId ? agents[activeAgentId] : null;
   const isProcessing = activeAgent?.isProcessing || false;
   const hasCwd = !!activeAgent?.cwd;
+
+  const isDisabled = isProcessing || !hasCwd;
+
+  const adjustHeight = () => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    const newHeight = Math.min(el.scrollHeight, 200);
+    el.style.height = newHeight + "px";
+    el.style.overflowY = el.scrollHeight > 200 ? "auto" : "hidden";
+  };
+
+  useEffect(() => {
+    adjustHeight();
+  }, [text]);
 
   const handleSend = () => {
     const trimmed = text.trim();
@@ -51,12 +68,17 @@ export default function ChatInput() {
         timestamp: Date.now(),
         animate: true,
       });
+
+      useToastStore.getState().addToast({
+        type: "error",
+        message: t("toast.sendFailed"),
+      });
     }
 
-    inputRef.current?.focus();
+    textareaRef.current?.focus();
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -64,26 +86,24 @@ export default function ChatInput() {
   };
 
   return (
-    <div className="flex items-center gap-2 px-4 py-3 bg-surface border-t border-overlay">
-      <input
-        ref={inputRef}
-        type="text"
+    <div className="flex items-end gap-2">
+      <textarea
+        ref={textareaRef}
+        rows={1}
         value={text}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={handleKeyDown}
         placeholder={t("chat.inputPlaceholder")}
-        disabled={isProcessing || !hasCwd}
-        className="flex-1 bg-surface2 text-text border border-overlay rounded-full px-4 py-2.5 text-sm placeholder:text-subtext focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+        disabled={isDisabled}
+        style={{ minHeight: "44px", maxHeight: "200px", resize: "none", overflowY: "hidden" }}
+        className={`flex-1 bg-surface2 text-text border border-overlay rounded-2xl px-4 py-2.5 text-sm placeholder:text-subtext focus-ring transition-all disabled:opacity-50 disabled:cursor-not-allowed`}
       />
       <button
         onClick={handleSend}
         disabled={!text.trim() || isProcessing || !hasCwd}
-        className="w-10 h-10 flex items-center justify-center rounded-full bg-primary text-on-primary transition-all disabled:opacity-30 disabled:cursor-not-allowed hover:bg-primary-dark shrink-0"
+        className="min-w-[44px] min-h-[44px] w-11 h-11 flex items-center justify-center rounded-full bg-primary text-on-primary transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:bg-primary-dark shrink-0"
       >
-        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <line x1="22" y1="2" x2="11" y2="13" />
-          <polygon points="22 2 15 22 11 13 2 9 22 2" />
-        </svg>
+        <Send size={18} />
       </button>
     </div>
   );

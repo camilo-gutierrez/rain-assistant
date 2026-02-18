@@ -7,11 +7,15 @@ interface UIState {
   unreadCount: number;
   metricsDrawerOpen: boolean;
   settingsDrawerOpen: boolean;
+  memoriesDrawerOpen: boolean;
+  alterEgosDrawerOpen: boolean;
   mobileSidebarOpen: boolean;
 
   setActivePanel: (panel: ActivePanel) => void;
   toggleMetricsDrawer: () => void;
   toggleSettingsDrawer: () => void;
+  toggleMemoriesDrawer: () => void;
+  toggleAlterEgosDrawer: () => void;
   toggleMobileSidebar: () => void;
   setTabFocused: (val: boolean) => void;
   incrementUnreadCount: () => void;
@@ -24,6 +28,8 @@ export const useUIStore = create<UIState>()((set) => ({
   unreadCount: 0,
   metricsDrawerOpen: false,
   settingsDrawerOpen: false,
+  memoriesDrawerOpen: false,
+  alterEgosDrawerOpen: false,
   mobileSidebarOpen: false,
 
   setActivePanel: (panel) => set({ activePanel: panel }),
@@ -33,6 +39,12 @@ export const useUIStore = create<UIState>()((set) => ({
 
   toggleSettingsDrawer: () =>
     set((s) => ({ settingsDrawerOpen: !s.settingsDrawerOpen })),
+
+  toggleMemoriesDrawer: () =>
+    set((s) => ({ memoriesDrawerOpen: !s.memoriesDrawerOpen })),
+
+  toggleAlterEgosDrawer: () =>
+    set((s) => ({ alterEgosDrawerOpen: !s.alterEgosDrawerOpen })),
 
   toggleMobileSidebar: () =>
     set((s) => ({ mobileSidebarOpen: !s.mobileSidebarOpen })),

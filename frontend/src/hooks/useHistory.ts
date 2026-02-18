@@ -2,12 +2,15 @@ import { useCallback } from "react";
 import { useHistoryStore } from "@/stores/useHistoryStore";
 import { useAgentStore } from "@/stores/useAgentStore";
 import { useConnectionStore } from "@/stores/useConnectionStore";
+import { useSettingsStore } from "@/stores/useSettingsStore";
+import { useToastStore } from "@/stores/useToastStore";
 import {
   listConversations,
   saveConversation,
   loadConversation,
   deleteConversation,
 } from "@/lib/api";
+import { translate } from "@/lib/translations";
 import type { ConversationFull } from "@/lib/types";
 
 export function useHistory() {
@@ -86,8 +89,19 @@ export function useHistory() {
         const result = await saveConversation(conversation, authToken);
         historyStore.setActiveConversationId(result.id);
         await refreshList();
+
+        const lang = useSettingsStore.getState().language;
+        useToastStore.getState().addToast({
+          type: "success",
+          message: translate(lang, "toast.saveSuccess"),
+        });
       } catch (err) {
         console.error("Failed to save conversation:", err);
+        const lang = useSettingsStore.getState().language;
+        useToastStore.getState().addToast({
+          type: "error",
+          message: translate(lang, "toast.saveFailed"),
+        });
       } finally {
         historyStore.setSaving(false);
       }
@@ -146,8 +160,19 @@ export function useHistory() {
           historyStore.setActiveConversationId(null);
         }
         await refreshList();
+
+        const lang = useSettingsStore.getState().language;
+        useToastStore.getState().addToast({
+          type: "success",
+          message: translate(lang, "toast.deletedConversation"),
+        });
       } catch (err) {
         console.error("Failed to delete conversation:", err);
+        const lang = useSettingsStore.getState().language;
+        useToastStore.getState().addToast({
+          type: "error",
+          message: translate(lang, "toast.saveFailed"),
+        });
       }
     },
     [authToken, refreshList]

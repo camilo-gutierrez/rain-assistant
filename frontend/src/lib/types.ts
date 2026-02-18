@@ -158,11 +158,12 @@ export type WSSendMessage =
   | { type: "interrupt"; agent_id: string }
   | { type: "set_cwd"; path: string; agent_id: string; session_id?: string }
   | { type: "destroy_agent"; agent_id: string }
-  | { type: "set_api_key"; key: string }
+  | { type: "set_api_key"; key: string; provider: AIProvider; model: string }
   | { type: "set_transcription_lang"; lang: string }
   | { type: "permission_response"; request_id: string; agent_id: string; approved: boolean; pin?: string }
   | { type: "set_mode"; agent_id: string; mode: AgentMode }
   | { type: "emergency_stop"; agent_id: string }
+  | { type: "set_alter_ego"; ego_id: string }
   | { type: "pong" };
 
 // === WebSocket Receive Messages ===
@@ -198,7 +199,84 @@ export type WSReceiveMessage =
   | { type: "mode_changed"; agent_id: string; mode: AgentMode; display_info?: DisplayInfo }
   | { type: "computer_screenshot"; agent_id: string; image: string; action: string; description: string; iteration: number }
   | { type: "computer_action"; agent_id: string; tool: string; action: string; input: Record<string, unknown>; description: string; iteration: number }
-  | { type: "ping"; ts: number };
+  | { type: "ping"; ts: number }
+  | { type: "api_key_loaded"; provider: AIProvider }
+  | { type: "alter_ego_changed"; ego_id: string; agent_id: string };
+
+// === AI Provider ===
+export type AIProvider = "claude" | "openai" | "gemini";
+
+export interface ProviderModelInfo {
+  id: string;
+  name: string;
+}
+
+export const PROVIDER_MODELS: Record<AIProvider, ProviderModelInfo[]> = {
+  claude: [
+    { id: "auto", name: "Auto (SDK)" },
+  ],
+  openai: [
+    { id: "gpt-4o", name: "GPT-4o" },
+    { id: "gpt-4o-mini", name: "GPT-4o Mini" },
+    { id: "gpt-4.1", name: "GPT-4.1" },
+    { id: "gpt-4.1-mini", name: "GPT-4.1 Mini" },
+    { id: "gpt-4.1-nano", name: "GPT-4.1 Nano" },
+    { id: "o3-mini", name: "o3-mini" },
+    { id: "o4-mini", name: "o4-mini" },
+  ],
+  gemini: [
+    { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro" },
+    { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
+    { id: "gemini-2.0-flash", name: "Gemini 2.0 Flash" },
+    { id: "gemini-2.0-flash-lite", name: "Gemini 2.0 Flash Lite" },
+  ],
+};
+
+export const PROVIDER_INFO: Record<AIProvider, {
+  name: string;
+  keyPlaceholder: string;
+  consoleUrl: string;
+  consoleName: string;
+}> = {
+  claude: {
+    name: "Claude",
+    keyPlaceholder: "sk-ant-...",
+    consoleUrl: "https://console.anthropic.com",
+    consoleName: "console.anthropic.com",
+  },
+  openai: {
+    name: "OpenAI",
+    keyPlaceholder: "sk-...",
+    consoleUrl: "https://platform.openai.com/api-keys",
+    consoleName: "platform.openai.com",
+  },
+  gemini: {
+    name: "Gemini",
+    keyPlaceholder: "AIza...",
+    consoleUrl: "https://aistudio.google.com/apikey",
+    consoleName: "aistudio.google.com",
+  },
+};
+
+// === Model Name Formatting ===
+const MODEL_SHORT_NAMES: Record<string, string> = {
+  "claude-sonnet-4-5-20250929": "Sonnet 4.5",
+  "claude-sonnet-4-20250514": "Sonnet 4",
+  "claude-opus-4-20250514": "Opus 4",
+  "claude-opus-4-6": "Opus 4.6",
+  "claude-haiku-3-5-20241022": "Haiku 3.5",
+  "claude-3-5-sonnet-20241022": "Sonnet 3.5",
+  "claude-3-5-haiku-20241022": "Haiku 3.5",
+};
+
+export function formatModelName(rawModel: string): string {
+  if (MODEL_SHORT_NAMES[rawModel]) return MODEL_SHORT_NAMES[rawModel];
+  // Try partial match (model IDs can have date suffixes)
+  for (const [key, name] of Object.entries(MODEL_SHORT_NAMES)) {
+    if (rawModel.startsWith(key.replace(/-\d{8}$/, ""))) return name;
+  }
+  return rawModel.length > 24 ? rawModel.slice(0, 22) + "..." : rawModel;
+}
 
 // === Theme & Language ===
 export type Theme = "light" | "dark";
@@ -212,6 +290,25 @@ export type TTSVoice =
   | "en-US-GuyNeural";
 
 export type TTSPlaybackState = "idle" | "loading" | "playing";
+
+// === Memories ===
+export interface Memory {
+  id: string;
+  content: string;
+  category: "preference" | "fact" | "pattern" | "project";
+  created_at: string;
+}
+
+// === Alter Egos ===
+export interface AlterEgo {
+  id: string;
+  name: string;
+  emoji: string;
+  description: string;
+  system_prompt: string;
+  color: string;
+  is_builtin: boolean;
+}
 
 // === Active Panel ===
 export type ActivePanel = "pin" | "apiKey" | "fileBrowser" | "chat";

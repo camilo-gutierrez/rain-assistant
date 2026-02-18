@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { ShieldCheck, ShieldX, Lock } from "lucide-react";
 import type { PermissionRequestMessage } from "@/lib/types";
 import { useTranslation } from "@/hooks/useTranslation";
 import { useConnectionStore } from "@/stores/useConnectionStore";
@@ -163,7 +164,8 @@ const PermissionRequestBlock = React.memo(function PermissionRequestBlock({
 
       {/* PIN input (RED only) */}
       {isRed && (
-        <div className="mt-2">
+        <div className="mt-2 flex items-center gap-2">
+          <Lock size={14} className="text-red shrink-0" />
           <input
             type="password"
             value={pin}
@@ -173,7 +175,7 @@ const PermissionRequestBlock = React.memo(function PermissionRequestBlock({
             }}
             placeholder={t("perm.enterPin")}
             disabled={isSubmitting}
-            className="w-full px-2 py-1 text-xs rounded border border-border bg-bg text-text1 placeholder:text-text2/50 focus:outline-none focus:border-primary"
+            className="w-full px-3 h-10 text-base rounded border border-border bg-bg text-text1 placeholder:text-text2/50 focus-ring"
             autoFocus
           />
         </div>
@@ -184,15 +186,17 @@ const PermissionRequestBlock = React.memo(function PermissionRequestBlock({
         <button
           onClick={handleApprove}
           disabled={isSubmitting || (isRed && !pin.trim())}
-          className="px-3 py-1 text-xs font-medium rounded bg-green/15 text-green hover:bg-green/25 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          className="inline-flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium rounded bg-green/15 text-green hover:bg-green/25 disabled:opacity-40 disabled:cursor-not-allowed transition-colors focus-ring min-h-[44px]"
         >
+          <ShieldCheck size={16} className="shrink-0" />
           {isSubmitting ? t("perm.processing") : t("perm.approve")}
         </button>
         <button
           onClick={handleDeny}
           disabled={isSubmitting}
-          className="px-3 py-1 text-xs font-medium rounded bg-red/15 text-red hover:bg-red/25 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          className="inline-flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium rounded bg-red/15 text-red hover:bg-red/25 disabled:opacity-40 disabled:cursor-not-allowed transition-colors focus-ring min-h-[44px]"
         >
+          <ShieldX size={16} className="shrink-0" />
           {t("perm.deny")}
         </button>
       </div>

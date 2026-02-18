@@ -1,5 +1,6 @@
 "use client";
 
+import { FolderOpen, Save, Trash2, RotateCcw } from "lucide-react";
 import { useAgentStore } from "@/stores/useAgentStore";
 import { useConnectionStore } from "@/stores/useConnectionStore";
 import { useUIStore } from "@/stores/useUIStore";
@@ -59,7 +60,8 @@ export default function ChatPanel() {
       {/* Chat header */}
       <div className="flex items-center gap-2 px-4 py-2.5 bg-surface border-b border-overlay">
         {folderName && (
-          <span className="text-sm font-medium text-text truncate">
+          <span className="inline-flex items-center gap-1.5 text-sm font-medium text-text truncate">
+            <FolderOpen size={14} className="shrink-0 text-subtext" />
             {folderName}
           </span>
         )}
@@ -69,22 +71,25 @@ export default function ChatPanel() {
         <button
           onClick={() => save()}
           disabled={isSaving || !activeAgent?.messages.length}
-          className="px-3 py-1.5 text-xs rounded-md text-text2 hover:bg-surface2 hover:text-green transition-colors disabled:opacity-30"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md text-text2 hover:bg-surface2 hover:text-green transition-colors disabled:opacity-30"
         >
+          <Save size={13} />
           {isSaving ? t("history.saving") : t("history.saveBtn")}
         </button>
 
         <button
           onClick={handleChange}
-          className="px-3 py-1.5 text-xs rounded-md text-text2 hover:bg-surface2 hover:text-primary transition-colors"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md text-text2 hover:bg-surface2 hover:text-primary transition-colors"
         >
+          <RotateCcw size={13} />
           {t("chat.changeBtn")}
         </button>
 
         <button
           onClick={handleClear}
-          className="px-3 py-1.5 text-xs rounded-md text-text2 hover:bg-surface2 hover:text-red transition-colors"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md text-text2 hover:bg-surface2 hover:text-red transition-colors"
         >
+          <Trash2 size={13} />
           {t("chat.clearBtn")}
         </button>
       </div>
@@ -95,12 +100,26 @@ export default function ChatPanel() {
       {/* Messages */}
       <ChatMessages />
 
-      {/* Input controls */}
-      <div className="shrink-0">
-        <InterruptButton />
-        <ChatInput />
-        <div className="px-4 py-2 bg-surface border-t border-overlay">
-          <RecordButton />
+      {/* Unified input area */}
+      <div className="shrink-0 bg-surface border-t border-overlay">
+        <div className="max-w-3xl mx-auto px-4">
+          {/* InterruptButton floats above textarea when visible */}
+          <InterruptButton />
+
+          {/* Textarea row */}
+          <div className="pt-3">
+            <ChatInput />
+          </div>
+
+          {/* Bottom bar: RecordButton | hint | send area */}
+          <div className="flex items-center justify-between py-2">
+            <RecordButton />
+            <span className="hidden sm:inline text-[11px] text-subtext select-none">
+              {t("chat.shiftEnterHint")}
+            </span>
+            {/* Send button is part of ChatInput, right side is balanced by this spacer on small screens */}
+            <div className="w-11 sm:hidden" />
+          </div>
         </div>
       </div>
     </div>

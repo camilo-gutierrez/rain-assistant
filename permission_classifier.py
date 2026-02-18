@@ -129,7 +129,32 @@ def classify(tool_name: str, tool_input: dict[str, Any]) -> PermissionLevel:
         command = str(tool_input.get("command", ""))
         return _classify_bash_command(command)
 
+    # Plugin tools: use the permission_level from the plugin YAML
+    if tool_name.startswith("plugin_"):
+        return _classify_plugin(tool_name[7:])
+
+    # manage_plugins modifies the system, requires confirmation
+    if tool_name == "manage_plugins":
+        return PermissionLevel.YELLOW
+
     # Unknown tools default to YELLOW (safe default)
+    return PermissionLevel.YELLOW
+
+
+def _classify_plugin(plugin_name: str) -> PermissionLevel:
+    """Classify a plugin tool by reading its permission_level from YAML."""
+    try:
+        from plugins import load_plugin_by_name
+        plugin = load_plugin_by_name(plugin_name)
+        if plugin:
+            level_map = {
+                "green": PermissionLevel.GREEN,
+                "yellow": PermissionLevel.YELLOW,
+                "red": PermissionLevel.RED,
+            }
+            return level_map.get(plugin.permission_level, PermissionLevel.YELLOW)
+    except Exception:
+        pass
     return PermissionLevel.YELLOW
 
 

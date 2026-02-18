@@ -1,10 +1,10 @@
 services:
-  voice-claude:
+  rain-assistant:
     build: .
     ports:
       - "8000:8000"
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
     volumes:
-      - ~/.voice-claude:/root/.voice-claude
+      - ~/.rain-assistant:/root/.rain-assistant
     restart: unless-stopped

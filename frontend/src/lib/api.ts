@@ -1,4 +1,4 @@
-import type { AuthResponse, BrowseResponse, ConversationFull, ConversationMeta, HistoryMessage, MetricsData } from "./types";
+import type { AuthResponse, BrowseResponse, ConversationFull, ConversationMeta, HistoryMessage, MetricsData, Memory, AlterEgo } from "./types";
 import { getApiUrl } from "./constants";
 
 function authHeaders(token: string | null): HeadersInit {
@@ -168,5 +168,91 @@ export async function deleteConversation(
     { method: "DELETE", headers: authHeaders(token) }
   );
   if (!res.ok) throw new Error(`Delete conversation failed: ${res.status}`);
+  return res.json();
+}
+
+// === Memories ===
+
+export async function fetchMemories(
+  token: string | null
+): Promise<{ memories: Memory[] }> {
+  const res = await fetch(`${getApiUrl()}/memories`, {
+    headers: authHeaders(token),
+  });
+  if (!res.ok) throw new Error(`Fetch memories failed: ${res.status}`);
+  return res.json();
+}
+
+export async function addMemory(
+  content: string,
+  category: string,
+  token: string | null
+): Promise<{ memory: Memory }> {
+  const res = await fetch(`${getApiUrl()}/memories`, {
+    method: "POST",
+    headers: { ...authHeaders(token), "Content-Type": "application/json" },
+    body: JSON.stringify({ content, category }),
+  });
+  if (!res.ok) throw new Error(`Add memory failed: ${res.status}`);
+  return res.json();
+}
+
+export async function deleteMemory(
+  memoryId: string,
+  token: string | null
+): Promise<{ deleted: boolean }> {
+  const res = await fetch(
+    `${getApiUrl()}/memories/${encodeURIComponent(memoryId)}`,
+    { method: "DELETE", headers: authHeaders(token) }
+  );
+  if (!res.ok) throw new Error(`Delete memory failed: ${res.status}`);
+  return res.json();
+}
+
+export async function clearAllMemories(
+  token: string | null
+): Promise<{ cleared: number }> {
+  const res = await fetch(`${getApiUrl()}/memories`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+  if (!res.ok) throw new Error(`Clear memories failed: ${res.status}`);
+  return res.json();
+}
+
+// === Alter Egos ===
+
+export async function fetchAlterEgos(
+  token: string | null
+): Promise<{ egos: AlterEgo[]; active_ego_id: string }> {
+  const res = await fetch(`${getApiUrl()}/alter-egos`, {
+    headers: authHeaders(token),
+  });
+  if (!res.ok) throw new Error(`Fetch alter egos failed: ${res.status}`);
+  return res.json();
+}
+
+export async function saveAlterEgo(
+  ego: Partial<AlterEgo>,
+  token: string | null
+): Promise<{ saved: boolean; path: string }> {
+  const res = await fetch(`${getApiUrl()}/alter-egos`, {
+    method: "POST",
+    headers: { ...authHeaders(token), "Content-Type": "application/json" },
+    body: JSON.stringify(ego),
+  });
+  if (!res.ok) throw new Error(`Save alter ego failed: ${res.status}`);
+  return res.json();
+}
+
+export async function deleteAlterEgo(
+  egoId: string,
+  token: string | null
+): Promise<{ deleted: boolean }> {
+  const res = await fetch(
+    `${getApiUrl()}/alter-egos/${encodeURIComponent(egoId)}`,
+    { method: "DELETE", headers: authHeaders(token) }
+  );
+  if (!res.ok) throw new Error(`Delete alter ego failed: ${res.status}`);
   return res.json();
 }

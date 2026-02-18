@@ -21,6 +21,9 @@ import FileBrowserPanel from "@/components/panels/FileBrowserPanel";
 import ChatPanel from "@/components/panels/ChatPanel";
 import MetricsPanel from "@/components/panels/MetricsPanel";
 import SettingsPanel from "@/components/panels/SettingsPanel";
+import MemoriesPanel from "@/components/panels/MemoriesPanel";
+import AlterEgosPanel from "@/components/panels/AlterEgosPanel";
+import ToastContainer from "@/components/Toast";
 
 export default function HomePage() {
   useWebSocket();
@@ -30,8 +33,12 @@ export default function HomePage() {
   const setActivePanel = useUIStore((s) => s.setActivePanel);
   const metricsDrawerOpen = useUIStore((s) => s.metricsDrawerOpen);
   const settingsDrawerOpen = useUIStore((s) => s.settingsDrawerOpen);
+  const memoriesDrawerOpen = useUIStore((s) => s.memoriesDrawerOpen);
+  const alterEgosDrawerOpen = useUIStore((s) => s.alterEgosDrawerOpen);
   const toggleMetricsDrawer = useUIStore((s) => s.toggleMetricsDrawer);
   const toggleSettingsDrawer = useUIStore((s) => s.toggleSettingsDrawer);
+  const toggleMemoriesDrawer = useUIStore((s) => s.toggleMemoriesDrawer);
+  const toggleAlterEgosDrawer = useUIStore((s) => s.toggleAlterEgosDrawer);
   const ensureDefaultAgent = useAgentStore((s) => s.ensureDefaultAgent);
   const activeAgentId = useAgentStore((s) => s.activeAgentId);
   const activeAgentPanel = useAgentStore((s) => {
@@ -76,15 +83,17 @@ export default function HomePage() {
       <div className="flex flex-1 overflow-hidden">
         {/* Desktop sidebar */}
         {showSidebar && (
-          <aside className="hidden md:flex w-[280px] shrink-0 flex-col bg-surface border-r border-overlay">
-            <SidebarNav />
-            <div className="h-px bg-overlay/60 mx-3" />
-            <HistorySidebar mode="inline" />
+          <aside className="hidden md:flex w-[280px] shrink-0 flex-col bg-surface border-r border-overlay/60">
+            <div className="overflow-y-auto flex-1 flex flex-col min-h-0">
+              <SidebarNav />
+              <div className="h-px bg-gradient-to-r from-transparent via-overlay/50 to-transparent mx-4 shrink-0" />
+              <HistorySidebar mode="inline" />
+            </div>
           </aside>
         )}
 
         {/* Main content area */}
-        <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="flex-1 flex flex-col overflow-hidden transition-all duration-200">
           {showTabBar && <TabBar />}
           <main className="flex-1 flex flex-col overflow-hidden">
             {activePanel === "pin" && <PinPanel />}
@@ -100,6 +109,24 @@ export default function HomePage() {
 
       {/* Mobile history drawer */}
       <HistorySidebar mode="drawer" />
+
+      {/* Memories drawer */}
+      <DrawerOverlay
+        open={memoriesDrawerOpen}
+        onClose={toggleMemoriesDrawer}
+        title={t("memories.title")}
+      >
+        <MemoriesPanel />
+      </DrawerOverlay>
+
+      {/* Alter Egos drawer */}
+      <DrawerOverlay
+        open={alterEgosDrawerOpen}
+        onClose={toggleAlterEgosDrawer}
+        title={t("alterEgo.title")}
+      >
+        <AlterEgosPanel />
+      </DrawerOverlay>
 
       {/* Metrics drawer */}
       <DrawerOverlay
@@ -118,6 +145,9 @@ export default function HomePage() {
       >
         <SettingsPanel />
       </DrawerOverlay>
+
+      {/* Toast notifications */}
+      <ToastContainer />
     </div>
   );
 }

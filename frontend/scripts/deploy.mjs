@@ -6,7 +6,7 @@
  *   node scripts/deploy.mjs
  */
 
-import { cpSync, rmSync, existsSync, mkdirSync } from "fs";
+import { cpSync, rmSync, existsSync, mkdirSync, writeFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 
@@ -46,5 +46,11 @@ const swDst = join(staticDir, "sw.js");
 if (existsSync(swSrc) && !existsSync(swDst)) {
   cpSync(swSrc, swDst);
 }
+
+// Recreate __init__.py for pip packaging (setuptools needs it)
+writeFileSync(
+  join(staticDir, "__init__.py"),
+  "# This file makes static/ discoverable by setuptools for pip packaging.\n"
+);
 
 console.log("Deploy complete! FastAPI will serve the new frontend from static/");

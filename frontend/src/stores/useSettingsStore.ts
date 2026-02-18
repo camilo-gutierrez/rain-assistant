@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import type { Theme, Language, TTSVoice } from "@/lib/types";
+import type { Theme, Language, TTSVoice, AIProvider } from "@/lib/types";
 
 interface SettingsState {
   theme: Theme;
@@ -10,6 +10,11 @@ interface SettingsState {
   ttsEnabled: boolean;
   ttsAutoPlay: boolean;
   ttsVoice: TTSVoice;
+  // AI Provider
+  aiProvider: AIProvider;
+  aiModel: string;
+  // Alter Ego
+  activeEgoId: string;
 
   setTheme: (theme: Theme) => void;
   setLanguage: (lang: Language) => void;
@@ -17,6 +22,9 @@ interface SettingsState {
   setTtsEnabled: (val: boolean) => void;
   setTtsAutoPlay: (val: boolean) => void;
   setTtsVoice: (voice: TTSVoice) => void;
+  setAIProvider: (provider: AIProvider) => void;
+  setAIModel: (model: string) => void;
+  setActiveEgoId: (id: string) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -28,6 +36,9 @@ export const useSettingsStore = create<SettingsState>()(
       ttsEnabled: false,
       ttsAutoPlay: false,
       ttsVoice: "es-MX-DaliaNeural" as TTSVoice,
+      aiProvider: "claude" as AIProvider,
+      aiModel: "auto",
+      activeEgoId: "rain",
 
       setTheme: (theme) => {
         if (typeof document !== "undefined") {
@@ -47,14 +58,24 @@ export const useSettingsStore = create<SettingsState>()(
       setTtsEnabled: (ttsEnabled) => set({ ttsEnabled }),
       setTtsAutoPlay: (ttsAutoPlay) => set({ ttsAutoPlay }),
       setTtsVoice: (ttsVoice) => set({ ttsVoice }),
+      setAIProvider: (aiProvider) => set({ aiProvider }),
+      setAIModel: (aiModel) => set({ aiModel }),
+      setActiveEgoId: (activeEgoId) => set({ activeEgoId }),
     }),
     {
       name: "rain-settings",
-      version: 2,
+      version: 4,
       migrate: (persisted, version) => {
+        const state = persisted as Record<string, unknown>;
         if (version < 2) {
-          const state = persisted as Record<string, unknown>;
           if (state.theme === "ocean") state.theme = "dark";
+        }
+        if (version < 3) {
+          state.aiProvider = state.aiProvider ?? "claude";
+          state.aiModel = state.aiModel ?? "auto";
+        }
+        if (version < 4) {
+          state.activeEgoId = state.activeEgoId ?? "rain";
         }
         return persisted as SettingsState;
       },

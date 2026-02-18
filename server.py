@@ -41,6 +41,7 @@ from claude_agent_sdk.types import StreamEvent
 
 from permission_classifier import PermissionLevel, classify, get_danger_reason
 from rate_limiter import rate_limiter, categorize_endpoint, EndpointCategory
+from providers import get_provider, NormalizedEvent
 
 # Computer Use imports (lazy — only used when mode is activated)
 try:
@@ -77,14 +78,17 @@ CONFIG_DIR = Path.home() / ".rain-assistant"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 OLD_CONFIG_DIR = Path.home() / ".voice-claude"
 
-RAIN_SYSTEM_PROMPT = (
-    "Your name is Rain. You are a friendly, tech-savvy coding assistant. "
-    "When greeting the user for the first time in a conversation, introduce yourself as Rain. "
-    "Use a warm and casual tone -- like a knowledgeable friend who's an expert developer. "
-    "You can be a little playful, but always stay helpful and focused. "
-    "Use the name 'Rain' naturally when referring to yourself. "
-    "Respond in the same language the user writes in."
+from prompt_composer import compose_system_prompt
+from alter_egos.storage import (
+    load_all_egos, load_ego, save_ego, delete_ego,
+    get_active_ego_id, set_active_ego_id, ensure_builtin_egos,
 )
+from memories.storage import (
+    load_memories, add_memory, remove_memory, clear_memories,
+)
+
+# Ensure built-in alter egos exist on startup
+ensure_builtin_egos()
 
 transcriber = Transcriber(model_size="base", language="es")
 synthesizer = Synthesizer()
@@ -999,6 +1003,82 @@ async def delete_conversation(request: Request, conversation_id: str):
 
 
 # ---------------------------------------------------------------------------
+# REST API: Memories
+# ---------------------------------------------------------------------------
+
+@app.get("/api/memories")
+async def api_get_memories(request: Request):
+    if not verify_token(get_token(request)):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    return {"memories": load_memories()}
+
+
+@app.post("/api/memories")
+async def api_add_memory(request: Request):
+    if not verify_token(get_token(request)):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    body = await request.json()
+    content = body.get("content", "").strip()
+    category = body.get("category", "fact")
+    if not content:
+        return JSONResponse({"error": "content is required"}, status_code=400)
+    memory = add_memory(content, category)
+    return {"memory": memory}
+
+
+@app.delete("/api/memories/{memory_id}")
+async def api_delete_memory(request: Request, memory_id: str):
+    if not verify_token(get_token(request)):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    if remove_memory(memory_id):
+        return {"deleted": True}
+    return JSONResponse({"error": "Not found"}, status_code=404)
+
+
+@app.delete("/api/memories")
+async def api_clear_memories(request: Request):
+    if not verify_token(get_token(request)):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    count = clear_memories()
+    return {"cleared": count}
+
+
+# ---------------------------------------------------------------------------
+# REST API: Alter Egos
+# ---------------------------------------------------------------------------
+
+@app.get("/api/alter-egos")
+async def api_get_alter_egos(request: Request):
+    if not verify_token(get_token(request)):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    return {"egos": load_all_egos(), "active_ego_id": get_active_ego_id()}
+
+
+@app.post("/api/alter-egos")
+async def api_save_alter_ego(request: Request):
+    if not verify_token(get_token(request)):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    body = await request.json()
+    try:
+        path = save_ego(body)
+        return {"saved": True, "path": str(path)}
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.delete("/api/alter-egos/{ego_id}")
+async def api_delete_alter_ego(request: Request, ego_id: str):
+    if not verify_token(get_token(request)):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    try:
+        if delete_ego(ego_id):
+            return {"deleted": True}
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+# ---------------------------------------------------------------------------
 # WebSocket: Multi-agent Claude Code interaction
 # ---------------------------------------------------------------------------
 
@@ -1013,9 +1093,12 @@ async def websocket_endpoint(ws: WebSocket):
 
     await ws.accept()
 
-    # Agent registry: agent_id → { client, cwd, streaming_task }
+    # Agent registry: agent_id → { provider, cwd, streaming_task, ... }
     agents: dict[str, dict] = {}
-    api_key: str | None = None
+    api_key: str | None = config.get("default_api_key")
+    current_provider_name: str = config.get("default_provider", "claude")
+    current_model: str = "auto"
+    current_ego_id: str = get_active_ego_id()
     last_activity: float = time.time()
 
     # Permission request tracking
@@ -1044,6 +1127,13 @@ async def websocket_endpoint(ws: WebSocket):
             await send({"type": "ping", "ts": time.time()})
 
     heartbeat_task = asyncio.create_task(heartbeat_loop())
+
+    # Notify frontend if API key was pre-loaded from config (setup wizard)
+    if api_key:
+        await send({
+            "type": "api_key_loaded",
+            "provider": current_provider_name,
+        })
 
     def _get_active_streaming_agent() -> str | None:
         """Find the agent that currently has an active streaming task."""
@@ -1129,8 +1219,12 @@ async def websocket_endpoint(ws: WebSocket):
             )
             return PermissionResultDeny(message="Operation denied by user.")
 
-    async def stream_claude_response(stream_client: ClaudeSDKClient, agent_id: str):
-        """Stream Claude's response to the frontend. Runs as a background task."""
+    async def stream_provider_response(provider, agent_id: str):
+        """Stream any provider's response to the frontend. Runs as a background task.
+
+        All providers emit NormalizedEvent objects that map directly to
+        the existing WSReceiveMessage types, so the frontend needs no changes.
+        """
         agent = agents.get(agent_id)
         if not agent:
             return
@@ -1145,86 +1239,44 @@ async def websocket_endpoint(ws: WebSocket):
                 accumulated_text = ""
 
         try:
-            async for message in stream_client.receive_response():
-                if isinstance(message, AssistantMessage):
-                    # Forward model name to the frontend
-                    model_name = getattr(message, "model", None)
-                    if model_name:
-                        await send({
-                            "type": "model_info",
-                            "agent_id": agent_id,
-                            "model": model_name,
-                        })
-                    for block in message.content:
-                        if isinstance(block, TextBlock):
-                            accumulated_text += block.text
-                            await send({
-                                "type": "assistant_text",
-                                "agent_id": agent_id,
-                                "text": block.text,
-                            })
-                        elif isinstance(block, ToolUseBlock):
-                            flush_text()
-                            payload = {
-                                "tool": block.name,
-                                "id": block.id,
-                                "input": block.input,
-                            }
-                            if cwd:
-                                database.save_message(cwd, "tool", "tool_use", payload, agent_id=agent_id)
-                            await send({"type": "tool_use", "agent_id": agent_id, **payload})
-                        elif isinstance(block, ToolResultBlock):
-                            flush_text()
-                            content_str = ""
-                            if isinstance(block.content, str):
-                                content_str = block.content
-                            elif isinstance(block.content, list):
-                                content_str = json.dumps(block.content, default=str)
-                            elif block.content is not None:
-                                content_str = str(block.content)
-                            payload = {
-                                "tool_use_id": block.tool_use_id,
-                                "content": content_str,
-                                "is_error": block.is_error or False,
-                            }
-                            if cwd:
-                                database.save_message(cwd, "tool", "tool_result", payload, agent_id=agent_id)
-                            await send({"type": "tool_result", "agent_id": agent_id, **payload})
+            async for event in provider.stream_response():
+                if event.type == "assistant_text":
+                    accumulated_text += event.data.get("text", "")
+                    await send({"type": "assistant_text", "agent_id": agent_id, **event.data})
 
-                elif isinstance(message, StreamEvent):
-                    pass  # Text already handled via AssistantMessage TextBlocks
-
-                elif isinstance(message, ResultMessage):
+                elif event.type == "tool_use":
                     flush_text()
-                    payload = {
-                        "text": message.result or "",
-                        "session_id": message.session_id,
-                        "cost": message.total_cost_usd,
-                        "duration_ms": message.duration_ms,
-                        "num_turns": message.num_turns,
-                        "is_error": message.is_error,
-                        "usage": message.usage,
-                    }
                     if cwd:
-                        database.save_message(cwd, "assistant", "result", payload, agent_id=agent_id)
-                    await send({"type": "result", "agent_id": agent_id, **payload})
+                        database.save_message(cwd, "tool", "tool_use", event.data, agent_id=agent_id)
+                    await send({"type": "tool_use", "agent_id": agent_id, **event.data})
 
-                    # Fetch & send rate limits after each response
-                    if api_key:
+                elif event.type == "tool_result":
+                    flush_text()
+                    if cwd:
+                        database.save_message(cwd, "tool", "tool_result", event.data, agent_id=agent_id)
+                    await send({"type": "tool_result", "agent_id": agent_id, **event.data})
+
+                elif event.type == "model_info":
+                    await send({"type": "model_info", "agent_id": agent_id, **event.data})
+
+                elif event.type == "result":
+                    flush_text()
+                    if cwd:
+                        database.save_message(cwd, "assistant", "result", event.data, agent_id=agent_id)
+                    await send({"type": "result", "agent_id": agent_id, **event.data})
+
+                    # Fetch & send rate limits (Anthropic only)
+                    if provider.provider_name == "claude" and api_key:
                         rl = await fetch_rate_limits(api_key)
                         if rl:
-                            await send({
-                                "type": "rate_limits",
-                                "agent_id": agent_id,
-                                "limits": rl,
-                            })
+                            await send({"type": "rate_limits", "agent_id": agent_id, "limits": rl})
 
-                elif isinstance(message, SystemMessage):
-                    await send({
-                        "type": "status",
-                        "agent_id": agent_id,
-                        "text": f"System: {message.subtype}",
-                    })
+                elif event.type == "status":
+                    await send({"type": "status", "agent_id": agent_id, **event.data})
+
+                elif event.type == "error":
+                    flush_text()
+                    await send({"type": "error", "agent_id": agent_id, **event.data})
 
         except asyncio.CancelledError:
             flush_text()
@@ -1271,9 +1323,9 @@ async def websocket_endpoint(ws: WebSocket):
         await cancel_agent_streaming(agent_id)
         await cancel_computer_use_task(agent_id)
         agent = agents.pop(agent_id, None)
-        if agent and agent.get("client"):
+        if agent and agent.get("provider"):
             try:
-                await agent["client"].disconnect()
+                await agent["provider"].disconnect()
             except Exception:
                 pass
 
@@ -1615,7 +1667,10 @@ async def websocket_endpoint(ws: WebSocket):
                     await send({"type": "error", "agent_id": agent_id, "text": "API key too long."})
                     continue
                 api_key = key
-                await send({"type": "status", "agent_id": agent_id, "text": "API key set."})
+                current_provider_name = data.get("provider", "claude")
+                current_model = data.get("model", "auto")
+                provider_label = {"claude": "Claude", "openai": "OpenAI", "gemini": "Gemini"}.get(current_provider_name, current_provider_name)
+                await send({"type": "status", "agent_id": agent_id, "text": f"API key set for {provider_label}."})
 
             # ---- Set transcription language ----
             elif msg_type == "set_transcription_lang":
@@ -1653,29 +1708,85 @@ async def websocket_endpoint(ws: WebSocket):
                 resolved_cwd = str(cwd_path.resolve())
                 resume_session_id = data.get("session_id")
 
-                env = {"ANTHROPIC_API_KEY": api_key} if api_key else {}
-
                 # Load MCP server configuration from .mcp.json
                 mcp_config_path = Path(__file__).parent / ".mcp.json"
                 mcp_servers: dict | str = {}
                 if mcp_config_path.exists():
                     mcp_servers = str(mcp_config_path)
 
-                options = ClaudeAgentOptions(
-                    cwd=resolved_cwd,
-                    permission_mode="default",
-                    can_use_tool=can_use_tool_callback,
-                    include_partial_messages=True,
-                    env=env,
-                    system_prompt=RAIN_SYSTEM_PROMPT,
-                    resume=resume_session_id or None,
-                    mcp_servers=mcp_servers,
-                )
-                client = ClaudeSDKClient(options=options)
-                await client.connect()
+                # Permission callback for non-Claude providers
+                async def tool_permission_callback(tool_name: str, _tool_name2: str, tool_input: dict) -> bool:
+                    """Adapted permission callback for OpenAI/Gemini providers."""
+                    # Map custom tool names to permission classifier names
+                    tool_map = {
+                        "read_file": "Read", "list_directory": "Read",
+                        "search_files": "Glob", "grep_search": "Grep",
+                        "write_file": "Write", "edit_file": "Edit",
+                        "bash": "Bash",
+                    }
+                    classifier_name = tool_map.get(tool_name, tool_name)
+                    level = classify(classifier_name, tool_input)
+
+                    if level == PermissionLevel.GREEN:
+                        return True
+
+                    # YELLOW/RED: send permission request to frontend and wait
+                    request_id = f"perm_{secrets.token_hex(8)}"
+                    active_aid = _get_active_streaming_agent() or agent_id
+                    event = asyncio.Event()
+                    pending_permissions[request_id] = event
+
+                    await send({
+                        "type": "permission_request",
+                        "request_id": request_id,
+                        "agent_id": active_aid,
+                        "tool": tool_name,
+                        "input": tool_input,
+                        "level": level.value,
+                        "reason": get_danger_reason(classifier_name, tool_input) if level == PermissionLevel.RED else "",
+                    })
+
+                    try:
+                        await asyncio.wait_for(event.wait(), timeout=300)
+                    except asyncio.TimeoutError:
+                        pending_permissions.pop(request_id, None)
+                        permission_responses.pop(request_id, None)
+                        return False
+
+                    response = permission_responses.pop(request_id, {})
+                    pending_permissions.pop(request_id, None)
+                    approved = response.get("approved", False)
+
+                    if level == PermissionLevel.RED and approved:
+                        pin = response.get("pin", "")
+                        pin_hash = config.get("pin_hash", "")
+                        try:
+                            pin_valid = bool(pin) and bcrypt.checkpw(pin.encode(), pin_hash.encode())
+                        except Exception:
+                            pin_valid = False
+                        if not pin_valid:
+                            return False
+
+                    return approved
+
+                # Create provider via factory
+                provider = get_provider(current_provider_name)
+                try:
+                    await provider.initialize(
+                        api_key=api_key or "",
+                        model=current_model,
+                        cwd=resolved_cwd,
+                        system_prompt=compose_system_prompt(current_ego_id),
+                        can_use_tool=can_use_tool_callback if current_provider_name == "claude" else tool_permission_callback,
+                        resume_session_id=resume_session_id if provider.supports_session_resumption() else None,
+                        mcp_servers=mcp_servers if current_provider_name == "claude" else None,
+                    )
+                except Exception as e:
+                    await send({"type": "error", "agent_id": agent_id, "text": f"Provider init failed: {e}"})
+                    continue
 
                 agents[agent_id] = {
-                    "client": client,
+                    "provider": provider,
                     "cwd": resolved_cwd,
                     "streaming_task": None,
                     # Computer Use fields
@@ -1684,10 +1795,11 @@ async def websocket_endpoint(ws: WebSocket):
                     "computer_task": None,
                 }
 
+                provider_label = {"claude": "Claude", "openai": "OpenAI", "gemini": "Gemini"}.get(current_provider_name, current_provider_name)
                 await send({
                     "type": "status",
                     "agent_id": agent_id,
-                    "text": f"Ready. Project: {cwd_path.name}",
+                    "text": f"Ready ({provider_label}). Project: {cwd_path.name}",
                     "cwd": resolved_cwd,
                 })
 
@@ -1701,7 +1813,7 @@ async def websocket_endpoint(ws: WebSocket):
                     continue
 
                 agent = agents.get(agent_id)
-                if not agent or not agent.get("client"):
+                if not agent or not agent.get("provider"):
                     await send({"type": "error", "agent_id": agent_id, "text": "No project directory selected for this agent."})
                     continue
 
@@ -1709,7 +1821,7 @@ async def websocket_endpoint(ws: WebSocket):
                 if agent.get("cwd"):
                     database.save_message(agent["cwd"], "user", "text", {"text": text}, agent_id=agent_id)
 
-                # ── Computer Use mode: separate agent loop ──
+                # ── Computer Use mode: separate agent loop (Claude only) ──
                 if agent.get("mode") == "computer_use" and COMPUTER_USE_AVAILABLE:
                     await cancel_computer_use_task(agent_id)
                     await send({"type": "status", "agent_id": agent_id, "text": "Rain is controlling the PC..."})
@@ -1736,9 +1848,10 @@ async def websocket_endpoint(ws: WebSocket):
                 await send({"type": "status", "agent_id": agent_id, "text": "Rain is working..."})
 
                 try:
-                    await agent["client"].query(text)
+                    provider = agent["provider"]
+                    await provider.send_message(text)
                     task = asyncio.create_task(
-                        stream_claude_response(agent["client"], agent_id)
+                        stream_provider_response(provider, agent_id)
                     )
                     agents[agent_id]["streaming_task"] = task
                 except Exception as e:
@@ -1747,9 +1860,9 @@ async def websocket_endpoint(ws: WebSocket):
             # ---- Interrupt a specific agent ----
             elif msg_type == "interrupt":
                 agent = agents.get(agent_id)
-                if agent and agent.get("client"):
+                if agent and agent.get("provider"):
                     try:
-                        await agent["client"].interrupt()
+                        await agent["provider"].interrupt()
                     except Exception:
                         pass
 
@@ -1785,6 +1898,11 @@ async def websocket_endpoint(ws: WebSocket):
                         continue
                     if not api_key:
                         await send({"type": "error", "agent_id": agent_id, "text": "API key required for Computer Use mode."})
+                        continue
+                    # Computer Use only works with Claude
+                    provider = agent.get("provider")
+                    if provider and not provider.supports_computer_use():
+                        await send({"type": "error", "agent_id": agent_id, "text": "Computer Use is only available with Claude."})
                         continue
 
                     executor = ComputerUseExecutor()
@@ -1824,6 +1942,76 @@ async def websocket_endpoint(ws: WebSocket):
                         token_prefix=token[:8] if token else "",
                         details=f"Emergency stop for agent {agent_id}",
                     )
+
+            # ---- Switch alter ego ----
+            elif msg_type == "set_alter_ego":
+                new_ego_id = data.get("ego_id", "rain")
+                ego = load_ego(new_ego_id)
+                if not ego:
+                    await send({"type": "error", "agent_id": agent_id, "text": f"Alter ego '{new_ego_id}' not found."})
+                    continue
+
+                current_ego_id = new_ego_id
+                set_active_ego_id(new_ego_id)
+                new_prompt = compose_system_prompt(current_ego_id)
+
+                # Load MCP config for re-init
+                _mcp_config_path = Path(__file__).parent / ".mcp.json"
+                _mcp_servers: dict | str = {}
+                if _mcp_config_path.exists():
+                    _mcp_servers = str(_mcp_config_path)
+
+                # Re-initialize all active agents with the new system prompt
+                for aid, agent_data in list(agents.items()):
+                    saved_cwd = agent_data["cwd"]
+                    saved_mode = agent_data.get("mode", "coding")
+
+                    # Cancel any running tasks
+                    task = agent_data.get("streaming_task")
+                    if task and not task.done():
+                        task.cancel()
+
+                    # Disconnect old provider
+                    if agent_data.get("provider"):
+                        try:
+                            await agent_data["provider"].disconnect()
+                        except Exception:
+                            pass
+
+                    # Create new provider with new prompt
+                    provider = get_provider(current_provider_name)
+                    try:
+                        await provider.initialize(
+                            api_key=api_key or "",
+                            model=current_model,
+                            cwd=saved_cwd,
+                            system_prompt=new_prompt,
+                            can_use_tool=can_use_tool_callback,
+                            mcp_servers=_mcp_servers if current_provider_name == "claude" else None,
+                        )
+                    except Exception as e:
+                        await send({"type": "error", "agent_id": aid, "text": f"Failed to re-init with new ego: {e}"})
+                        continue
+
+                    agents[aid] = {
+                        "provider": provider,
+                        "cwd": saved_cwd,
+                        "streaming_task": None,
+                        "mode": saved_mode,
+                        "computer_executor": None,
+                        "computer_task": None,
+                    }
+
+                await send({
+                    "type": "alter_ego_changed",
+                    "ego_id": new_ego_id,
+                    "agent_id": agent_id,
+                })
+                await send({
+                    "type": "status",
+                    "agent_id": agent_id,
+                    "text": f"{ego.get('emoji', '🤖')} Switched to {ego['name']}",
+                })
 
             # ---- Permission response from frontend ----
             elif msg_type == "permission_response":
@@ -1866,9 +2054,9 @@ async def websocket_endpoint(ws: WebSocket):
                 executor = agent.get("computer_executor")
                 if executor:
                     executor.release_all()
-                if agent.get("client"):
+                if agent.get("provider"):
                     try:
-                        await agent["client"].disconnect()
+                        await agent["provider"].disconnect()
                     except Exception:
                         pass
         agents.clear()
@@ -1884,13 +2072,215 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 # Entry point
 # ---------------------------------------------------------------------------
 
-if __name__ == "__main__":
-    import multiprocessing
-    multiprocessing.freeze_support()
+def _get_version() -> str:
+    """Get package version."""
+    try:
+        from importlib.metadata import version as pkg_version
+        return pkg_version("rain-assistant")
+    except Exception:
+        return "dev"
 
+
+def _check_dependencies_inline():
+    """Quick dependency check during first-run wizard."""
+    import shutil
+
+    print("  Verificando dependencias...", flush=True)
+
+    v = sys.version_info
+    status = "OK" if v >= (3, 11) else "!!"
+    print(f"    {status} Python {v.major}.{v.minor}", flush=True)
+
+    if shutil.which("ffmpeg"):
+        print("    OK ffmpeg", flush=True)
+    else:
+        print("    !! ffmpeg no encontrado (voz puede fallar)", flush=True)
+        if sys.platform == "darwin":
+            print("       Instalar: brew install ffmpeg", flush=True)
+        elif sys.platform == "linux":
+            print("       Instalar: sudo apt install ffmpeg", flush=True)
+        else:
+            print("       Instalar: winget install Gyan.FFmpeg", flush=True)
+
+    try:
+        import sounddevice  # noqa: F401
+        print("    OK portaudio", flush=True)
+    except (ImportError, OSError):
+        print("    -- portaudio no encontrado (grabacion de voz deshabilitada)", flush=True)
+
+
+def _is_first_run() -> bool:
+    """Check if this is the first run (no setup completed yet)."""
+    if not CONFIG_FILE.exists():
+        return True
+    try:
+        cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        return not cfg.get("_setup_complete", False)
+    except Exception:
+        return True
+
+
+def _run_setup_wizard(force: bool = False):
+    """Interactive first-run setup in the terminal."""
+    if not force and not _is_first_run():
+        return
+
+    print(flush=True)
+    print(f"  Rain Assistant v{_get_version()}", flush=True)
+    print(flush=True)
+    print("  Primera vez? Configurando...", flush=True)
+    print(flush=True)
+
+    _check_dependencies_inline()
+    print(flush=True)
+
+    print("  Proveedor de IA:", flush=True)
+    print("    1 = Claude (Anthropic)", flush=True)
+    print("    2 = OpenAI", flush=True)
+    print("    3 = Gemini (Google)", flush=True)
+    print("    Enter = Saltar (configura en la web despues)", flush=True)
+    print(flush=True)
+
+    try:
+        choice = input("  Elige [1/2/3/Enter]: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        choice = ""
+
+    provider_map = {"1": "claude", "2": "openai", "3": "gemini"}
+    provider = provider_map.get(choice)
+
+    if provider:
+        key_labels = {
+            "claude": "API Key de Claude (sk-ant-...)",
+            "openai": "API Key de OpenAI (sk-...)",
+            "gemini": "API Key de Gemini",
+        }
+        try:
+            api_key_input = input(f"  {key_labels[provider]}: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            api_key_input = ""
+
+        if api_key_input:
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            cfg = {}
+            if CONFIG_FILE.exists():
+                try:
+                    cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+            cfg["default_provider"] = provider
+            cfg["default_api_key"] = api_key_input
+            cfg["_setup_complete"] = True
+            CONFIG_FILE.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+            print("  Guardado!", flush=True)
+            # Reload config so server picks it up
+            config.update(cfg)
+        else:
+            print("  Puedes configurar la API key en la web.", flush=True)
+    else:
+        print("  OK, configura el proveedor desde la web.", flush=True)
+
+    # Mark setup as complete
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    cfg = {}
+    if CONFIG_FILE.exists():
+        try:
+            cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    cfg["_setup_complete"] = True
+    CONFIG_FILE.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    config.update(cfg)
+    print(flush=True)
+
+
+def _run_doctor():
+    """Check all dependencies and report status."""
+    import shutil
+
+    print(flush=True)
+    print(f"  Rain Assistant v{_get_version()} - Doctor", flush=True)
+    print("  " + "=" * 35, flush=True)
+    print(flush=True)
+
+    checks: list[tuple[str, bool | None, str]] = []
+
+    # Python version
+    v = sys.version_info
+    checks.append(("Python >= 3.11", v >= (3, 11), f"{v.major}.{v.minor}.{v.micro}"))
+
+    # ffmpeg
+    ffmpeg_path = shutil.which("ffmpeg")
+    checks.append(("ffmpeg", bool(ffmpeg_path), ffmpeg_path or "no encontrado"))
+
+    # portaudio (sounddevice)
+    try:
+        import sounddevice  # noqa: F401
+        checks.append(("portaudio (voz)", True, "sounddevice OK"))
+    except (ImportError, OSError):
+        checks.append(("portaudio (voz)", False, "pip install sounddevice"))
+
+    # faster-whisper
+    try:
+        import faster_whisper  # noqa: F401
+        checks.append(("faster-whisper", True, "OK"))
+    except ImportError:
+        checks.append(("faster-whisper", False, "pip install faster-whisper"))
+
+    # edge-tts
+    try:
+        import edge_tts  # noqa: F401
+        checks.append(("edge-tts", True, "OK"))
+    except ImportError:
+        checks.append(("edge-tts", False, "pip install edge-tts"))
+
+    # Telegram (optional)
+    try:
+        import aiogram
+        checks.append(("aiogram (Telegram)", True, f"v{aiogram.__version__}"))
+    except ImportError:
+        checks.append(("aiogram (Telegram)", None, "pip install rain-assistant[telegram]"))
+
+    # Computer Use (optional)
+    try:
+        import pyautogui  # noqa: F401
+        import mss  # noqa: F401
+        checks.append(("Computer Use", True, "pyautogui + mss OK"))
+    except ImportError:
+        checks.append(("Computer Use", None, "pip install rain-assistant[computer-use]"))
+
+    # Config
+    checks.append(("Config dir", CONFIG_DIR.exists(), str(CONFIG_DIR)))
+
+    # Static files
+    static_ok = (STATIC_DIR / "index.html").exists()
+    checks.append(("Frontend (static/)", static_ok, str(STATIC_DIR)))
+
+    for name, ok, detail in checks:
+        if ok is True:
+            symbol = "      OK"
+        elif ok is False:
+            symbol = "   FALTA"
+        else:
+            symbol = "OPCIONAL"
+        print(f"  [{symbol}] {name}: {detail}", flush=True)
+
+    print(flush=True)
+    errors = [c for c in checks if c[1] is False]
+    if errors:
+        print(f"  {len(errors)} problema(s) encontrado(s).", flush=True)
+    else:
+        print("  Todo OK!", flush=True)
+    print(flush=True)
+
+
+def _start_server(cmd_args):
+    """Start the FastAPI server."""
     import socket
+    import webbrowser
 
-    PORT = 8000
+    PORT = cmd_args.port
+    HOST = cmd_args.host
 
     hostname = socket.gethostname()
     try:
@@ -1906,23 +2296,31 @@ if __name__ == "__main__":
     if display_pin:
         print(f"  PIN:     {display_pin}  (new — shown only once)", flush=True)
     else:
-        print(f"  PIN:     [hashed — see initial creation log]", flush=True)
+        print(f"  PIN:     [configured]", flush=True)
+    if cmd_args.telegram:
+        print(f"  Telegram: enabled", flush=True)
     print(flush=True)
 
-    # cloudflared quick-tunnel binds the --url port on Windows, so we must
-    # start uvicorn first (to own the port) and launch the tunnel afterwards
-    # via the on_startup callback.
-    uv_config = uvicorn.Config(app, host="0.0.0.0", port=PORT)
+    uv_config = uvicorn.Config(app, host=HOST, port=PORT, log_level="warning")
     server = uvicorn.Server(uv_config)
 
     async def _run():
-        # Start uvicorn in the background so it binds the port first
         serve_task = asyncio.create_task(server.serve())
-        # Wait until uvicorn is actually listening
         while not server.started:
             await asyncio.sleep(0.1)
 
-        # Now start the tunnel — uvicorn already owns the port
+        # Auto-open browser
+        if not cmd_args.no_browser:
+            url = f"http://localhost:{PORT}"
+            print(f"  Abriendo navegador...", flush=True)
+            webbrowser.open(url)
+
+        # Start Telegram bot if requested
+        if cmd_args.telegram:
+            from telegram_bot import run_telegram_bot_async
+            asyncio.create_task(run_telegram_bot_async())
+
+        # Start tunnel
         from tunnel import start_tunnel
         tunnel_url = start_tunnel(port=PORT)
         if tunnel_url:
@@ -1932,3 +2330,58 @@ if __name__ == "__main__":
         await serve_task
 
     asyncio.run(_run())
+
+
+def main():
+    """Entry point for `rain` / `rain-assistant` CLI."""
+    import argparse
+    import multiprocessing
+    multiprocessing.freeze_support()
+
+    parser = argparse.ArgumentParser(
+        prog="rain",
+        description="Rain Assistant — AI coding assistant with voice, plugins & web UI",
+    )
+    parser.add_argument("--version", action="store_true", help="Show version and exit")
+    parser.add_argument("--telegram", action="store_true", help="Start Telegram bot alongside web server")
+    parser.add_argument("--telegram-only", action="store_true", help="Start only the Telegram bot (no web server)")
+    parser.add_argument("--port", type=int, default=8000, help="Server port (default: 8000)")
+    parser.add_argument("--host", default="0.0.0.0", help="Bind address (default: 0.0.0.0)")
+    parser.add_argument("--no-browser", action="store_true", help="Don't auto-open browser")
+
+    subparsers = parser.add_subparsers(dest="command")
+    subparsers.add_parser("doctor", help="Check dependencies and system health")
+    subparsers.add_parser("setup", help="Re-run first-time setup wizard")
+
+    cmd_args = parser.parse_args()
+
+    if cmd_args.version:
+        print(f"Rain Assistant v{_get_version()}")
+        sys.exit(0)
+
+    if cmd_args.command == "doctor":
+        _run_doctor()
+        sys.exit(0)
+
+    if cmd_args.command == "setup":
+        _run_setup_wizard(force=True)
+        sys.exit(0)
+
+    # First-run wizard
+    if _is_first_run():
+        _run_setup_wizard()
+
+    # Telegram-only mode
+    if cmd_args.telegram_only:
+        from telegram_bot import run_telegram_bot
+        print(flush=True)
+        print("  Rain Assistant — Telegram Only Mode", flush=True)
+        print(flush=True)
+        run_telegram_bot()
+        sys.exit(0)
+
+    _start_server(cmd_args)
+
+
+if __name__ == "__main__":
+    main()

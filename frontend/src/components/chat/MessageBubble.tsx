@@ -1,10 +1,13 @@
 "use client";
 
-import React from "react";
+import React, { useState, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { Copy, Check, AlertTriangle } from "lucide-react";
 import { useTTS, useTTSStore } from "@/hooks/useTTS";
 import { useSettingsStore } from "@/stores/useSettingsStore";
+import { useToastStore } from "@/stores/useToastStore";
+import { useTranslation } from "@/hooks/useTranslation";
 import type { UserMessage, AssistantMessage, SystemMessage } from "@/lib/types";
 
 interface Props {
@@ -12,19 +15,51 @@ interface Props {
 }
 
 const MessageBubble = React.memo(function MessageBubble({ message }: Props) {
+  const [copied, setCopied] = useState(false);
   const { play, stop } = useTTS();
   const ttsEnabled = useSettingsStore((s) => s.ttsEnabled);
   const playbackState = useTTSStore((s) => s.playbackState);
   const playingMessageId = useTTSStore((s) => s.playingMessageId);
+  const addToast = useToastStore((s) => s.addToast);
+  const { t } = useTranslation();
+
+  const handleCopy = useCallback(async () => {
+    if (copied) return;
+    try {
+      await navigator.clipboard.writeText((message as AssistantMessage).text);
+      setCopied(true);
+      addToast({ type: "success", message: t("toast.copySuccess"), duration: 2000 });
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // clipboard API may fail silently
+    }
+  }, [copied, message, addToast, t]);
 
   if (message.type === "system") {
+    const isError = message.text.toLowerCase().startsWith("error") || message.text.includes("Error:");
+    const isMeta = /^\d+\.?\d*s\s*\|/.test(message.text);
+    const animClass = message.animate ? "animate-msg-appear" : "";
+
+    if (isError) {
+      return (
+        <div className={`self-start flex items-start gap-2 bg-red/8 border border-red/20 rounded-lg px-3 py-2 ${animClass}`}>
+          <AlertTriangle size={14} className="text-red mt-0.5 shrink-0" />
+          <span className="text-xs text-red break-words">{message.text}</span>
+        </div>
+      );
+    }
+
+    if (isMeta) {
+      return (
+        <div className={`self-center bg-surface2/60 rounded-full px-3 py-1 ${animClass}`}>
+          <span className="text-[11px] text-subtext tabular-nums">{message.text}</span>
+        </div>
+      );
+    }
+
     return (
-      <div
-        className={`text-center italic text-xs text-subtext py-1 ${
-          message.animate ? "animate-msg-appear" : ""
-        }`}
-      >
-        {message.text}
+      <div className={`self-center bg-surface2/40 rounded-full px-4 py-1.5 ${animClass}`}>
+        <span className="text-xs text-subtext">{message.text}</span>
       </div>
     );
   }
@@ -51,10 +86,21 @@ const MessageBubble = React.memo(function MessageBubble({ message }: Props) {
 
   return (
     <div
-      className={`self-start max-w-[85%] bg-surface rounded-2xl rounded-bl-sm px-4 py-2.5 shadow-sm ${
+      className={`group relative self-start max-w-[85%] bg-surface rounded-2xl rounded-bl-sm px-4 py-2.5 shadow-sm ${
         message.animate ? "animate-msg-appear" : ""
       }`}
     >
+      {/* Copy button — desktop: visible on hover, touch: always visible */}
+      {!assistantMsg.isStreaming && assistantMsg.text.trim() && (
+        <button
+          onClick={handleCopy}
+          className="absolute top-2 right-2 p-1 rounded-md border border-overlay bg-surface text-subtext hover:text-primary hover:border-primary transition-all opacity-0 group-hover:opacity-100 touch-visible"
+          aria-label="Copy"
+        >
+          {copied ? <Check size={14} /> : <Copy size={14} />}
+        </button>
+      )}
+
       {assistantMsg.isStreaming ? (
         <div className="text-sm text-text whitespace-pre-wrap break-words">
           {assistantMsg.text}

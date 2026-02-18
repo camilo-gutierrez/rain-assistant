@@ -1,6 +1,7 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import type { ToolUseMessage } from "@/lib/types";
 
 interface Props {
@@ -38,7 +39,9 @@ function getToolDetail(tool: string, input: Record<string, unknown>): string {
 }
 
 const ToolUseBlock = React.memo(function ToolUseBlock({ message }: Props) {
+  const [expanded, setExpanded] = useState(false);
   const detail = getToolDetail(message.tool, message.input);
+  const hasInput = Object.keys(message.input).length > 0;
 
   return (
     <div
@@ -46,13 +49,31 @@ const ToolUseBlock = React.memo(function ToolUseBlock({ message }: Props) {
         message.animate ? "animate-msg-appear" : ""
       }`}
     >
-      <div className="text-xs font-semibold text-primary">
-        {message.tool}
-      </div>
-      {detail && (
-        <div className="text-xs text-text2 font-[family-name:var(--font-jetbrains)] mt-0.5 truncate">
-          {detail}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-xs font-semibold text-primary shrink-0">
+            {message.tool}
+          </span>
+          {!expanded && detail && (
+            <span className="text-xs text-text2 font-[family-name:var(--font-jetbrains)] truncate">
+              {detail.length > 80 ? detail.slice(0, 80) + "..." : detail}
+            </span>
+          )}
         </div>
+        {hasInput && (
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            className="p-0.5 text-subtext hover:text-primary transition-colors shrink-0"
+            aria-label={expanded ? "Collapse" : "Expand"}
+          >
+            {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </button>
+        )}
+      </div>
+      {expanded && (
+        <pre className="mt-1.5 text-xs text-text2 font-[family-name:var(--font-jetbrains)] whitespace-pre-wrap break-words bg-surface2/40 rounded-md p-2 max-h-[300px] overflow-y-auto">
+          {JSON.stringify(message.input, null, 2)}
+        </pre>
       )}
     </div>
   );
