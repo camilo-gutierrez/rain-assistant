@@ -9,6 +9,10 @@ class ProviderModelInfo {
 const providerModels = <AIProvider, List<ProviderModelInfo>>{
   AIProvider.claude: [
     ProviderModelInfo('auto', 'Auto (SDK)'),
+    ProviderModelInfo('claude-sonnet-4-5-20250929', 'Sonnet 4.5'),
+    ProviderModelInfo('claude-opus-4-6', 'Opus 4.6'),
+    ProviderModelInfo('claude-sonnet-4-20250514', 'Sonnet 4'),
+    ProviderModelInfo('claude-haiku-4-5-20251001', 'Haiku 4.5'),
   ],
   AIProvider.openai: [
     ProviderModelInfo('gpt-4o', 'GPT-4o'),

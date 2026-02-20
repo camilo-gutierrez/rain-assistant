@@ -77,7 +77,7 @@ export default function TabBar() {
     <nav className="relative flex items-center bg-surface border-b border-overlay">
       {/* Left scroll fade indicator */}
       {canScrollLeft && (
-        <div className="absolute left-0 top-0 bottom-0 w-6 bg-gradient-to-r from-surface to-transparent z-10 pointer-events-none" />
+        <div className="absolute left-0 top-0 bottom-0 w-8 bg-gradient-to-r from-surface to-transparent z-10 pointer-events-none" />
       )}
 
       {/* Scrollable tabs container */}
@@ -114,6 +114,13 @@ export default function TabBar() {
                 </span>
               )}
 
+              {/* Sub-agent running count */}
+              {(agent.subAgents?.filter((sa) => sa.status === "running").length ?? 0) > 0 && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-500/20 text-blue-400 animate-pulse">
+                  {agent.subAgents.filter((sa) => sa.status === "running").length} sub
+                </span>
+              )}
+
               {/* Close button — always semi-visible on mobile, hover-revealed on desktop */}
               {canClose && (
                 <button
@@ -121,7 +128,7 @@ export default function TabBar() {
                     e.stopPropagation();
                     closeAgent(agent.id, send);
                   }}
-                  className="ml-0.5 min-w-[32px] min-h-[32px] flex items-center justify-center rounded-full text-subtext hover:text-red hover:bg-red/10 opacity-60 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
+                  className="ml-0.5 min-w-[36px] min-h-[36px] flex items-center justify-center rounded-full text-subtext hover:text-red hover:bg-red/10 opacity-60 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
                   title="Close"
                 >
                   <X size={14} />
@@ -134,7 +141,7 @@ export default function TabBar() {
 
       {/* Right scroll fade indicator */}
       {canScrollRight && (
-        <div className="absolute right-[calc(2.5rem+40px)] top-0 bottom-0 w-6 bg-gradient-to-l from-surface to-transparent z-10 pointer-events-none" />
+        <div className="absolute right-[calc(2.5rem+40px)] top-0 bottom-0 w-8 bg-gradient-to-l from-surface to-transparent z-10 pointer-events-none" />
       )}
 
       {/* Mode toggle */}
@@ -143,7 +150,7 @@ export default function TabBar() {
       {/* New agent button */}
       <button
         onClick={handleNewAgent}
-        className="shrink-0 w-9 h-9 mx-2 flex items-center justify-center rounded-full text-subtext hover:bg-primary/10 hover:text-primary transition-colors"
+        className="shrink-0 min-w-[44px] min-h-[44px] mx-1 flex items-center justify-center rounded-full text-subtext hover:bg-primary/10 hover:text-primary transition-colors"
         title={t("btn.newAgent.title")}
       >
         <Plus size={18} />

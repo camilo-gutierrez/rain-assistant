@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/agent_provider.dart';
 import '../providers/connection_provider.dart';
+import '../providers/settings_provider.dart';
 
 /// Simple directory selector for setting the agent's CWD.
 /// Full file browser comes in Phase 7.
@@ -60,10 +61,13 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
     // Set CWD on server
     final ws = ref.read(webSocketServiceProvider);
     final agent = ref.read(agentProvider).agents[agentId];
+    final settings = ref.read(settingsProvider);
     ws.send({
       'type': 'set_cwd',
       'path': _currentPath,
       'agent_id': agentId,
+      'model': settings.aiModel,
+      'provider': settings.aiProvider.name,
       if (agent?.sessionId != null) 'session_id': agent!.sessionId,
     });
 

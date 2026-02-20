@@ -20,7 +20,11 @@ class WebSocketService {
   final _messageController = StreamController<Map<String, dynamic>>.broadcast();
 
   /// Stream of connection status changes.
-  Stream<ConnectionStatus> get statusStream => _statusController.stream;
+  /// Emits the current status immediately on subscription, then future changes.
+  Stream<ConnectionStatus> get statusStream async* {
+    yield _status;
+    yield* _statusController.stream;
+  }
 
   /// Stream of parsed JSON messages from the server.
   Stream<Map<String, dynamic>> get messageStream => _messageController.stream;
@@ -35,7 +39,7 @@ class WebSocketService {
     _doConnect();
   }
 
-  void _doConnect() {
+  Future<void> _doConnect() async {
     if (_wsUrl == null || _token == null) return;
 
     _setStatus(ConnectionStatus.connecting);
@@ -45,6 +49,9 @@ class WebSocketService {
 
     try {
       _channel = WebSocketChannel.connect(uri);
+
+      // Wait for the actual WebSocket handshake to complete
+      await _channel!.ready;
 
       _subscription = _channel!.stream.listen(
         _onMessage,
@@ -72,7 +79,14 @@ class WebSocketService {
       }
 
       _messageController.add(msg);
-    } catch (_) {}
+    } catch (e) {
+      // Surface JSON parse errors (e.g. oversized messages) instead of swallowing
+      final preview = raw.length > 200 ? '${raw.substring(0, 200)}...' : raw;
+      _messageController.add({
+        'type': 'error',
+        'text': 'Failed to decode message (${raw.length} bytes): $e\n$preview',
+      });
+    }
   }
 
   void _onError(Object error) {

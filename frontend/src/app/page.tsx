@@ -23,6 +23,7 @@ import MetricsPanel from "@/components/panels/MetricsPanel";
 import SettingsPanel from "@/components/panels/SettingsPanel";
 import MemoriesPanel from "@/components/panels/MemoriesPanel";
 import AlterEgosPanel from "@/components/panels/AlterEgosPanel";
+import MarketplacePanel from "@/components/panels/MarketplacePanel";
 import ToastContainer from "@/components/Toast";
 
 export default function HomePage() {
@@ -35,10 +36,12 @@ export default function HomePage() {
   const settingsDrawerOpen = useUIStore((s) => s.settingsDrawerOpen);
   const memoriesDrawerOpen = useUIStore((s) => s.memoriesDrawerOpen);
   const alterEgosDrawerOpen = useUIStore((s) => s.alterEgosDrawerOpen);
+  const marketplaceDrawerOpen = useUIStore((s) => s.marketplaceDrawerOpen);
   const toggleMetricsDrawer = useUIStore((s) => s.toggleMetricsDrawer);
   const toggleSettingsDrawer = useUIStore((s) => s.toggleSettingsDrawer);
   const toggleMemoriesDrawer = useUIStore((s) => s.toggleMemoriesDrawer);
   const toggleAlterEgosDrawer = useUIStore((s) => s.toggleAlterEgosDrawer);
+  const toggleMarketplaceDrawer = useUIStore((s) => s.toggleMarketplaceDrawer);
   const ensureDefaultAgent = useAgentStore((s) => s.ensureDefaultAgent);
   const activeAgentId = useAgentStore((s) => s.activeAgentId);
   const activeAgentPanel = useAgentStore((s) => {
@@ -126,6 +129,15 @@ export default function HomePage() {
         title={t("alterEgo.title")}
       >
         <AlterEgosPanel />
+      </DrawerOverlay>
+
+      {/* Marketplace drawer */}
+      <DrawerOverlay
+        open={marketplaceDrawerOpen}
+        onClose={toggleMarketplaceDrawer}
+        title={t("marketplace.title")}
+      >
+        <MarketplacePanel />
       </DrawerOverlay>
 
       {/* Metrics drawer */}

@@ -12,6 +12,7 @@ from enum import Enum
 
 
 class EndpointCategory(str, Enum):
+    AUTH = "auth"                       # 10/min — strict to prevent brute-force
     AUDIO_UPLOAD = "audio_upload"       # 30/min
     TTS_SYNTHESIS = "tts_synthesis"     # 50/min
     FILE_BROWSING = "file_browsing"     # 200/min
@@ -21,6 +22,7 @@ class EndpointCategory(str, Enum):
 
 # Requests allowed per 60-second sliding window
 RATE_LIMITS: dict[EndpointCategory, int] = {
+    EndpointCategory.AUTH: 10,
     EndpointCategory.AUDIO_UPLOAD: 30,
     EndpointCategory.TTS_SYNTHESIS: 50,
     EndpointCategory.FILE_BROWSING: 200,
@@ -106,6 +108,8 @@ rate_limiter = RateLimiter()
 
 def categorize_endpoint(path: str) -> EndpointCategory:
     """Map a request path to its rate limit category."""
+    if path == "/api/auth":
+        return EndpointCategory.AUTH
     if path.startswith("/api/upload-audio"):
         return EndpointCategory.AUDIO_UPLOAD
     if path.startswith("/api/synthesize"):

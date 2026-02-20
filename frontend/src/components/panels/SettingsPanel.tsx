@@ -3,8 +3,8 @@
 import { useSettingsStore } from "@/stores/useSettingsStore";
 import { useTranslation } from "@/hooks/useTranslation";
 import { useConnectionStore } from "@/stores/useConnectionStore";
-import { Globe, Palette, Mic, Volume2, ChevronDown, Sun, Moon, Check } from "lucide-react";
-import type { Theme, Language, TTSVoice } from "@/lib/types";
+import { Globe, Palette, Mic, Volume2, ChevronDown, Sun, Moon, Check, Radio } from "lucide-react";
+import type { Theme, Language, TTSVoice, VoiceMode } from "@/lib/types";
 
 /* ──────────────────────── Sub-components ──────────────────────── */
 
@@ -120,6 +120,12 @@ export default function SettingsPanel() {
   const setTtsEnabled = useSettingsStore((s) => s.setTtsEnabled);
   const setTtsAutoPlay = useSettingsStore((s) => s.setTtsAutoPlay);
   const setTtsVoice = useSettingsStore((s) => s.setTtsVoice);
+  const voiceMode = useSettingsStore((s) => s.voiceMode);
+  const vadSensitivity = useSettingsStore((s) => s.vadSensitivity);
+  const silenceTimeout = useSettingsStore((s) => s.silenceTimeout);
+  const setVoiceMode = useSettingsStore((s) => s.setVoiceMode);
+  const setVadSensitivity = useSettingsStore((s) => s.setVadSensitivity);
+  const setSilenceTimeout = useSettingsStore((s) => s.setSilenceTimeout);
   const send = useConnectionStore((s) => s.send);
   const { t } = useTranslation();
 
@@ -131,6 +137,13 @@ export default function SettingsPanel() {
   const langOptions = [
     { value: "en", label: "English" },
     { value: "es", label: "Espa\u00f1ol" },
+  ];
+
+  const voiceModeOptions = [
+    { value: "push-to-talk", label: t("settings.voiceMode.pushToTalk") },
+    { value: "vad", label: t("settings.voiceMode.vad") },
+    { value: "talk-mode", label: t("settings.voiceMode.talkMode") },
+    { value: "wake-word", label: t("settings.voiceMode.wakeWord") },
   ];
 
   const voiceOptions = [
@@ -221,6 +234,50 @@ export default function SettingsPanel() {
           onChange={handleVoiceLangChange}
           options={langOptions}
         />
+      </section>
+
+      {/* ── Voice Mode ── */}
+      <section className="rounded-xl bg-surface2/50 p-4">
+        <SectionHeader icon={<Radio size={18} />} label={t("settings.voiceMode")} />
+        <div className="space-y-3">
+          <SelectField
+            value={voiceMode}
+            onChange={(v) => setVoiceMode(v as VoiceMode)}
+            options={voiceModeOptions}
+          />
+          {voiceMode !== "push-to-talk" && (
+            <div className="space-y-3 pt-1 animate-fade-in">
+              <div>
+                <label className="text-xs text-subtext mb-1 block">
+                  {t("settings.vadSensitivity")}: {vadSensitivity.toFixed(1)}
+                </label>
+                <input
+                  type="range"
+                  min="0.3"
+                  max="0.9"
+                  step="0.1"
+                  value={vadSensitivity}
+                  onChange={(e) => setVadSensitivity(parseFloat(e.target.value))}
+                  className="w-full accent-primary"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-subtext mb-1 block">
+                  {t("settings.silenceTimeout")}: {silenceTimeout}ms
+                </label>
+                <input
+                  type="range"
+                  min="400"
+                  max="2000"
+                  step="100"
+                  value={silenceTimeout}
+                  onChange={(e) => setSilenceTimeout(parseInt(e.target.value))}
+                  className="w-full accent-primary"
+                />
+              </div>
+            </div>
+          )}
+        </div>
       </section>
 
       {/* ── Text-to-Speech ── */}

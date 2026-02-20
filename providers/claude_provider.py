@@ -35,11 +35,13 @@ class ClaudeProvider(BaseProvider):
         can_use_tool: Callable[..., Awaitable[Any]] | None = None,
         resume_session_id: str | None = None,
         mcp_servers: dict | str | None = None,
+        agent_id: str = "default",
     ) -> None:
         env = {"ANTHROPIC_API_KEY": api_key} if api_key else {}
 
         options = ClaudeAgentOptions(
             cwd=cwd,
+            model=model if model and model != "auto" else None,
             permission_mode="default",
             can_use_tool=can_use_tool,
             include_partial_messages=True,

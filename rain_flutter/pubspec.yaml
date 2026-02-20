@@ -31,6 +31,9 @@ dependencies:
   just_audio: ^0.9.44
   path_provider: ^2.1.5
 
+  # Notifications
+  flutter_local_notifications: ^18.0.1
+
   # Utilities
   uuid: ^4.5.1
   google_fonts: ^6.2.1

@@ -46,6 +46,7 @@ class OpenAIProvider(BaseProvider):
         can_use_tool: Callable[..., Awaitable[Any]] | None = None,
         resume_session_id: str | None = None,
         mcp_servers: dict | str | None = None,
+        agent_id: str = "default",
     ) -> None:
         from openai import AsyncOpenAI
 
@@ -53,7 +54,7 @@ class OpenAIProvider(BaseProvider):
         self._model = model if model and model != "auto" else "gpt-4o"
         self._system_prompt = system_prompt
         self._messages = []
-        self._tool_executor = ToolExecutor(cwd=cwd, permission_callback=can_use_tool)
+        self._tool_executor = ToolExecutor(cwd=cwd, permission_callback=can_use_tool, agent_id=agent_id)
         self._interrupted = False
 
     async def send_message(self, text: str) -> None:

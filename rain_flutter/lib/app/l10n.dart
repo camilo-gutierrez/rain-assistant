@@ -46,6 +46,11 @@ class L10n {
     'apiKey.clear': 'Clear',
     'apiKey.connect': 'Connect',
     'apiKey.skip': 'Use without key (local mode)',
+    'apiKey.personalAccount': 'Use personal account',
+    'apiKey.personalAccountDesc': 'Use your Claude Max/Pro subscription',
+    'apiKey.personalAccountActive': 'Personal account detected',
+    'apiKey.orEnterKey': 'Or enter an API key',
+    'apiKey.checkingOAuth': 'Checking account...',
 
     // Provider
     'provider.model': 'Model',
@@ -134,6 +139,7 @@ class L10n {
     'perm.approved': 'Approved',
     'perm.denied': 'Denied',
     'perm.expired': 'Expired',
+    'perm.details': 'Details',
 
     // Computer Use
     'cu.title': 'Computer Use',
@@ -143,11 +149,28 @@ class L10n {
     'cu.switchToComputerUse': 'Switch to Computer Use mode',
     'cu.emergencyStop': 'EMERGENCY STOP',
     'cu.iteration': 'Step',
+    'cu.liveDisplay': 'Live Display',
+    'cu.resolution': 'Resolution',
+    'cu.iterationProgress': 'Step {current}',
+    'cu.noScreenshot': 'Waiting for screenshot...',
+    'cu.tapToExpand': 'Tap to expand',
 
     // Model Switcher
     'modelSwitcher.keyConfigured': 'Key configured',
     'modelSwitcher.noKey': 'No API key',
     'modelSwitcher.appliesNext': 'Applies to next conversation',
+
+    // Notifications
+    'settings.notifications': 'Notifications',
+    'settings.notifPermission': 'Permission requests',
+    'settings.notifPermissionDesc':
+        'Notify when Rain needs permission to run a tool',
+    'settings.notifResult': 'Task completed',
+    'settings.notifError': 'Errors',
+    'settings.notifHaptic': 'Vibration',
+    'settings.notifDialog': 'In-app alerts',
+    'settings.notifDialogDesc':
+        'Show dialog when permission is needed on another agent',
 
     // Toast
     'toast.connectionLost': 'Connection lost. Reconnecting...',
@@ -169,11 +192,60 @@ class L10n {
     'agent.selectDir': 'Select directory',
     'agent.useThis': 'Use this',
 
+    // Agent Manager
+    'agentMgr.title': 'Agent Manager',
+    'agentMgr.count': '{n} of {max} agents',
+    'agentMgr.empty': 'No agents running',
+    'agentMgr.active': 'ACTIVE',
+    'agentMgr.noDir': 'No directory selected',
+    'agentMgr.rename': 'Rename',
+    'agentMgr.statusIdle': 'Idle',
+    'agentMgr.statusWorking': 'Working',
+    'agentMgr.statusDone': 'Done',
+    'agentMgr.statusError': 'Error',
+    'agentMgr.switchTo': 'Switch to this agent',
+
+    // Server URL Screen
+    'serverUrl.subtitle': 'Connect to your Rain server',
+    'serverUrl.label': 'Server URL',
+    'serverUrl.hint': 'https://rain.example.com',
+    'serverUrl.errorEmpty': 'Enter the server URL',
+    'serverUrl.errorProtocol': 'URL must start with http:// or https://',
+    'serverUrl.errorUnreachable': 'Could not connect to server',
+    'serverUrl.helperText': 'Enter the URL where your Rain server is running.\nE.g.: http://192.168.1.100:8000',
+    'serverUrl.connect': 'Connect',
+
+    // PIN Screen
+    'pinScreen.title': 'Enter your PIN',
+    'pinScreen.errorEmpty': 'Enter the PIN',
+    'pinScreen.errorAuth': 'Authentication error',
+    'pinScreen.locked': 'Locked for {min} minutes',
+    'pinScreen.attemptsRemaining': '{n} attempt(s) remaining',
+    'pinScreen.submit': 'Enter',
+    'pinScreen.changeServer': 'Change server',
+
     // Months
     'month.0': 'Jan', 'month.1': 'Feb', 'month.2': 'Mar',
     'month.3': 'Apr', 'month.4': 'May', 'month.5': 'Jun',
     'month.6': 'Jul', 'month.7': 'Aug', 'month.8': 'Sep',
     'month.9': 'Oct', 'month.10': 'Nov', 'month.11': 'Dec',
+
+    // Voice Mode
+    'settings.voiceMode': 'Voice Mode',
+    'settings.voiceMode.pushToTalk': 'Push to Talk',
+    'settings.voiceMode.vad': 'Auto-detect (VAD)',
+    'settings.voiceMode.talkMode': 'Talk Mode',
+    'settings.voiceMode.wakeWord': 'Wake Word',
+    'settings.vadSensitivity': 'VAD Sensitivity',
+    'settings.silenceTimeout': 'Silence Timeout',
+    'voice.listening': 'Listening...',
+    'voice.recording': 'Recording...',
+    'voice.transcribing': 'Transcribing...',
+    'voice.processing': 'Processing...',
+    'voice.speaking': 'Rain is speaking...',
+    'voice.wakeListening': 'Listening for "Hey Rain"...',
+    'voice.startTalkMode': 'Talk Mode',
+    'voice.endConversation': 'End Conversation',
 
     // Days of week
     'dow.Monday': 'Mon', 'dow.Tuesday': 'Tue', 'dow.Wednesday': 'Wed',
@@ -214,6 +286,11 @@ class L10n {
     'apiKey.clear': 'Borrar',
     'apiKey.connect': 'Conectar',
     'apiKey.skip': 'Usar sin key (modo local)',
+    'apiKey.personalAccount': 'Usar cuenta personal',
+    'apiKey.personalAccountDesc': 'Usa tu suscripción Claude Max/Pro',
+    'apiKey.personalAccountActive': 'Cuenta personal detectada',
+    'apiKey.orEnterKey': 'O ingresa una API key',
+    'apiKey.checkingOAuth': 'Verificando cuenta...',
 
     // Provider
     'provider.model': 'Modelo',
@@ -302,6 +379,7 @@ class L10n {
     'perm.approved': 'Aprobado',
     'perm.denied': 'Denegado',
     'perm.expired': 'Expirado',
+    'perm.details': 'Detalles',
 
     // Computer Use
     'cu.title': 'Uso de Computadora',
@@ -311,11 +389,28 @@ class L10n {
     'cu.switchToComputerUse': 'Cambiar a modo Computer Use',
     'cu.emergencyStop': 'PARADA DE EMERGENCIA',
     'cu.iteration': 'Paso',
+    'cu.liveDisplay': 'Pantalla en vivo',
+    'cu.resolution': 'Resolución',
+    'cu.iterationProgress': 'Paso {current}',
+    'cu.noScreenshot': 'Esperando captura...',
+    'cu.tapToExpand': 'Toca para expandir',
 
     // Model Switcher
     'modelSwitcher.keyConfigured': 'Key configurada',
     'modelSwitcher.noKey': 'Sin API key',
     'modelSwitcher.appliesNext': 'Se aplica a la siguiente conversación',
+
+    // Notificaciones
+    'settings.notifications': 'Notificaciones',
+    'settings.notifPermission': 'Solicitudes de permiso',
+    'settings.notifPermissionDesc':
+        'Notificar cuando Rain necesite permiso para ejecutar una herramienta',
+    'settings.notifResult': 'Tarea completada',
+    'settings.notifError': 'Errores',
+    'settings.notifHaptic': 'Vibración',
+    'settings.notifDialog': 'Alertas en la app',
+    'settings.notifDialogDesc':
+        'Mostrar diálogo cuando se necesite permiso en otro agente',
 
     // Toast
     'toast.connectionLost': 'Conexión perdida. Reconectando...',
@@ -337,11 +432,60 @@ class L10n {
     'agent.selectDir': 'Seleccionar directorio',
     'agent.useThis': 'Usar este',
 
+    // Agent Manager
+    'agentMgr.title': 'Administrador de Agentes',
+    'agentMgr.count': '{n} de {max} agentes',
+    'agentMgr.empty': 'No hay agentes ejecutándose',
+    'agentMgr.active': 'ACTIVO',
+    'agentMgr.noDir': 'Sin directorio seleccionado',
+    'agentMgr.rename': 'Renombrar',
+    'agentMgr.statusIdle': 'Inactivo',
+    'agentMgr.statusWorking': 'Trabajando',
+    'agentMgr.statusDone': 'Listo',
+    'agentMgr.statusError': 'Error',
+    'agentMgr.switchTo': 'Cambiar a este agente',
+
+    // Server URL Screen
+    'serverUrl.subtitle': 'Conecta con tu servidor Rain',
+    'serverUrl.label': 'URL del servidor',
+    'serverUrl.hint': 'https://rain.ejemplo.com',
+    'serverUrl.errorEmpty': 'Ingresa la URL del servidor',
+    'serverUrl.errorProtocol': 'La URL debe comenzar con http:// o https://',
+    'serverUrl.errorUnreachable': 'No se pudo conectar al servidor',
+    'serverUrl.helperText': 'Ingresa la URL donde corre tu servidor Rain.\nEj: http://192.168.1.100:8000',
+    'serverUrl.connect': 'Conectar',
+
+    // PIN Screen
+    'pinScreen.title': 'Ingresa tu PIN',
+    'pinScreen.errorEmpty': 'Ingresa el PIN',
+    'pinScreen.errorAuth': 'Error de autenticación',
+    'pinScreen.locked': 'Bloqueado por {min} minutos',
+    'pinScreen.attemptsRemaining': '{n} intento(s) restante(s)',
+    'pinScreen.submit': 'Ingresar',
+    'pinScreen.changeServer': 'Cambiar servidor',
+
     // Months
     'month.0': 'Ene', 'month.1': 'Feb', 'month.2': 'Mar',
     'month.3': 'Abr', 'month.4': 'May', 'month.5': 'Jun',
     'month.6': 'Jul', 'month.7': 'Ago', 'month.8': 'Sep',
     'month.9': 'Oct', 'month.10': 'Nov', 'month.11': 'Dic',
+
+    // Voice Mode
+    'settings.voiceMode': 'Modo de Voz',
+    'settings.voiceMode.pushToTalk': 'Mantener para Hablar',
+    'settings.voiceMode.vad': 'Auto-detectar (VAD)',
+    'settings.voiceMode.talkMode': 'Modo Conversación',
+    'settings.voiceMode.wakeWord': 'Palabra Clave',
+    'settings.vadSensitivity': 'Sensibilidad VAD',
+    'settings.silenceTimeout': 'Tiempo de Silencio',
+    'voice.listening': 'Escuchando...',
+    'voice.recording': 'Grabando...',
+    'voice.transcribing': 'Transcribiendo...',
+    'voice.processing': 'Procesando...',
+    'voice.speaking': 'Rain está hablando...',
+    'voice.wakeListening': 'Escuchando "Hey Rain"...',
+    'voice.startTalkMode': 'Modo Conversación',
+    'voice.endConversation': 'Terminar Conversación',
 
     // Days of week
     'dow.Monday': 'Lun', 'dow.Tuesday': 'Mar', 'dow.Wednesday': 'Mié',

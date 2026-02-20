@@ -1,3 +1,5 @@
+import 'dart:async' show unawaited;
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/provider_info.dart';
@@ -10,6 +12,9 @@ class SettingsState {
   final bool ttsEnabled;
   final bool ttsAutoPlay;
   final String ttsVoice;
+  final String voiceMode; // "push-to-talk" | "vad" | "talk-mode" | "wake-word"
+  final double vadSensitivity;
+  final int silenceTimeout; // ms
 
   const SettingsState({
     this.darkMode = true,
@@ -19,6 +24,9 @@ class SettingsState {
     this.ttsEnabled = false,
     this.ttsAutoPlay = false,
     this.ttsVoice = 'es-MX-DaliaNeural',
+    this.voiceMode = 'push-to-talk',
+    this.vadSensitivity = 0.5,
+    this.silenceTimeout = 800,
   });
 
   SettingsState copyWith({
@@ -29,6 +37,9 @@ class SettingsState {
     bool? ttsEnabled,
     bool? ttsAutoPlay,
     String? ttsVoice,
+    String? voiceMode,
+    double? vadSensitivity,
+    int? silenceTimeout,
   }) =>
       SettingsState(
         darkMode: darkMode ?? this.darkMode,
@@ -38,6 +49,9 @@ class SettingsState {
         ttsEnabled: ttsEnabled ?? this.ttsEnabled,
         ttsAutoPlay: ttsAutoPlay ?? this.ttsAutoPlay,
         ttsVoice: ttsVoice ?? this.ttsVoice,
+        voiceMode: voiceMode ?? this.voiceMode,
+        vadSensitivity: vadSensitivity ?? this.vadSensitivity,
+        silenceTimeout: silenceTimeout ?? this.silenceTimeout,
       );
 }
 
@@ -57,6 +71,9 @@ class SettingsNotifier extends StateNotifier<SettingsState> {
       ttsEnabled: prefs.getBool('ttsEnabled') ?? false,
       ttsAutoPlay: prefs.getBool('ttsAutoPlay') ?? false,
       ttsVoice: prefs.getString('ttsVoice') ?? 'es-MX-DaliaNeural',
+      voiceMode: prefs.getString('voiceMode') ?? 'push-to-talk',
+      vadSensitivity: prefs.getDouble('vadSensitivity') ?? 0.5,
+      silenceTimeout: prefs.getInt('silenceTimeout') ?? 800,
     );
   }
 
@@ -66,17 +83,21 @@ class SettingsNotifier extends StateNotifier<SettingsState> {
       await prefs.setBool(key, value);
     } else if (value is String) {
       await prefs.setString(key, value);
+    } else if (value is double) {
+      await prefs.setDouble(key, value);
+    } else if (value is int) {
+      await prefs.setInt(key, value);
     }
   }
 
   void setDarkMode(bool v) {
     state = state.copyWith(darkMode: v);
-    _save('darkMode', v);
+    unawaited(_save('darkMode', v));
   }
 
   void setLanguage(String v) {
     state = state.copyWith(language: v);
-    _save('language', v);
+    unawaited(_save('language', v));
   }
 
   void setAIProvider(AIProvider v) {
@@ -84,28 +105,49 @@ class SettingsNotifier extends StateNotifier<SettingsState> {
     final models = providerModels[v] ?? [];
     final model = models.isNotEmpty ? models.first.id : 'auto';
     state = state.copyWith(aiProvider: v, aiModel: model);
-    _save('aiProvider', v.name);
-    _save('aiModel', model);
+    unawaited(_save('aiProvider', v.name));
+    unawaited(_save('aiModel', model));
   }
 
   void setAIModel(String v) {
     state = state.copyWith(aiModel: v);
-    _save('aiModel', v);
+    unawaited(_save('aiModel', v));
   }
 
   void setTtsEnabled(bool v) {
-    state = state.copyWith(ttsEnabled: v);
-    _save('ttsEnabled', v);
+    // When enabling TTS, also enable autoPlay by default
+    if (v && !state.ttsAutoPlay) {
+      state = state.copyWith(ttsEnabled: v, ttsAutoPlay: true);
+      unawaited(_save('ttsAutoPlay', true));
+    } else {
+      state = state.copyWith(ttsEnabled: v);
+    }
+    unawaited(_save('ttsEnabled', v));
   }
 
   void setTtsAutoPlay(bool v) {
     state = state.copyWith(ttsAutoPlay: v);
-    _save('ttsAutoPlay', v);
+    unawaited(_save('ttsAutoPlay', v));
   }
 
   void setTtsVoice(String v) {
     state = state.copyWith(ttsVoice: v);
-    _save('ttsVoice', v);
+    unawaited(_save('ttsVoice', v));
+  }
+
+  void setVoiceMode(String v) {
+    state = state.copyWith(voiceMode: v);
+    unawaited(_save('voiceMode', v));
+  }
+
+  void setVadSensitivity(double v) {
+    state = state.copyWith(vadSensitivity: v);
+    unawaited(_save('vadSensitivity', v));
+  }
+
+  void setSilenceTimeout(int v) {
+    state = state.copyWith(silenceTimeout: v);
+    unawaited(_save('silenceTimeout', v));
   }
 }
 

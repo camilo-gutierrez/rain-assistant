@@ -12,6 +12,9 @@ def get_provider(provider_name: str) -> BaseProvider:
     elif provider_name == "gemini":
         from .gemini_provider import GeminiProvider
         return GeminiProvider()
+    elif provider_name == "ollama":
+        from .ollama_provider import OllamaProvider
+        return OllamaProvider()
     else:
         raise ValueError(f"Unknown provider: {provider_name}")
 

@@ -60,7 +60,7 @@ const ToolResultBlock = React.memo(function ToolResultBlock({ message }: Props) 
         {message.content.trim() && (
           <button
             onClick={handleCopy}
-            className="p-1 rounded-md border border-overlay bg-surface text-subtext hover:text-primary hover:border-primary transition-all opacity-0 group-hover:opacity-100 touch-visible"
+            className="min-w-[32px] min-h-[32px] flex items-center justify-center rounded-md border border-overlay bg-surface text-subtext hover:text-primary hover:border-primary transition-all opacity-0 group-hover:opacity-100 touch-visible"
             aria-label="Copy"
           >
             {copied ? <Check size={12} /> : <Copy size={12} />}
@@ -76,7 +76,7 @@ const ToolResultBlock = React.memo(function ToolResultBlock({ message }: Props) 
       {isTruncated && !expanded && (
         <button
           onClick={() => setExpanded(true)}
-          className="mt-1 text-[10px] text-primary hover:underline"
+          className="mt-1 text-xs text-primary hover:underline py-1"
         >
           {t("chat.showFullOutput")}
         </button>

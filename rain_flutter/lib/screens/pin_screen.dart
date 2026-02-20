@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../app/l10n.dart';
 import '../providers/connection_provider.dart';
+import '../providers/settings_provider.dart';
 
 class PinScreen extends ConsumerStatefulWidget {
   final VoidCallback onAuthenticated;
@@ -39,7 +41,7 @@ class _PinScreenState extends ConsumerState<PinScreen> {
   Future<void> _submit() async {
     final pin = _controller.text.trim();
     if (pin.isEmpty) {
-      setState(() => _error = 'Ingresa el PIN');
+      setState(() => _error = L10n.t('pinScreen.errorEmpty', ref.read(settingsProvider).language));
       return;
     }
 
@@ -62,7 +64,7 @@ class _PinScreenState extends ConsumerState<PinScreen> {
     } else {
       setState(() {
         _loading = false;
-        _error = result.error ?? 'Error de autenticación';
+        _error = result.error ?? L10n.t('pinScreen.errorAuth', ref.read(settingsProvider).language);
         _remainingAttempts = result.remainingAttempts;
         _lockedSeconds = result.locked ? result.remainingSeconds : null;
         _controller.clear();
@@ -74,6 +76,7 @@ class _PinScreenState extends ConsumerState<PinScreen> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final lang = ref.watch(settingsProvider).language;
     final serverUrl = ref.read(authServiceProvider).serverUrl ?? '';
 
     return Scaffold(
@@ -103,7 +106,7 @@ class _PinScreenState extends ConsumerState<PinScreen> {
                   const SizedBox(height: 24),
 
                   Text(
-                    'Ingresa tu PIN',
+                    L10n.t('pinScreen.title', lang),
                     style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                           fontWeight: FontWeight.bold,
                         ),
@@ -155,7 +158,7 @@ class _PinScreenState extends ConsumerState<PinScreen> {
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              'Bloqueado por ${(_lockedSeconds! / 60).ceil()} minutos',
+                              L10n.t('pinScreen.locked', lang, {'min': '${(_lockedSeconds! / 60).ceil()}'}),
                               style: TextStyle(color: cs.error, fontSize: 13),
                             ),
                           ),
@@ -168,7 +171,7 @@ class _PinScreenState extends ConsumerState<PinScreen> {
                   if (_remainingAttempts != null && _lockedSeconds == null) ...[
                     const SizedBox(height: 12),
                     Text(
-                      '$_remainingAttempts intento(s) restante(s)',
+                      L10n.t('pinScreen.attemptsRemaining', lang, {'n': '$_remainingAttempts'}),
                       style: TextStyle(color: cs.error, fontSize: 13),
                     ),
                   ],
@@ -184,7 +187,7 @@ class _PinScreenState extends ConsumerState<PinScreen> {
                             height: 20,
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
-                        : const Text('Ingresar'),
+                        : Text(L10n.t('pinScreen.submit', lang)),
                   ),
                   const SizedBox(height: 16),
 
@@ -195,7 +198,7 @@ class _PinScreenState extends ConsumerState<PinScreen> {
                       ref.read(hasServerUrlProvider.notifier).state = false;
                     },
                     icon: const Icon(Icons.dns_outlined, size: 16),
-                    label: const Text('Cambiar servidor'),
+                    label: Text(L10n.t('pinScreen.changeServer', lang)),
                   ),
                 ],
               ),

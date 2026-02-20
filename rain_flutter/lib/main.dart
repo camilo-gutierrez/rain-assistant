@@ -1,7 +1,10 @@
+// TODO(audit#5): Add widget and integration tests (chat flow, agent CRUD, permission flow)
+// TODO(audit#8): Add Semantics labels to interactive widgets for accessibility
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'app/l10n.dart';
 import 'app/theme.dart';
 import 'models/agent.dart';
 import 'models/message.dart';
@@ -10,7 +13,12 @@ import 'providers/agent_provider.dart';
 import 'providers/audio_provider.dart';
 import 'providers/connection_provider.dart';
 import 'providers/metrics_provider.dart';
+import 'providers/notification_provider.dart';
 import 'providers/settings_provider.dart';
+import 'services/lifecycle_observer.dart';
+import 'services/notification_service.dart';
+import 'widgets/permission_alert_dialog.dart';
+import 'widgets/toast.dart';
 import 'screens/api_key_screen.dart';
 import 'screens/chat_screen.dart';
 import 'screens/file_browser_screen.dart';
@@ -53,16 +61,27 @@ enum _AppScreen { loading, serverUrl, pin, apiKey, fileBrowser, chat }
 class _AppShellState extends ConsumerState<_AppShell> {
   _AppScreen _screen = _AppScreen.loading;
   StreamSubscription<Map<String, dynamic>>? _wsSub;
+  AppLifecycleObserver? _lifecycleObserver;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _lifecycleObserver = AppLifecycleObserver(ref);
+      WidgetsBinding.instance.addObserver(_lifecycleObserver!);
+    });
     _init();
   }
 
   Future<void> _init() async {
     // Load persisted settings
     await ref.read(settingsProvider.notifier).loadFromPrefs();
+
+    // Initialize notification system
+    await ref.read(notificationSettingsProvider.notifier).loadFromPrefs();
+    final notifService = ref.read(notificationServiceProvider);
+    await notifService.init();
+    notifService.onNotificationTap = _onNotificationTap;
 
     // Load persisted auth state
     final auth = ref.read(authServiceProvider);
@@ -113,8 +132,32 @@ class _AppShellState extends ConsumerState<_AppShell> {
   void _handleConnectionStatus(ConnectionStatus status) {
     if (status == ConnectionStatus.connected && !_wasConnected) {
       _wasConnected = true;
-    } else if (status == ConnectionStatus.disconnected && _wasConnected) {
+      // Show restored toast only if we previously lost connection
+      if (_screen == _AppScreen.chat) {
+        final lang = ref.read(settingsProvider).language;
+        showToast(context, L10n.t('toast.connectionRestored', lang),
+            type: ToastType.success);
+      }
+    } else if ((status == ConnectionStatus.disconnected ||
+                status == ConnectionStatus.error) &&
+        _wasConnected) {
       _wasConnected = false;
+      // Clear processing state for all agents to avoid infinite loading
+      final agentNotifier = ref.read(agentProvider.notifier);
+      final agents = ref.read(agentProvider).agents;
+      for (final agentId in agents.keys) {
+        if (agents[agentId]?.isProcessing ?? false) {
+          agentNotifier.finalizeStreaming(agentId);
+          agentNotifier.setProcessing(agentId, false);
+          agentNotifier.setAgentStatus(agentId, AgentStatus.idle);
+        }
+      }
+      if (_screen == _AppScreen.chat) {
+        final lang = ref.read(settingsProvider).language;
+        showToast(context, L10n.t('toast.connectionLost', lang),
+            type: ToastType.warning,
+            duration: const Duration(seconds: 5));
+      }
     }
   }
 
@@ -221,6 +264,7 @@ class _AppShellState extends ConsumerState<_AppShell> {
             }
           }
         }
+        _dispatchNotification('result', agentId, msg);
 
       case 'error':
         if (agentId.isEmpty) break;
@@ -232,10 +276,12 @@ class _AppShellState extends ConsumerState<_AppShell> {
         );
         agentNotifier.setProcessing(agentId, false);
         agentNotifier.setAgentStatus(agentId, AgentStatus.error);
+        _dispatchNotification('error', agentId, msg);
 
       case 'permission_request':
         if (agentId.isEmpty) break;
         agentNotifier.finalizeStreaming(agentId);
+        agentNotifier.setProcessing(agentId, false);
         agentNotifier.incrementUnread(agentId);
         agentNotifier.appendMessage(
           agentId,
@@ -252,6 +298,7 @@ class _AppShellState extends ConsumerState<_AppShell> {
             timestamp: DateTime.now().millisecondsSinceEpoch,
           ),
         );
+        _dispatchNotification('permission_request', agentId, msg);
 
       case 'agent_destroyed':
         if (agentId.isNotEmpty) agentNotifier.removeAgent(agentId);
@@ -313,10 +360,113 @@ class _AppShellState extends ConsumerState<_AppShell> {
     }
   }
 
+  void _onNotificationTap(NotificationPayload payload) {
+    if (_screen != _AppScreen.chat) {
+      setState(() => _screen = _AppScreen.chat);
+    }
+    final agentNotifier = ref.read(agentProvider.notifier);
+    if (ref.read(agentProvider).agents.containsKey(payload.agentId)) {
+      agentNotifier.setActiveAgent(payload.agentId);
+    }
+  }
+
+  void _dispatchNotification(
+      String type, String agentId, Map<String, dynamic> msg) {
+    final notifSettings = ref.read(notificationSettingsProvider);
+    final notifService = ref.read(notificationServiceProvider);
+    final lifecycle = ref.read(appLifecycleProvider);
+    final lang = ref.read(settingsProvider).language;
+    final agent = ref.read(agentProvider).agents[agentId];
+    final agentLabel = agent?.label ?? agentId;
+    final activeAgentId = ref.read(agentProvider).activeAgentId;
+    final isBackground = lifecycle != AppLifecycleState.resumed;
+    final isOnDifferentAgent = agentId != activeAgentId;
+
+    switch (type) {
+      case 'permission_request':
+        if (!notifSettings.permissionNotifications) return;
+
+        final tool = msg['tool'] ?? '';
+        final level = msg['level'] ?? 'yellow';
+        final requestId = msg['request_id'] ?? '';
+        final title = lang == 'es'
+            ? 'Permiso requerido - $agentLabel'
+            : 'Permission required - $agentLabel';
+        final body = lang == 'es'
+            ? 'Herramienta: $tool (${level.toString().toUpperCase()})'
+            : 'Tool: $tool (${level.toString().toUpperCase()})';
+
+        if (isBackground) {
+          notifService.showPermissionNotification(
+            agentId: agentId,
+            tool: tool,
+            level: level,
+            requestId: requestId,
+            title: title,
+            body: body,
+          );
+        } else if (isOnDifferentAgent &&
+            notifSettings.inAppDialogs &&
+            _screen == _AppScreen.chat) {
+          showPermissionAlertDialog(
+            context,
+            ref,
+            agentId: agentId,
+            agentLabel: agentLabel,
+            tool: tool,
+            requestId: requestId,
+            level: PermissionLevel.values.firstWhere(
+              (e) => e.name == level,
+              orElse: () => PermissionLevel.yellow,
+            ),
+          );
+          if (notifSettings.hapticFeedback) {
+            notifService.hapticForPermission();
+          }
+        } else {
+          if (notifSettings.hapticFeedback) {
+            notifService.hapticForPermission();
+          }
+        }
+
+      case 'result':
+        if (!notifSettings.resultNotifications) return;
+        if (!isBackground && !isOnDifferentAgent) return;
+        final title = lang == 'es'
+            ? '$agentLabel completado'
+            : '$agentLabel completed';
+        final cost = msg['cost'];
+        final body = cost != null
+            ? (lang == 'es'
+                ? 'Costo: \$${cost.toStringAsFixed(4)}'
+                : 'Cost: \$${cost.toStringAsFixed(4)}')
+            : (lang == 'es' ? 'Tarea terminada' : 'Task finished');
+        notifService.showInfoNotification(
+          agentId: agentId,
+          title: title,
+          body: body,
+        );
+
+      case 'error':
+        if (!notifSettings.errorNotifications) return;
+        if (!isBackground && !isOnDifferentAgent) return;
+        final title = lang == 'es' ? 'Error - $agentLabel' : 'Error - $agentLabel';
+        final body = msg['text'] ?? (lang == 'es' ? 'Error desconocido' : 'Unknown error');
+        notifService.showErrorNotification(
+          agentId: agentId,
+          title: title,
+          body: body,
+        );
+    }
+  }
+
   @override
   void dispose() {
     _wsSub?.cancel();
     _statusSub?.cancel();
+    if (_lifecycleObserver != null) {
+      WidgetsBinding.instance.removeObserver(_lifecycleObserver!);
+    }
     super.dispose();
   }
 

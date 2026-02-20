@@ -31,7 +31,7 @@ class NormalizedEvent:
 class BaseProvider(ABC):
     """Abstract base for all AI provider integrations."""
 
-    provider_name: str  # "claude" | "openai" | "gemini"
+    provider_name: str  # "claude" | "openai" | "gemini" | "ollama"
 
     @abstractmethod
     async def initialize(
@@ -43,6 +43,7 @@ class BaseProvider(ABC):
         can_use_tool: Callable[..., Awaitable[Any]] | None = None,
         resume_session_id: str | None = None,
         mcp_servers: dict | str | None = None,
+        agent_id: str = "default",
     ) -> None:
         """Initialize the provider. Called when the user sets a working directory."""
         ...

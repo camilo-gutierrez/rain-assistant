@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Agent, AgentMode, AgentPanel, AgentStatus, AnyMessage, DisplayInfo, PermissionRequestMessage, WSSendMessage } from "@/lib/types";
+import type { Agent, AgentMode, AgentPanel, AgentStatus, AnyMessage, DisplayInfo, PermissionRequestMessage, SubAgentInfo, WSSendMessage } from "@/lib/types";
 
 interface AgentState {
   agents: Record<string, Agent>;
@@ -40,6 +40,11 @@ interface AgentState {
   setInterruptPending: (agentId: string, val: boolean) => void;
   setInterruptTimer: (agentId: string, timerId: ReturnType<typeof setTimeout> | null) => void;
 
+  // Sub-agents
+  addSubAgent: (parentId: string, info: SubAgentInfo) => void;
+  updateSubAgentStatus: (parentId: string, subId: string, status: SubAgentInfo["status"]) => void;
+  removeSubAgent: (parentId: string, subId: string) => void;
+
   // Scroll
   saveScrollPos: (agentId: string, pos: number) => void;
 
@@ -77,6 +82,8 @@ function createAgentObject(id: string, label: string): Agent {
     displayInfo: null,
     lastScreenshot: null,
     computerIteration: 0,
+    // Sub-agents
+    subAgents: [],
   };
 }
 
@@ -467,6 +474,55 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
       agents: {
         ...agents,
         [agentId]: { ...agents[agentId], interruptTimerId: timerId },
+      },
+    });
+  },
+
+  // --- Sub-agents ---
+
+  addSubAgent: (parentId, info) => {
+    const { agents } = get();
+    const parent = agents[parentId];
+    if (!parent) return;
+    set({
+      agents: {
+        ...agents,
+        [parentId]: {
+          ...parent,
+          subAgents: [...parent.subAgents, info],
+        },
+      },
+    });
+  },
+
+  updateSubAgentStatus: (parentId, subId, status) => {
+    const { agents } = get();
+    const parent = agents[parentId];
+    if (!parent) return;
+    set({
+      agents: {
+        ...agents,
+        [parentId]: {
+          ...parent,
+          subAgents: parent.subAgents.map((sa) =>
+            sa.id === subId ? { ...sa, status } : sa
+          ),
+        },
+      },
+    });
+  },
+
+  removeSubAgent: (parentId, subId) => {
+    const { agents } = get();
+    const parent = agents[parentId];
+    if (!parent) return;
+    set({
+      agents: {
+        ...agents,
+        [parentId]: {
+          ...parent,
+          subAgents: parent.subAgents.filter((sa) => sa.id !== subId),
+        },
       },
     });
   },

@@ -1,4 +1,4 @@
-import type { AuthResponse, BrowseResponse, ConversationFull, ConversationMeta, HistoryMessage, MetricsData, Memory, AlterEgo } from "./types";
+import type { AuthResponse, BrowseResponse, ConversationFull, ConversationMeta, HistoryMessage, MetricsData, Memory, AlterEgo, MarketplaceSkill, MarketplaceCategory, InstalledMarketplaceSkill, SkillUpdate } from "./types";
 import { getApiUrl } from "./constants";
 
 function authHeaders(token: string | null): HeadersInit {
@@ -254,5 +254,96 @@ export async function deleteAlterEgo(
     { method: "DELETE", headers: authHeaders(token) }
   );
   if (!res.ok) throw new Error(`Delete alter ego failed: ${res.status}`);
+  return res.json();
+}
+
+// === Skills Marketplace ===
+
+export async function searchMarketplaceSkills(
+  token: string | null,
+  params: { q?: string; category?: string; tag?: string; page?: number } = {}
+): Promise<{ skills: MarketplaceSkill[]; total: number; page: number }> {
+  const sp = new URLSearchParams();
+  if (params.q) sp.set("q", params.q);
+  if (params.category) sp.set("category", params.category);
+  if (params.tag) sp.set("tag", params.tag);
+  if (params.page) sp.set("page", String(params.page));
+  const res = await fetchWithRetry(
+    `${getApiUrl()}/marketplace/skills?${sp}`,
+    { headers: authHeaders(token) }
+  );
+  if (!res.ok) throw new Error(`Search skills failed: ${res.status}`);
+  return res.json();
+}
+
+export async function getMarketplaceCategories(
+  token: string | null
+): Promise<{ categories: MarketplaceCategory[] }> {
+  const res = await fetchWithRetry(
+    `${getApiUrl()}/marketplace/categories`,
+    { headers: authHeaders(token) }
+  );
+  if (!res.ok) throw new Error(`Get categories failed: ${res.status}`);
+  return res.json();
+}
+
+export async function installMarketplaceSkill(
+  skillName: string,
+  token: string | null
+): Promise<{ installed: boolean; name: string; version: string; requires_env?: string[] }> {
+  const res = await fetchWithRetry(
+    `${getApiUrl()}/marketplace/install/${encodeURIComponent(skillName)}`,
+    { method: "POST", headers: authHeaders(token) }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Install failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function uninstallMarketplaceSkill(
+  skillName: string,
+  token: string | null
+): Promise<{ uninstalled: boolean }> {
+  const res = await fetchWithRetry(
+    `${getApiUrl()}/marketplace/install/${encodeURIComponent(skillName)}`,
+    { method: "DELETE", headers: authHeaders(token) }
+  );
+  if (!res.ok) throw new Error(`Uninstall failed: ${res.status}`);
+  return res.json();
+}
+
+export async function getInstalledMarketplaceSkills(
+  token: string | null
+): Promise<{ skills: InstalledMarketplaceSkill[] }> {
+  const res = await fetchWithRetry(
+    `${getApiUrl()}/marketplace/installed`,
+    { headers: authHeaders(token) }
+  );
+  if (!res.ok) throw new Error(`Get installed failed: ${res.status}`);
+  return res.json();
+}
+
+export async function checkMarketplaceUpdates(
+  token: string | null
+): Promise<{ updates: SkillUpdate[] }> {
+  const res = await fetchWithRetry(
+    `${getApiUrl()}/marketplace/updates`,
+    { headers: authHeaders(token) }
+  );
+  if (!res.ok) throw new Error(`Check updates failed: ${res.status}`);
+  return res.json();
+}
+
+export async function updateMarketplaceSkill(
+  skillName: string,
+  token: string | null
+): Promise<{ updated: boolean; version: string }> {
+  const res = await fetchWithRetry(
+    `${getApiUrl()}/marketplace/update/${encodeURIComponent(skillName)}`,
+    { method: "POST", headers: authHeaders(token) }
+  );
+  if (!res.ok) throw new Error(`Update failed: ${res.status}`);
   return res.json();
 }

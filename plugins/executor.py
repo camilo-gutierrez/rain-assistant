@@ -1,18 +1,100 @@
-"""Plugin execution engine — HTTP, bash, and Python execution."""
+"""Plugin execution engine — HTTP, bash, and Python execution.
+
+Security measures for subprocess-based plugins (bash, python):
+  - Sandboxed environment: only essential system vars + plugin-specific env are
+    passed.  Server secrets (API keys, tokens, etc.) are NOT inherited.
+  - Working directory restriction: plugins run in the user's home directory
+    (or a temp dir), never in the server's own directory.
+  - Output size cap: MAX_OUTPUT (30 KB) prevents memory exhaustion.
+  - Timeout: TIMEOUT (30 s) kills runaway processes.
+  - Memory limit (Linux/macOS): RLIMIT_AS caps virtual memory per subprocess.
+"""
 
 import asyncio
 import json
 import os
 import re
 import sys
+from pathlib import Path
 from typing import Any
 
 from .schema import Plugin, PluginExecution
 from .loader import get_plugin_env
 
 TEMPLATE_PATTERN = re.compile(r"\{\{(\w+(?:\.\w+)*)\}\}")
-MAX_OUTPUT = 30000
-TIMEOUT = 30
+MAX_OUTPUT = 30000  # 30 KB max output per plugin execution
+TIMEOUT = 30        # seconds
+
+# Maximum virtual memory per subprocess (512 MB).  Only enforced on
+# platforms that support resource.RLIMIT_AS (Linux).
+_MAX_MEMORY_BYTES = 512 * 1024 * 1024
+
+# Minimal set of environment variable names to forward from the server
+# process to plugin subprocesses.  Everything else is dropped.
+_SAFE_ENV_KEYS = {
+    # Required for subprocess to function
+    "PATH", "PATHEXT", "SYSTEMROOT", "COMSPEC",  # Windows
+    "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "LC_CTYPE",  # POSIX
+    "TMPDIR", "TEMP", "TMP",  # Temp directories
+    "TERM", "COLORTERM",  # Terminal info (some CLI tools need this)
+}
+
+# Server directory — plugins must NOT run here
+_SERVER_DIR = Path(__file__).resolve().parent.parent
+
+
+def _build_sandboxed_env(plugin_env: dict[str, str]) -> dict[str, str]:
+    """Build a minimal environment dict for subprocess execution.
+
+    Includes only essential OS vars (PATH, HOME, TEMP, etc.) plus the
+    plugin-specific env vars from config.json.  This prevents leaking
+    server secrets like ANTHROPIC_API_KEY, OPENAI_API_KEY, database
+    credentials, tokens, etc. into plugin subprocesses.
+    """
+    safe = {}
+    for key in _SAFE_ENV_KEYS:
+        val = os.environ.get(key)
+        if val is not None:
+            safe[key] = val
+
+    # Layer plugin-specific env on top
+    safe.update(plugin_env)
+    return safe
+
+
+def _get_safe_cwd(requested_cwd: str) -> str:
+    """Return a working directory that is NOT the server's own directory.
+
+    If the requested cwd IS the server directory (or a subdirectory), fall
+    back to the user's home directory.  This prevents plugins from
+    reading/writing server source files or config accidentally.
+    """
+    try:
+        req = Path(requested_cwd).resolve()
+        server = _SERVER_DIR.resolve()
+        # Check if requested cwd is the server dir or a child of it
+        if req == server or server in req.parents:
+            return str(Path.home())
+    except (ValueError, OSError):
+        pass
+    return requested_cwd
+
+
+def _get_preexec_fn():
+    """Return a preexec_fn that sets resource limits on Unix, or None on Windows."""
+    if sys.platform == "win32":
+        return None
+
+    def _set_limits():
+        try:
+            import resource
+            # Limit virtual memory to _MAX_MEMORY_BYTES (soft=hard)
+            resource.setrlimit(resource.RLIMIT_AS, (_MAX_MEMORY_BYTES, _MAX_MEMORY_BYTES))
+        except (ImportError, ValueError, OSError):
+            # resource module not available or RLIMIT_AS not supported (macOS)
+            pass
+
+    return _set_limits
 
 
 def _resolve_value(key: str, arguments: dict, env: dict) -> str:
@@ -109,7 +191,12 @@ async def execute_plugin(plugin: Plugin, arguments: dict, cwd: str) -> dict:
 async def _execute_http(
     execution: PluginExecution, arguments: dict, env: dict
 ) -> dict:
-    """Execute an HTTP plugin."""
+    """Execute an HTTP plugin.
+
+    HTTP plugins are inherently sandboxed — they only make outbound HTTP
+    requests and cannot access the local filesystem.  The httpx timeout
+    (TIMEOUT seconds) prevents hanging on unresponsive servers.
+    """
     import httpx
 
     url = _resolve_template(execution.url, arguments, env)
@@ -161,21 +248,36 @@ async def _execute_http(
 async def _execute_bash(
     execution: PluginExecution, arguments: dict, env: dict, cwd: str
 ) -> dict:
-    """Execute a bash plugin."""
+    """Execute a bash plugin with sandboxing.
+
+    Sandboxing measures:
+      - Sandboxed env: only safe OS vars + plugin env (no server secrets)
+      - Safe cwd: never runs in the server directory
+      - Memory limit via RLIMIT_AS on Linux
+      - Timeout via asyncio.wait_for
+      - Output cap at MAX_OUTPUT chars
+    """
     command = _resolve_template(execution.command, arguments, env)
     if not command.strip():
         return {"content": "Error: Empty command after template resolution", "is_error": True}
 
+    safe_cwd = _get_safe_cwd(cwd)
+    proc_env = _build_sandboxed_env(env)
+    preexec = _get_preexec_fn()
+
     if sys.platform == "win32":
         proc = await asyncio.create_subprocess_shell(
-            command, cwd=cwd,
+            command, cwd=safe_cwd,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            env=proc_env,
             shell=True,
         )
     else:
         proc = await asyncio.create_subprocess_exec(
-            "bash", "-c", command, cwd=cwd,
+            "bash", "-c", command, cwd=safe_cwd,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            env=proc_env,
+            preexec_fn=preexec,
         )
 
     try:
@@ -201,23 +303,37 @@ async def _execute_bash(
 async def _execute_python(
     execution: PluginExecution, arguments: dict, env: dict, cwd: str
 ) -> dict:
-    """Execute a Python plugin script.
+    """Execute a Python plugin script with sandboxing.
 
     The script receives arguments via stdin as JSON.
     It should print its result to stdout.
+
+    Sandboxing measures:
+      - Sandboxed env: only safe OS vars + plugin env (no server secrets)
+      - Safe cwd: never runs in the server directory
+      - Memory limit via RLIMIT_AS on Linux
+      - Timeout via asyncio.wait_for
+      - Output cap at MAX_OUTPUT chars
     """
     script = _resolve_template(execution.script, arguments, env)
 
-    # Build environment with plugin env vars
-    proc_env = {**os.environ, **env}
+    safe_cwd = _get_safe_cwd(cwd)
+    proc_env = _build_sandboxed_env(env)
+    preexec = _get_preexec_fn()
 
-    proc = await asyncio.create_subprocess_exec(
-        sys.executable, "-c", script,
-        cwd=cwd,
+    kwargs: dict[str, Any] = dict(
+        cwd=safe_cwd,
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         env=proc_env,
+    )
+    if preexec is not None:
+        kwargs["preexec_fn"] = preexec
+
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, "-c", script,
+        **kwargs,
     )
 
     input_data = json.dumps(arguments).encode("utf-8")

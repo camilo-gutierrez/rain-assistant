@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../app/l10n.dart';
 import '../models/message.dart';
+import 'screenshot_fullscreen.dart';
 
 /// Displays a base64-encoded screenshot from computer use mode.
 class ComputerScreenshotBlock extends StatelessWidget {
@@ -79,20 +80,28 @@ class ComputerScreenshotBlock extends StatelessWidget {
                   style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
                 ),
               ),
-            // Screenshot image
+            // Screenshot image (tap for fullscreen)
             if (message.image.isNotEmpty)
-              ClipRRect(
-                borderRadius: const BorderRadius.only(
-                  bottomLeft: Radius.circular(12),
-                  bottomRight: Radius.circular(12),
+              GestureDetector(
+                onTap: () => ScreenshotFullscreen.show(
+                  context,
+                  message.image,
+                  title:
+                      '${L10n.t('cu.iteration', lang)} ${message.iteration}',
                 ),
-                child: Image.memory(
-                  base64Decode(message.image),
-                  fit: BoxFit.contain,
-                  errorBuilder: (_, __, ___) => Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Icon(Icons.broken_image,
-                        size: 48, color: cs.onSurfaceVariant),
+                child: ClipRRect(
+                  borderRadius: const BorderRadius.only(
+                    bottomLeft: Radius.circular(12),
+                    bottomRight: Radius.circular(12),
+                  ),
+                  child: Image.memory(
+                    base64Decode(message.image),
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, __, ___) => Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Icon(Icons.broken_image,
+                          size: 48, color: cs.onSurfaceVariant),
+                    ),
                   ),
                 ),
               ),

@@ -182,6 +182,156 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_navigate",
+            "description": (
+                "Navigate to a URL in a headless browser. Returns page title and status. "
+                "Use this to browse websites, read documentation, check APIs, etc."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "URL to navigate to (e.g., 'https://example.com')",
+                    },
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_screenshot",
+            "description": (
+                "Take a screenshot of the current browser page. "
+                "Returns a base64-encoded PNG image."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "full_page": {
+                        "type": "boolean",
+                        "description": "If true, capture the entire scrollable page. Default: false.",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_click",
+            "description": (
+                "Click an element on the current browser page. "
+                "Identify the element by CSS selector or visible text."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "selector": {
+                        "type": "string",
+                        "description": "CSS selector (e.g., '#submit-btn', '.link') or visible text if by_text is true",
+                    },
+                    "by_text": {
+                        "type": "boolean",
+                        "description": "If true, find element by its visible text instead of CSS selector. Default: false.",
+                    },
+                },
+                "required": ["selector"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_type",
+            "description": (
+                "Type text into a form field on the current browser page. "
+                "The field is identified by CSS selector."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "selector": {
+                        "type": "string",
+                        "description": "CSS selector of the input field (e.g., '#search', 'input[name=email]')",
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "Text to type into the field",
+                    },
+                    "clear_first": {
+                        "type": "boolean",
+                        "description": "If true, clear the field before typing. Default: true.",
+                    },
+                },
+                "required": ["selector", "text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_extract_text",
+            "description": (
+                "Extract text content from the current browser page or a specific element. "
+                "Useful for reading web pages, scraping data, or checking page content."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "selector": {
+                        "type": "string",
+                        "description": "CSS selector to extract from. If omitted, extracts entire page body.",
+                    },
+                    "max_length": {
+                        "type": "integer",
+                        "description": "Maximum characters to return. Default: 10000.",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_scroll",
+            "description": "Scroll the current browser page up or down.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "direction": {
+                        "type": "string",
+                        "description": "Scroll direction: 'up' or 'down'. Default: 'down'.",
+                        "enum": ["up", "down"],
+                    },
+                    "amount": {
+                        "type": "integer",
+                        "description": "Pixels to scroll. Default: 500.",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_close",
+            "description": "Close the browser. Call this when done browsing to free resources.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
 ]
 
 
@@ -221,10 +371,19 @@ def get_all_tool_definitions() -> list[dict]:
     from memories import MANAGE_MEMORIES_DEFINITION
     from alter_egos import MANAGE_ALTER_EGOS_DEFINITION
 
+    from scheduled_tasks import MANAGE_SCHEDULED_TASKS_DEFINITION
+    from subagents import MANAGE_SUBAGENTS_DEFINITION
+    from marketplace import MANAGE_MARKETPLACE_DEFINITION
+    from documents import MANAGE_DOCUMENTS_DEFINITION
+
     all_tools = list(TOOL_DEFINITIONS)
     all_tools.append(MANAGE_PLUGINS_DEFINITION)
     all_tools.append(MANAGE_MEMORIES_DEFINITION)
     all_tools.append(MANAGE_ALTER_EGOS_DEFINITION)
+    all_tools.append(MANAGE_SCHEDULED_TASKS_DEFINITION)
+    all_tools.append(MANAGE_SUBAGENTS_DEFINITION)
+    all_tools.append(MANAGE_MARKETPLACE_DEFINITION)
+    all_tools.append(MANAGE_DOCUMENTS_DEFINITION)
 
     for plugin in load_all_plugins():
         all_tools.append(plugin_to_tool_definition(plugin))

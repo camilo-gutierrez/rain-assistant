@@ -215,7 +215,7 @@ async def cmd_start(message: Message) -> None:
         "2. `/cwd <path>` — Set project directory\n"
         "3. Send me a message!\n\n"
         "**Commands:**\n"
-        "• `/model <provider> [model]` — Change AI (claude, openai, gemini)\n"
+        "• `/model <provider> [model]` — Change AI (claude, openai, gemini, ollama)\n"
         "• `/ego [id]` — Switch personality (alter ego)\n"
         "• `/memories` — Show stored memories\n"
         "• `/clear` — Clear conversation\n"
@@ -272,7 +272,7 @@ async def cmd_model(message: Message) -> None:
     if len(parts) < 2:
         await message.reply(
             "Usage: `/model <provider> [model]`\n"
-            "Providers: `claude`, `openai`, `gemini`\n"
+            "Providers: `claude`, `openai`, `gemini`, `ollama`\n"
             "Example: `/model openai gpt-4o`",
             parse_mode="Markdown",
         )

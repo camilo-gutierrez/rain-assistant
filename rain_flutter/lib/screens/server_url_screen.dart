@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../app/l10n.dart';
 import '../providers/connection_provider.dart';
+import '../providers/settings_provider.dart';
 
 class ServerUrlScreen extends ConsumerStatefulWidget {
   final VoidCallback onConnected;
@@ -25,13 +27,13 @@ class _ServerUrlScreenState extends ConsumerState<ServerUrlScreen> {
   Future<void> _connect() async {
     final url = _controller.text.trim();
     if (url.isEmpty) {
-      setState(() => _error = 'Ingresa la URL del servidor');
+      setState(() => _error = L10n.t('serverUrl.errorEmpty', ref.read(settingsProvider).language));
       return;
     }
 
     // Basic validation
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      setState(() => _error = 'La URL debe comenzar con http:// o https://');
+      setState(() => _error = L10n.t('serverUrl.errorProtocol', ref.read(settingsProvider).language));
       return;
     }
 
@@ -47,7 +49,7 @@ class _ServerUrlScreenState extends ConsumerState<ServerUrlScreen> {
     if (!reachable) {
       setState(() {
         _loading = false;
-        _error = 'No se pudo conectar al servidor';
+        _error = L10n.t('serverUrl.errorUnreachable', ref.read(settingsProvider).language);
       });
       return;
     }
@@ -60,6 +62,7 @@ class _ServerUrlScreenState extends ConsumerState<ServerUrlScreen> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final lang = ref.watch(settingsProvider).language;
 
     return Scaffold(
       body: SafeArea(
@@ -95,7 +98,7 @@ class _ServerUrlScreenState extends ConsumerState<ServerUrlScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Conecta con tu servidor Rain',
+                    L10n.t('serverUrl.subtitle', lang),
                     style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                           color: cs.onSurfaceVariant,
                         ),
@@ -110,8 +113,8 @@ class _ServerUrlScreenState extends ConsumerState<ServerUrlScreen> {
                     textInputAction: TextInputAction.go,
                     onSubmitted: (_) => _connect(),
                     decoration: InputDecoration(
-                      labelText: 'URL del servidor',
-                      hintText: 'https://rain.ejemplo.com',
+                      labelText: L10n.t('serverUrl.label', lang),
+                      hintText: L10n.t('serverUrl.hint', lang),
                       prefixIcon: const Icon(Icons.link),
                       errorText: _error,
                     ),
@@ -131,8 +134,7 @@ class _ServerUrlScreenState extends ConsumerState<ServerUrlScreen> {
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            'Ingresa la URL donde corre tu servidor Rain.\n'
-                            'Ej: http://192.168.1.100:8000',
+                            L10n.t('serverUrl.helperText', lang),
                             style: Theme.of(context).textTheme.bodySmall?.copyWith(
                                   color: cs.onSurfaceVariant,
                                 ),
@@ -152,7 +154,7 @@ class _ServerUrlScreenState extends ConsumerState<ServerUrlScreen> {
                             height: 20,
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
-                        : const Text('Conectar'),
+                        : Text(L10n.t('serverUrl.connect', lang)),
                   ),
                 ],
               ),

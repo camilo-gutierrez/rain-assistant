@@ -33,6 +33,11 @@ GREEN_TOOLS: set[str] = {
     "WebFetch",
     "TodoWrite",
     "Task",
+    "browser_extract_text",
+    "browser_screenshot",
+    "manage_subagents",
+    "manage_marketplace",
+    "manage_documents",
 }
 
 # Tools that modify files (require confirmation)
@@ -41,6 +46,11 @@ YELLOW_TOOLS: set[str] = {
     "Edit",
     "MultiEdit",
     "NotebookEdit",
+    "browser_navigate",
+    "browser_click",
+    "browser_type",
+    "browser_scroll",
+    "browser_close",
 }
 
 # Bash is special: classified by command content (see below)
@@ -135,6 +145,10 @@ def classify(tool_name: str, tool_input: dict[str, Any]) -> PermissionLevel:
 
     # manage_plugins modifies the system, requires confirmation
     if tool_name == "manage_plugins":
+        return PermissionLevel.YELLOW
+
+    # manage_scheduled_tasks: list/show are safe, create/update/delete need confirmation
+    if tool_name == "manage_scheduled_tasks":
         return PermissionLevel.YELLOW
 
     # Unknown tools default to YELLOW (safe default)

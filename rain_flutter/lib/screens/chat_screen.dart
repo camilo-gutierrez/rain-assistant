@@ -1,8 +1,6 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../app/l10n.dart';
 import '../models/agent.dart';
@@ -11,13 +9,18 @@ import '../providers/agent_provider.dart';
 import '../providers/audio_provider.dart';
 import '../providers/connection_provider.dart';
 import '../providers/settings_provider.dart';
+import '../services/voice_mode_service.dart';
 import '../services/websocket_service.dart';
+import '../widgets/agent_manager_sheet.dart';
 import '../widgets/animated_message.dart';
-import '../widgets/computer_action_block.dart';
-import '../widgets/computer_screenshot.dart';
+import '../widgets/chat_input_bar.dart';
+import '../widgets/chat_messages.dart';
+import '../widgets/computer_live_display.dart';
+import '../widgets/cwd_picker_sheet.dart';
 import '../widgets/mode_switcher.dart';
 import '../widgets/model_switcher.dart';
 import '../widgets/rate_limit_badge.dart';
+import '../widgets/talk_mode_overlay.dart';
 import 'history_screen.dart';
 import 'metrics_screen.dart';
 import 'settings_screen.dart';
@@ -35,10 +38,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   int _lastMessageCount = 0;
   bool _userScrolledUp = false;
 
+  // Voice mode
+  final _voiceService = VoiceModeService();
+  bool _talkModeActive = false;
+  String _voiceStateLabel = '';
+  StreamSubscription<Map<String, dynamic>>? _voiceMsgSub;
+
   @override
   void initState() {
     super.initState();
     _scrollController.addListener(_onScroll);
+    _voiceService.voiceState.addListener(_onVoiceStateChanged);
   }
 
   @override
@@ -46,7 +56,74 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     _inputController.dispose();
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
+    _voiceMsgSub?.cancel();
+    _voiceService.voiceState.removeListener(_onVoiceStateChanged);
+    _voiceService.dispose();
     super.dispose();
+  }
+
+  void _onVoiceStateChanged() {
+    final state = _voiceService.voiceState.value;
+    final lang = ref.read(settingsProvider).language;
+    final label = switch (state) {
+      VoiceState.listening => L10n.t('voice.listening', lang),
+      VoiceState.wakeListening => L10n.t('voice.wakeListening', lang),
+      VoiceState.recording => L10n.t('voice.recording', lang),
+      VoiceState.transcribing => L10n.t('voice.transcribing', lang),
+      VoiceState.processing => L10n.t('voice.processing', lang),
+      VoiceState.speaking => L10n.t('voice.speaking', lang),
+      VoiceState.idle => '',
+    };
+    if (mounted) setState(() => _voiceStateLabel = label);
+  }
+
+  void _startListeningVoiceMessages() {
+    _voiceMsgSub?.cancel();
+    final ws = ref.read(webSocketServiceProvider);
+    _voiceMsgSub = ws.messageStream.listen((msg) {
+      if (_voiceService.handleMessage(msg)) {
+        // Voice transcription auto-send
+        final text = _voiceService.lastTranscription.value;
+        if (msg['type'] == 'voice_transcription' &&
+            msg['is_final'] == true &&
+            text.isNotEmpty) {
+          _inputController.text = text;
+          _sendMessage();
+          _voiceService.lastTranscription.value = '';
+        }
+      }
+    });
+  }
+
+  void _toggleTalkMode() {
+    final agentId = ref.read(agentProvider).activeAgentId;
+    if (agentId.isEmpty) return;
+    final ws = ref.read(webSocketServiceProvider);
+    final settings = ref.read(settingsProvider);
+
+    if (_talkModeActive) {
+      ws.send({'type': 'talk_mode_stop', 'agent_id': agentId});
+      ws.send({'type': 'voice_mode_set', 'mode': 'push-to-talk', 'agent_id': agentId});
+      _voiceService.deactivate();
+      _voiceMsgSub?.cancel();
+      setState(() => _talkModeActive = false);
+    } else {
+      ws.send({
+        'type': 'voice_mode_set',
+        'mode': settings.voiceMode,
+        'agent_id': agentId,
+        'vad_threshold': settings.vadSensitivity,
+        'silence_timeout': settings.silenceTimeout,
+      });
+      if (settings.voiceMode == 'talk-mode') {
+        ws.send({'type': 'talk_mode_start', 'agent_id': agentId});
+      }
+      _voiceService.activate(
+        settings.voiceMode == 'wake-word' ? VoiceMode.wakeWord : VoiceMode.talkMode,
+      );
+      _startListeningVoiceMessages();
+      setState(() => _talkModeActive = true);
+    }
   }
 
   void _onScroll() {
@@ -189,17 +266,39 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      builder: (ctx) => _CwdPickerSheet(
+      builder: (ctx) => CwdPickerSheet(
         agentId: agentId,
         onSelected: (path) {
           final ws = ref.read(webSocketServiceProvider);
+          final settings = ref.read(settingsProvider);
           ws.send({
             'type': 'set_cwd',
             'path': path,
             'agent_id': agentId,
+            'model': settings.aiModel,
+            'provider': settings.aiProvider.name,
           });
           Navigator.of(ctx).pop();
         },
+      ),
+    );
+  }
+
+  void _openAgentManager() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => AgentManagerSheet(
+        onSwitchAgent: (id) {
+          ref.read(agentProvider.notifier).setActiveAgent(id);
+        },
+        onDestroyAgent: _destroyAgent,
+        onCreateAgent: _createAgent,
       ),
     );
   }
@@ -296,7 +395,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             IconButton(
               onPressed: _interrupt,
               icon: Icon(Icons.stop_circle_outlined, color: cs.error),
-              tooltip: 'Interrumpir',
+              tooltip: L10n.t('chat.stop', lang),
             ),
           // Overflow menu
           PopupMenuButton<String>(
@@ -325,10 +424,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           ),
         ],
       ),
-      body: Column(
+      body: Stack(
         children: [
+          Column(
+            children: [
+              // Connection banner
+              _ConnectionBanner(wsStatus: wsStatus, lang: lang),
+
           // Agent tab bar
-          if (agentState.agents.length > 1 || agentState.agents.isNotEmpty)
+          if (agentState.agents.isNotEmpty)
             _AgentTabBar(
               agents: agentState.agents,
               activeAgentId: agentState.activeAgentId,
@@ -336,7 +440,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   ref.read(agentProvider.notifier).setActiveAgent(id),
               onCreate: _createAgent,
               onDestroy: _destroyAgent,
+              onOpenManager: _openAgentManager,
             ),
+
+          // Live display panel (computer use mode)
+          if (agent != null && agent.mode == AgentMode.computerUse)
+            ComputerLiveDisplay(lang: lang),
 
           // Messages list
           Expanded(
@@ -351,7 +460,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                                 cs.onSurfaceVariant.withValues(alpha: 0.3)),
                         const SizedBox(height: 16),
                         Text(
-                          'Envia un mensaje para comenzar',
+                          L10n.t('chat.emptyState', lang),
                           style: TextStyle(color: cs.onSurfaceVariant),
                         ),
                         if (agent?.cwd != null) ...[
@@ -383,7 +492,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                       return AnimatedMessage(
                         key: ValueKey(msg.id),
                         animate: msg.animate,
-                        child: _MessageTile(message: msg),
+                        child: MessageTile(message: msg),
                       );
                     },
                   ),
@@ -399,15 +508,32 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             const SizedBox.shrink(), // placeholder for mode toggle if needed
 
           // Input bar
-          _InputBar(
+          ChatInputBar(
             controller: _inputController,
             isProcessing: isProcessing,
             isRecording: isRecording,
             onSend: _sendMessage,
             onToggleRecording: _toggleRecording,
+            lang: lang,
+            voiceMode: ref.watch(settingsProvider).voiceMode,
+            talkModeActive: _talkModeActive,
+            onToggleTalkMode: _toggleTalkMode,
+            voiceStateLabel: _talkModeActive ? _voiceStateLabel : null,
           ),
+            ],
+          ), // end Column
+
+          // Talk Mode overlay (covers screen when active in talk-mode)
+          if (_talkModeActive && ref.watch(settingsProvider).voiceMode == 'talk-mode')
+            Positioned.fill(
+              child: TalkModeOverlay(
+                voiceService: _voiceService,
+                onEnd: _toggleTalkMode,
+                lang: lang,
+              ),
+            ),
         ],
-      ),
+      ), // end Stack
     );
   }
 }
@@ -420,6 +546,7 @@ class _AgentTabBar extends StatelessWidget {
   final ValueChanged<String> onSelect;
   final VoidCallback onCreate;
   final ValueChanged<String> onDestroy;
+  final VoidCallback onOpenManager;
 
   const _AgentTabBar({
     required this.agents,
@@ -427,6 +554,7 @@ class _AgentTabBar extends StatelessWidget {
     required this.onSelect,
     required this.onCreate,
     required this.onDestroy,
+    required this.onOpenManager,
   });
 
   @override
@@ -464,6 +592,22 @@ class _AgentTabBar extends StatelessWidget {
               },
             ),
           ),
+          // Agent manager button
+          Padding(
+            padding: const EdgeInsets.only(right: 4),
+            child: SizedBox(
+              width: 32,
+              height: 32,
+              child: IconButton(
+                onPressed: onOpenManager,
+                icon: const Icon(Icons.hub_outlined, size: 17),
+                padding: EdgeInsets.zero,
+                style: IconButton.styleFrom(
+                  backgroundColor: cs.primary.withValues(alpha: 0.1),
+                ),
+              ),
+            ),
+          ),
           // Add agent button
           if (agents.length < 5)
             Padding(
@@ -475,7 +619,6 @@ class _AgentTabBar extends StatelessWidget {
                   onPressed: onCreate,
                   icon: const Icon(Icons.add, size: 18),
                   padding: EdgeInsets.zero,
-                  tooltip: 'Nuevo agente',
                   style: IconButton.styleFrom(
                     backgroundColor:
                         cs.primary.withValues(alpha: 0.1),
@@ -593,224 +736,73 @@ class _AgentTab extends StatelessWidget {
   }
 }
 
-// ── CWD picker bottom sheet for new agents ──
+// ── Connection banner (shown when disconnected/reconnecting) ──
 
-class _CwdPickerSheet extends ConsumerStatefulWidget {
-  final String agentId;
-  final ValueChanged<String> onSelected;
+class _ConnectionBanner extends StatelessWidget {
+  final AsyncValue<ConnectionStatus> wsStatus;
+  final String lang;
 
-  const _CwdPickerSheet({
-    required this.agentId,
-    required this.onSelected,
-  });
-
-  @override
-  ConsumerState<_CwdPickerSheet> createState() => _CwdPickerSheetState();
-}
-
-class _CwdPickerSheetState extends ConsumerState<_CwdPickerSheet> {
-  List<Map<String, dynamic>> _entries = [];
-  String _currentPath = '~';
-  bool _loading = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadDirectory('~');
-  }
-
-  Future<void> _loadDirectory(String path) async {
-    setState(() => _loading = true);
-    try {
-      final auth = ref.read(authServiceProvider);
-      final dio = auth.authenticatedDio;
-      final res = await dio.get('/browse', queryParameters: {'path': path});
-      if (!mounted) return;
-      setState(() {
-        _currentPath = res.data['current'] ?? path;
-        _entries =
-            List<Map<String, dynamic>>.from(res.data['entries'] ?? []);
-        _loading = false;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => _loading = false);
-    }
-  }
+  const _ConnectionBanner({required this.wsStatus, required this.lang});
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-
-    return SizedBox(
-      height: MediaQuery.of(context).size.height * 0.65,
-      child: Column(
-        children: [
-          // Handle
-          Center(
-            child: Container(
-              margin: const EdgeInsets.only(top: 12, bottom: 8),
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: cs.onSurfaceVariant.withValues(alpha: 0.3),
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-          ),
-          // Title
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            child: Row(
-              children: [
-                const Text('Seleccionar directorio',
-                    style:
-                        TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-                const Spacer(),
-                FilledButton.tonal(
-                  onPressed: () => widget.onSelected(_currentPath),
-                  child: const Text('Usar este'),
-                ),
-              ],
-            ),
-          ),
-          // Path bar
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            color: cs.surfaceContainer,
-            child: Text(
-              _currentPath,
-              style: TextStyle(
-                fontFamily: 'monospace',
-                fontSize: 12,
-                color: cs.onSurfaceVariant,
-              ),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          // Directory listing
-          Expanded(
-            child: _loading
-                ? const Center(child: CircularProgressIndicator())
-                : ListView.builder(
-                    itemCount: _entries.length,
-                    itemBuilder: (context, index) {
-                      final entry = _entries[index];
-                      final isDir = entry['is_dir'] == true;
-                      final name = entry['name'] as String;
-                      return ListTile(
-                        dense: true,
-                        leading: Icon(
-                          isDir
-                              ? Icons.folder
-                              : Icons.insert_drive_file_outlined,
-                          size: 20,
-                          color: isDir ? cs.primary : cs.onSurfaceVariant,
-                        ),
-                        title: Text(name, style: const TextStyle(fontSize: 14)),
-                        onTap: isDir
-                            ? () => _loadDirectory(entry['path'] as String)
-                            : null,
-                      );
-                    },
-                  ),
-          ),
-        ],
-      ),
+    final isDisconnected = wsStatus.when(
+      data: (s) => s == ConnectionStatus.disconnected,
+      loading: () => false,
+      error: (_, __) => true,
     );
-  }
-}
+    final isConnecting = wsStatus.when(
+      data: (s) => s == ConnectionStatus.connecting,
+      loading: () => true,
+      error: (_, __) => false,
+    );
 
-// ── Input bar ──
+    if (!isDisconnected && !isConnecting) return const SizedBox.shrink();
 
-class _InputBar extends StatelessWidget {
-  final TextEditingController controller;
-  final bool isProcessing;
-  final bool isRecording;
-  final VoidCallback onSend;
-  final VoidCallback onToggleRecording;
-
-  const _InputBar({
-    required this.controller,
-    required this.isProcessing,
-    required this.isRecording,
-    required this.onSend,
-    required this.onToggleRecording,
-  });
-
-  @override
-  Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final color = isDisconnected ? cs.error : Colors.orange;
+    final text = isDisconnected
+        ? L10n.t('status.disconnected', lang)
+        : L10n.t('status.connecting', lang);
 
     return Container(
-      padding: EdgeInsets.fromLTRB(
-          8, 8, 8, MediaQuery.of(context).padding.bottom + 8),
-      decoration: BoxDecoration(
-        color: cs.surfaceContainer,
-        border: Border(
-            top: BorderSide(
-                color: cs.outlineVariant.withValues(alpha: 0.3))),
-      ),
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      color: color.withValues(alpha: 0.15),
       child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          // Mic button
-          IconButton(
-            onPressed: isProcessing ? null : onToggleRecording,
-            icon: isRecording
-                ? Icon(Icons.stop, color: cs.error)
-                : const Icon(Icons.mic_none),
-            style: isRecording
-                ? IconButton.styleFrom(
-                    backgroundColor:
-                        cs.errorContainer.withValues(alpha: 0.3),
-                  )
-                : null,
-          ),
-          const SizedBox(width: 4),
-          // Text field
-          Expanded(
-            child: TextField(
-              controller: controller,
-              textInputAction: TextInputAction.send,
-              onSubmitted: (_) => onSend(),
-              maxLines: 4,
-              minLines: 1,
-              enabled: !isRecording,
-              decoration: InputDecoration(
-                hintText:
-                    isRecording ? 'Grabando...' : 'Escribe un mensaje...',
-                filled: true,
-                fillColor: cs.surface,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(24),
-                  borderSide: BorderSide.none,
+          if (isConnecting)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: color,
                 ),
-                contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 20, vertical: 12),
               ),
+            )
+          else
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: Icon(Icons.cloud_off, size: 16, color: color),
             ),
-          ),
-          const SizedBox(width: 8),
-          // Send button
-          IconButton.filled(
-            onPressed: isProcessing ? null : onSend,
-            icon: isProcessing
-                ? SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: cs.onPrimary,
-                    ),
-                  )
-                : const Icon(Icons.send),
+          Text(
+            text,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: color,
+            ),
           ),
         ],
       ),
     );
   }
 }
+
 
 // ── Typing indicator (3 animated dots) ──
 
@@ -887,633 +879,7 @@ class _TypingIndicatorState extends State<_TypingIndicator>
   }
 }
 
-// ── Message tile (pattern match on sealed Message) ──
 
-class _MessageTile extends ConsumerWidget {
-  final Message message;
-  const _MessageTile({required this.message});
 
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final lang = ref.watch(settingsProvider).language;
-    return switch (message) {
-      UserMessage(:final text) => _UserBubble(text: text),
-      AssistantMessage(:final text, :final isStreaming) =>
-        _AssistantBubble(text: text, isStreaming: isStreaming),
-      SystemMessage(:final text) => _SystemLine(text: text),
-      ToolUseMessage() =>
-        _ToolUseBlock(message: message as ToolUseMessage),
-      ToolResultMessage() =>
-        _ToolResultBlock(message: message as ToolResultMessage),
-      PermissionRequestMessage() =>
-        _PermissionBlock(message: message as PermissionRequestMessage),
-      ComputerScreenshotMessage() => ComputerScreenshotBlock(
-          message: message as ComputerScreenshotMessage, lang: lang),
-      ComputerActionMessage() => ComputerActionBlock(
-          message: message as ComputerActionMessage, lang: lang),
-    };
-  }
-}
 
-// ── User bubble ──
 
-class _UserBubble extends StatelessWidget {
-  final String text;
-  const _UserBubble({required this.text});
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return Align(
-      alignment: Alignment.centerRight,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 4),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        constraints: BoxConstraints(
-            maxWidth: MediaQuery.of(context).size.width * 0.85),
-        decoration: BoxDecoration(
-          color: cs.primaryContainer,
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: SelectableText(
-          text,
-          style: TextStyle(color: cs.onPrimaryContainer, fontSize: 15),
-        ),
-      ),
-    );
-  }
-}
-
-// ── Assistant bubble with markdown ──
-
-class _AssistantBubble extends StatelessWidget {
-  final String text;
-  final bool isStreaming;
-  const _AssistantBubble(
-      {required this.text, required this.isStreaming});
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final displayText = isStreaming ? '$text ▍' : text;
-
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 4),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        constraints: BoxConstraints(
-            maxWidth: MediaQuery.of(context).size.width * 0.85),
-        decoration: BoxDecoration(
-          color: cs.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: MarkdownBody(
-          data: displayText,
-          selectable: true,
-          styleSheet: MarkdownStyleSheet(
-            p: TextStyle(
-                color: cs.onSurface, fontSize: 15, height: 1.5),
-            code: TextStyle(
-              color: cs.onSurface,
-              backgroundColor: cs.surfaceContainer,
-              fontSize: 13,
-              fontFamily: 'monospace',
-            ),
-            codeblockDecoration: BoxDecoration(
-              color: cs.surfaceContainer,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            codeblockPadding: const EdgeInsets.all(12),
-            blockquoteDecoration: BoxDecoration(
-              border: Border(
-                left: BorderSide(color: cs.primary, width: 3),
-              ),
-            ),
-            blockquotePadding: const EdgeInsets.only(left: 12),
-            h1: TextStyle(
-                color: cs.onSurface,
-                fontSize: 22,
-                fontWeight: FontWeight.bold),
-            h2: TextStyle(
-                color: cs.onSurface,
-                fontSize: 19,
-                fontWeight: FontWeight.bold),
-            h3: TextStyle(
-                color: cs.onSurface,
-                fontSize: 17,
-                fontWeight: FontWeight.w600),
-            listBullet:
-                TextStyle(color: cs.onSurface, fontSize: 15),
-            a: TextStyle(color: cs.primary),
-            strong: TextStyle(
-                color: cs.onSurface, fontWeight: FontWeight.bold),
-            em: TextStyle(
-                color: cs.onSurface, fontStyle: FontStyle.italic),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ── System message line ──
-
-class _SystemLine extends StatelessWidget {
-  final String text;
-  const _SystemLine({required this.text});
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Center(
-        child: Container(
-          padding:
-              const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-          decoration: BoxDecoration(
-            color: cs.surfaceContainerHigh.withValues(alpha: 0.5),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Text(
-            text,
-            style:
-                TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ── Expandable tool_use block ──
-
-class _ToolUseBlock extends StatelessWidget {
-  final ToolUseMessage message;
-  const _ToolUseBlock({required this.message});
-
-  IconData _toolIcon(String tool) {
-    return switch (tool) {
-      'bash' || 'execute' => Icons.terminal,
-      'write' || 'create_file' => Icons.edit_note,
-      'read' || 'read_file' => Icons.description_outlined,
-      'search' || 'grep' || 'find' => Icons.search,
-      'browser' || 'web' => Icons.language,
-      _ => Icons.build_outlined,
-    };
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final inputJson =
-        const JsonEncoder.withIndent('  ').convert(message.input);
-
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 3),
-        constraints: BoxConstraints(
-            maxWidth: MediaQuery.of(context).size.width * 0.85),
-        decoration: BoxDecoration(
-          color: cs.surfaceContainerHigh,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-              color: cs.outlineVariant.withValues(alpha: 0.3)),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: ExpansionTile(
-          dense: true,
-          tilePadding: const EdgeInsets.symmetric(horizontal: 12),
-          childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-          leading: Icon(_toolIcon(message.tool),
-              size: 18, color: cs.primary),
-          title: Text(
-            message.tool,
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: cs.onSurface,
-            ),
-          ),
-          children: [
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: cs.surfaceContainer,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: SelectableText(
-                inputJson,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontFamily: 'monospace',
-                  color: cs.onSurfaceVariant,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ── Expandable tool_result block ──
-
-class _ToolResultBlock extends StatelessWidget {
-  final ToolResultMessage message;
-  const _ToolResultBlock({required this.message});
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final isError = message.isError;
-    final preview = message.content.length > 80
-        ? '${message.content.substring(0, 80)}...'
-        : message.content;
-
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 3),
-        constraints: BoxConstraints(
-            maxWidth: MediaQuery.of(context).size.width * 0.85),
-        decoration: BoxDecoration(
-          color: isError
-              ? cs.errorContainer.withValues(alpha: 0.3)
-              : cs.surfaceContainerHigh,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: isError
-                ? cs.error.withValues(alpha: 0.3)
-                : cs.outlineVariant.withValues(alpha: 0.3),
-          ),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: ExpansionTile(
-          dense: true,
-          tilePadding: const EdgeInsets.symmetric(horizontal: 12),
-          childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-          leading: Icon(
-            isError
-                ? Icons.error_outline
-                : Icons.check_circle_outline,
-            size: 18,
-            color: isError ? cs.error : Colors.green,
-          ),
-          title: Text(
-            isError ? 'Error' : preview,
-            style: TextStyle(
-              fontSize: 12,
-              color: isError ? cs.error : cs.onSurfaceVariant,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          children: [
-            Container(
-              width: double.infinity,
-              constraints: const BoxConstraints(maxHeight: 300),
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: cs.surfaceContainer,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: SingleChildScrollView(
-                child: SelectableText(
-                  message.content,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontFamily: 'monospace',
-                    color: isError ? cs.error : cs.onSurfaceVariant,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ── Permission request block with PIN input + countdown ──
-
-class _PermissionBlock extends ConsumerStatefulWidget {
-  final PermissionRequestMessage message;
-  const _PermissionBlock({required this.message});
-
-  @override
-  ConsumerState<_PermissionBlock> createState() =>
-      _PermissionBlockState();
-}
-
-class _PermissionBlockState extends ConsumerState<_PermissionBlock> {
-  final _pinController = TextEditingController();
-  Timer? _countdownTimer;
-  int _remainingSeconds = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    if (widget.message.status == PermissionStatus.pending) {
-      _startCountdown();
-    }
-  }
-
-  void _startCountdown() {
-    // 5 minutes from when the message was created
-    const timeoutMs = 5 * 60 * 1000;
-    final elapsed =
-        DateTime.now().millisecondsSinceEpoch - widget.message.timestamp;
-    final remaining = timeoutMs - elapsed;
-
-    if (remaining <= 0) {
-      _remainingSeconds = 0;
-      _expire();
-      return;
-    }
-
-    _remainingSeconds = (remaining / 1000).ceil();
-    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!mounted) {
-        _countdownTimer?.cancel();
-        return;
-      }
-      setState(() {
-        _remainingSeconds--;
-        if (_remainingSeconds <= 0) {
-          _countdownTimer?.cancel();
-          _expire();
-        }
-      });
-    });
-  }
-
-  void _expire() {
-    final agentId = ref.read(agentProvider).activeAgentId;
-    ref.read(agentProvider.notifier).updatePermissionStatus(
-          agentId,
-          widget.message.requestId,
-          PermissionStatus.expired,
-        );
-  }
-
-  @override
-  void dispose() {
-    _countdownTimer?.cancel();
-    _pinController.dispose();
-    super.dispose();
-  }
-
-  String _formatTime(int seconds) {
-    final m = seconds ~/ 60;
-    final s = seconds % 60;
-    return '$m:${s.toString().padLeft(2, '0')}';
-  }
-
-  void _respond(bool approved) {
-    _countdownTimer?.cancel();
-    final agentId = ref.read(agentProvider).activeAgentId;
-
-    final ws = ref.read(webSocketServiceProvider);
-    final payload = <String, dynamic>{
-      'type': 'permission_response',
-      'request_id': widget.message.requestId,
-      'agent_id': agentId,
-      'approved': approved,
-    };
-
-    // Include PIN for RED level
-    if (widget.message.level == PermissionLevel.red && approved) {
-      payload['pin'] = _pinController.text;
-    }
-
-    ws.send(payload);
-
-    ref.read(agentProvider.notifier).updatePermissionStatus(
-          agentId,
-          widget.message.requestId,
-          approved ? PermissionStatus.approved : PermissionStatus.denied,
-        );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final isRed = widget.message.level == PermissionLevel.red;
-    final isPending =
-        widget.message.status == PermissionStatus.pending;
-    final inputJson = const JsonEncoder.withIndent('  ')
-        .convert(widget.message.input);
-
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 4),
-        constraints: BoxConstraints(
-            maxWidth: MediaQuery.of(context).size.width * 0.85),
-        decoration: BoxDecoration(
-          color: isRed ? cs.errorContainer : cs.tertiaryContainer,
-          borderRadius: BorderRadius.circular(16),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Header
-            ListTile(
-              dense: true,
-              leading: Icon(
-                isRed ? Icons.gpp_bad : Icons.shield_outlined,
-                color: isRed ? cs.error : cs.tertiary,
-              ),
-              title: Text(
-                'Permiso: ${widget.message.tool}',
-                style: TextStyle(
-                  fontWeight: FontWeight.w600,
-                  color: isRed
-                      ? cs.onErrorContainer
-                      : cs.onTertiaryContainer,
-                ),
-              ),
-              subtitle: Text(
-                widget.message.reason,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: isRed
-                      ? cs.onErrorContainer.withValues(alpha: 0.7)
-                      : cs.onTertiaryContainer.withValues(alpha: 0.7),
-                ),
-              ),
-              trailing: isPending && _remainingSeconds > 0
-                  ? Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: (_remainingSeconds < 60
-                                ? cs.error
-                                : cs.onSurfaceVariant)
-                            .withValues(alpha: 0.2),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        _formatTime(_remainingSeconds),
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          fontFamily: 'monospace',
-                          color: _remainingSeconds < 60
-                              ? cs.error
-                              : cs.onSurfaceVariant,
-                        ),
-                      ),
-                    )
-                  : null,
-            ),
-
-            // Tool input details (expandable)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: ExpansionTile(
-                dense: true,
-                tilePadding: EdgeInsets.zero,
-                childrenPadding:
-                    const EdgeInsets.only(bottom: 8),
-                title: Text(
-                  'Detalles',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: isRed
-                        ? cs.onErrorContainer.withValues(alpha: 0.6)
-                        : cs.onTertiaryContainer
-                            .withValues(alpha: 0.6),
-                  ),
-                ),
-                children: [
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(8),
-                    constraints:
-                        const BoxConstraints(maxHeight: 150),
-                    decoration: BoxDecoration(
-                      color: cs.surface.withValues(alpha: 0.5),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: SingleChildScrollView(
-                      child: SelectableText(
-                        inputJson,
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontFamily: 'monospace',
-                          color: isRed
-                              ? cs.onErrorContainer
-                              : cs.onTertiaryContainer,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            // PIN input for RED level
-            if (isPending && isRed)
-              Padding(
-                padding:
-                    const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                child: TextField(
-                  controller: _pinController,
-                  obscureText: true,
-                  decoration: InputDecoration(
-                    hintText: 'Ingresa PIN para aprobar',
-                    filled: true,
-                    fillColor: cs.surface.withValues(alpha: 0.5),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide.none,
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 10),
-                    isDense: true,
-                    prefixIcon: Icon(Icons.lock_outline,
-                        size: 18, color: cs.error),
-                  ),
-                  style: const TextStyle(fontSize: 14),
-                ),
-              ),
-
-            // Action buttons / status
-            if (isPending)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    OutlinedButton(
-                      onPressed: () => _respond(false),
-                      child: const Text('Denegar'),
-                    ),
-                    const SizedBox(width: 8),
-                    FilledButton(
-                      onPressed: () => _respond(true),
-                      style: isRed
-                          ? FilledButton.styleFrom(
-                              backgroundColor: cs.error,
-                              foregroundColor: cs.onError,
-                            )
-                          : null,
-                      child: const Text('Aprobar'),
-                    ),
-                  ],
-                ),
-              )
-            else
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                child: Row(
-                  children: [
-                    Icon(
-                      widget.message.status ==
-                              PermissionStatus.approved
-                          ? Icons.check_circle
-                          : widget.message.status ==
-                                  PermissionStatus.denied
-                              ? Icons.cancel
-                              : Icons.timer_off,
-                      size: 16,
-                      color: widget.message.status ==
-                              PermissionStatus.approved
-                          ? Colors.green
-                          : cs.error,
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      widget.message.status ==
-                              PermissionStatus.approved
-                          ? 'Aprobado'
-                          : widget.message.status ==
-                                  PermissionStatus.denied
-                              ? 'Denegado'
-                              : 'Expirado',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: widget.message.status ==
-                                PermissionStatus.approved
-                            ? Colors.green
-                            : cs.error,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}

@@ -9,6 +9,7 @@ interface UIState {
   settingsDrawerOpen: boolean;
   memoriesDrawerOpen: boolean;
   alterEgosDrawerOpen: boolean;
+  marketplaceDrawerOpen: boolean;
   mobileSidebarOpen: boolean;
 
   setActivePanel: (panel: ActivePanel) => void;
@@ -16,6 +17,7 @@ interface UIState {
   toggleSettingsDrawer: () => void;
   toggleMemoriesDrawer: () => void;
   toggleAlterEgosDrawer: () => void;
+  toggleMarketplaceDrawer: () => void;
   toggleMobileSidebar: () => void;
   setTabFocused: (val: boolean) => void;
   incrementUnreadCount: () => void;
@@ -30,6 +32,7 @@ export const useUIStore = create<UIState>()((set) => ({
   settingsDrawerOpen: false,
   memoriesDrawerOpen: false,
   alterEgosDrawerOpen: false,
+  marketplaceDrawerOpen: false,
   mobileSidebarOpen: false,
 
   setActivePanel: (panel) => set({ activePanel: panel }),
@@ -45,6 +48,9 @@ export const useUIStore = create<UIState>()((set) => ({
 
   toggleAlterEgosDrawer: () =>
     set((s) => ({ alterEgosDrawerOpen: !s.alterEgosDrawerOpen })),
+
+  toggleMarketplaceDrawer: () =>
+    set((s) => ({ marketplaceDrawerOpen: !s.marketplaceDrawerOpen })),
 
   toggleMobileSidebar: () =>
     set((s) => ({ mobileSidebarOpen: !s.mobileSidebarOpen })),

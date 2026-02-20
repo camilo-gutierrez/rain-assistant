@@ -1,6 +1,12 @@
-"""Gemini provider — custom agentic loop with function calling."""
+"""Gemini provider — custom agentic loop with function calling.
 
-import asyncio
+Uses the native async methods from the google-generativeai SDK (v0.8+):
+  - ChatSession.send_message_async() instead of blocking send_message()
+
+This avoids the need for loop.run_in_executor() and plays nicely with the
+asyncio event loop that the rest of Rain's backend relies on.
+"""
+
 import json
 import time
 from typing import AsyncIterator, Callable, Awaitable, Any
@@ -22,7 +28,12 @@ MAX_ITERATIONS = 50
 
 
 class GeminiProvider(BaseProvider):
-    """Provider using Google Gemini's function calling for agentic tool use."""
+    """Provider using Google Gemini's function calling for agentic tool use.
+
+    The google-generativeai SDK exposes async-native methods
+    (send_message_async, generate_content_async) so we call those directly
+    instead of wrapping the sync API in run_in_executor().
+    """
 
     provider_name = "gemini"
 
@@ -43,6 +54,7 @@ class GeminiProvider(BaseProvider):
         can_use_tool: Callable[..., Awaitable[Any]] | None = None,
         resume_session_id: str | None = None,
         mcp_servers: dict | str | None = None,
+        agent_id: str = "default",
     ) -> None:
         import google.generativeai as genai
 
@@ -59,7 +71,7 @@ class GeminiProvider(BaseProvider):
             tools=gemini_tools,
         )
         self._chat = self._model.start_chat()
-        self._tool_executor = ToolExecutor(cwd=cwd, permission_callback=can_use_tool)
+        self._tool_executor = ToolExecutor(cwd=cwd, permission_callback=can_use_tool, agent_id=agent_id)
         self._interrupted = False
 
     async def send_message(self, text: str) -> None:
@@ -82,13 +94,9 @@ class GeminiProvider(BaseProvider):
         while iterations < MAX_ITERATIONS and not self._interrupted:
             iterations += 1
 
-            # Send message to Gemini (run sync API in executor to avoid blocking)
-            loop = asyncio.get_event_loop()
+            # Send message to Gemini using native async API
             try:
-                response = await loop.run_in_executor(
-                    None,
-                    lambda: self._chat.send_message(current_content),
-                )
+                response = await self._chat.send_message_async(current_content)
             except Exception as e:
                 yield NormalizedEvent("error", {"text": f"Gemini API error: {e}"})
                 break

@@ -43,7 +43,7 @@ export default function MobileBottomNav() {
   ];
 
   return (
-    <nav className="md:hidden flex items-center justify-around bg-surface border-t border-overlay py-1 pb-[max(0.25rem,env(safe-area-inset-bottom))]">
+    <nav className="md:hidden flex items-center justify-around bg-surface border-t border-overlay py-1.5 pb-[max(0.375rem,env(safe-area-inset-bottom))]">
       {items.map((item) => (
         <button
           key={item.id}
@@ -53,7 +53,7 @@ export default function MobileBottomNav() {
           }`}
         >
           {item.icon}
-          <span className="text-[11px]">{item.label}</span>
+          <span className="text-xs leading-tight">{item.label}</span>
           {/* Active indicator bar */}
           {item.active && (
             <span className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 w-5 h-[3px] rounded-full bg-primary" />

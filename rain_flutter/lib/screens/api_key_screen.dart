@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../app/l10n.dart';
 import '../models/provider_info.dart';
 import '../providers/connection_provider.dart';
 import '../providers/settings_provider.dart';
@@ -17,10 +18,52 @@ class _ApiKeyScreenState extends ConsumerState<ApiKeyScreen> {
   final _keyController = TextEditingController();
   bool _obscureKey = true;
 
+  // OAuth detection state
+  bool _checkingOAuth = true;
+  bool _oauthDetected = false;
+  String _subscriptionType = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _checkOAuth();
+  }
+
   @override
   void dispose() {
     _keyController.dispose();
     super.dispose();
+  }
+
+  Future<void> _checkOAuth() async {
+    try {
+      final auth = ref.read(authServiceProvider);
+      final dio = auth.authenticatedDio;
+      final res = await dio.get('/check-oauth');
+      if (!mounted) return;
+      setState(() {
+        _checkingOAuth = false;
+        _oauthDetected = res.data['available'] == true &&
+            res.data['expired'] != true;
+        _subscriptionType = res.data['subscriptionType'] ?? '';
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _checkingOAuth = false);
+    }
+  }
+
+  void _usePersonalAccount() {
+    final settings = ref.read(settingsProvider);
+    final ws = ref.read(webSocketServiceProvider);
+
+    ws.send({
+      'type': 'set_api_key',
+      'auth_mode': 'oauth',
+      'model': settings.aiModel,
+    });
+
+    widget.onConfigured();
   }
 
   void _submit() {
@@ -30,7 +73,6 @@ class _ApiKeyScreenState extends ConsumerState<ApiKeyScreen> {
     final settings = ref.read(settingsProvider);
     final ws = ref.read(webSocketServiceProvider);
 
-    // Send API key to server via WebSocket
     ws.send({
       'type': 'set_api_key',
       'key': key,
@@ -46,6 +88,8 @@ class _ApiKeyScreenState extends ConsumerState<ApiKeyScreen> {
     final cs = Theme.of(context).colorScheme;
     final settings = ref.watch(settingsProvider);
     final info = providerInfo[settings.aiProvider]!;
+    final lang = settings.language;
+    final isClaude = settings.aiProvider == AIProvider.claude;
 
     return Scaffold(
       body: SafeArea(
@@ -57,7 +101,7 @@ class _ApiKeyScreenState extends ConsumerState<ApiKeyScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Key icon
+                  // Icon
                   Container(
                     width: 80,
                     height: 80,
@@ -74,21 +118,110 @@ class _ApiKeyScreenState extends ConsumerState<ApiKeyScreen> {
                   const SizedBox(height: 24),
 
                   Text(
-                    'API Key',
-                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Configura tu clave de API para usar Rain',
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                          color: cs.onSurfaceVariant,
-                        ),
+                    L10n.t('apiKey.title', lang),
+                    style: Theme.of(context)
+                        .textTheme
+                        .headlineMedium
+                        ?.copyWith(fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 32),
 
-                  // Provider selector
+                  // ── Personal account section (always visible for Claude) ──
+                  if (isClaude) ...[
+                    // Detected badge (only if check succeeded)
+                    if (_oauthDetected)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.green.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.check_circle,
+                                  size: 14, color: Colors.green),
+                              const SizedBox(width: 6),
+                              Text(
+                                '${L10n.t('apiKey.personalAccountActive', lang)} (${_subscriptionType.toUpperCase()})',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.green,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+
+                    // Personal account button (always shown for Claude)
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: _checkingOAuth ? null : _usePersonalAccount,
+                        icon: _checkingOAuth
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: Colors.white),
+                              )
+                            : const Icon(Icons.person_outlined),
+                        label: Text(
+                          L10n.t('apiKey.personalAccount', lang),
+                        ),
+                        style: FilledButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          textStyle: const TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      L10n.t('apiKey.personalAccountDesc', lang),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: cs.onSurfaceVariant,
+                      ),
+                    ),
+
+                    // Divider
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 20),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Divider(
+                                color: cs.outlineVariant
+                                    .withValues(alpha: 0.5)),
+                          ),
+                          Padding(
+                            padding:
+                                const EdgeInsets.symmetric(horizontal: 16),
+                            child: Text(
+                              L10n.t('apiKey.orEnterKey', lang),
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: cs.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            child: Divider(
+                                color: cs.outlineVariant
+                                    .withValues(alpha: 0.5)),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+
+                  // ── Provider selector ──
                   SegmentedButton<AIProvider>(
                     segments: AIProvider.values.map((p) {
                       return ButtonSegment(
@@ -98,7 +231,9 @@ class _ApiKeyScreenState extends ConsumerState<ApiKeyScreen> {
                     }).toList(),
                     selected: {settings.aiProvider},
                     onSelectionChanged: (selection) {
-                      ref.read(settingsProvider.notifier).setAIProvider(selection.first);
+                      ref
+                          .read(settingsProvider.notifier)
+                          .setAIProvider(selection.first);
                     },
                   ),
                   const SizedBox(height: 24),
@@ -115,9 +250,12 @@ class _ApiKeyScreenState extends ConsumerState<ApiKeyScreen> {
                       prefixIcon: const Icon(Icons.vpn_key_outlined),
                       suffixIcon: IconButton(
                         icon: Icon(
-                          _obscureKey ? Icons.visibility_outlined : Icons.visibility_off_outlined,
+                          _obscureKey
+                              ? Icons.visibility_outlined
+                              : Icons.visibility_off_outlined,
                         ),
-                        onPressed: () => setState(() => _obscureKey = !_obscureKey),
+                        onPressed: () =>
+                            setState(() => _obscureKey = !_obscureKey),
                       ),
                     ),
                   ),
@@ -138,23 +276,30 @@ class _ApiKeyScreenState extends ConsumerState<ApiKeyScreen> {
                   // Model selector
                   DropdownButtonFormField<String>(
                     initialValue: settings.aiModel,
-                    decoration: const InputDecoration(
-                      labelText: 'Modelo',
-                      prefixIcon: Icon(Icons.psychology_outlined),
+                    decoration: InputDecoration(
+                      labelText: L10n.t('provider.model', lang),
+                      prefixIcon: const Icon(Icons.psychology_outlined),
                     ),
-                    items: (providerModels[settings.aiProvider] ?? []).map((m) {
-                      return DropdownMenuItem(value: m.id, child: Text(m.name));
+                    items:
+                        (providerModels[settings.aiProvider] ?? []).map((m) {
+                      return DropdownMenuItem(
+                          value: m.id, child: Text(m.name));
                     }).toList(),
                     onChanged: (v) {
-                      if (v != null) ref.read(settingsProvider.notifier).setAIModel(v);
+                      if (v != null) {
+                        ref.read(settingsProvider.notifier).setAIModel(v);
+                      }
                     },
                   ),
                   const SizedBox(height: 32),
 
                   // Submit button
-                  ElevatedButton(
-                    onPressed: _submit,
-                    child: const Text('Continuar'),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: _submit,
+                      child: Text(L10n.t('apiKey.connect', lang)),
+                    ),
                   ),
                 ],
               ),

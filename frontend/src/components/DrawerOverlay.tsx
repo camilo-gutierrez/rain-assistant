@@ -67,7 +67,7 @@ export default function DrawerOverlay({ open, onClose, title, children }: Drawer
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className={`fixed top-0 right-0 h-full w-[400px] max-w-[85vw] bg-surface z-50 flex flex-col shadow-lg transition-transform duration-300 ${
+        className={`fixed top-0 right-0 h-full w-[85vw] sm:w-[400px] bg-surface z-50 flex flex-col shadow-lg transition-transform duration-300 pr-[env(safe-area-inset-right)] ${
           open ? "translate-x-0" : "translate-x-full"
         }`}
       >

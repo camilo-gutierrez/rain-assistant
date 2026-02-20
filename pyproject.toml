@@ -32,6 +32,7 @@ dependencies = [
     "edge-tts",
     "bcrypt",
     "cryptography",
+    "keyring>=24.0",
     "pyyaml>=6.0",
     "httpx>=0.24",
 ]
@@ -45,14 +46,24 @@ computer-use = [
     "Pillow>=10.0.0",
     "pyperclip>=1.8.0",
 ]
+browser = ["playwright>=1.40.0"]
+scheduler = ["croniter>=1.3.0"]
+ollama = ["ollama>=0.4.0"]
 tunnel = ["pycloudflared"]
+memory = ["sentence-transformers>=2.2.0", "pypdf>=3.0"]
+voice = [
+    "torch>=2.0",
+    "openwakeword>=0.6",
+    "onnxruntime>=1.15",
+]
 dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.21",
+    "httpx>=0.24",
     "ruff",
 ]
 all = [
-    "rain-assistant[telegram,computer-use,tunnel]",
+    "rain-assistant[telegram,computer-use,browser,scheduler,ollama,tunnel,memory,voice]",
 ]
 
 [project.scripts]
@@ -68,6 +79,7 @@ Documentation = "https://github.com/camilo-gutierrez/rain-assistant#readme"
 py-modules = [
     "server",
     "database",
+    "key_manager",
     "transcriber",
     "synthesizer",
     "permission_classifier",
@@ -80,10 +92,17 @@ py-modules = [
 include-package-data = true
 
 [tool.setuptools.packages.find]
-include = ["plugins*", "providers*", "tools*", "static"]
+include = ["plugins*", "providers*", "tools*", "memories*", "documents*", "alter_egos*", "scheduled_tasks*", "subagents*", "marketplace*", "voice*", "static"]
 
 [tool.setuptools.package-data]
 static = ["**/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
 
 [tool.ruff]
 line-length = 100

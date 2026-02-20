@@ -8,14 +8,25 @@ import { useUIStore } from "@/stores/useUIStore";
 import { useSettingsStore } from "@/stores/useSettingsStore";
 import { useToastStore } from "@/stores/useToastStore";
 import { useTTSStore } from "@/hooks/useTTS";
-import type { WSReceiveMessage, AnyMessage, ComputerScreenshotMessage, ComputerActionMessage } from "@/lib/types";
-import { loadMessages, synthesize } from "@/lib/api";
-import { autoSaveConversation } from "@/lib/historyUtils";
+import { handleToolMessage } from "@/hooks/useToolMessages";
+import { handlePermissionMessage } from "@/hooks/usePermissionMessages";
+import { handleComputerUseMessage } from "@/hooks/useComputerUseMessages";
+import { handleSubAgentMessage } from "@/hooks/useSubAgentMessages";
+import { handleVoiceMessage } from "@/hooks/useVoiceMessages";
+import type { WSReceiveMessage } from "@/lib/types";
+import { synthesize } from "@/lib/api";
+import { autoSaveConversation, loadHistoryForAgent } from "@/lib/historyUtils";
 import { translate } from "@/lib/translations";
 
 /**
  * Central WebSocket hook — call once in page.tsx.
  * Manages WS lifecycle and routes incoming messages to the appropriate stores.
+ *
+ * Domain-specific message handling is delegated to focused handlers:
+ *  - handleToolMessage       (tool_use, tool_result)
+ *  - handlePermissionMessage  (permission_request)
+ *  - handleComputerUseMessage (mode_changed, computer_screenshot, computer_action)
+ *  - handleSubAgentMessage    (subagent_spawned, subagent_completed)
  */
 export function useWebSocket() {
   const ws = useConnectionStore((s) => s.ws);
@@ -23,42 +34,39 @@ export function useWebSocket() {
   const authToken = useConnectionStore((s) => s.authToken);
   const notifiedRef = useRef(false);
 
+  // ── Route incoming WS messages ──
   useEffect(() => {
     if (!ws) return;
 
     const handleMessage = (e: MessageEvent) => {
       let msg: WSReceiveMessage;
-      try {
-        msg = JSON.parse(e.data);
-      } catch {
-        console.error("WS parse error");
-        return;
-      }
+      try { msg = JSON.parse(e.data); } catch { console.error("WS parse error"); return; }
 
       const agentStore = useAgentStore.getState();
-      const metricsStore = useMetricsStore.getState();
       const connectionStore = useConnectionStore.getState();
       const agentId = ("agent_id" in msg && msg.agent_id) || agentStore.activeAgentId;
       if (!agentId) return;
 
+      // Delegate to domain-specific handlers first
+      if (handleToolMessage(msg, agentId)) return;
+      if (handlePermissionMessage(msg, agentId)) return;
+      if (handleComputerUseMessage(msg, agentId)) return;
+      if (handleSubAgentMessage(msg, agentId)) return;
+      if (handleVoiceMessage(msg, agentId)) return;
+
+      // Core routing
       switch (msg.type) {
-        // ── Heartbeat: respond to server pings ──
-        case "ping": {
+        case "ping":
           connectionStore.send({ type: "pong" });
           break;
-        }
 
-        // ── API key pre-loaded from server config (setup wizard) ──
         case "api_key_loaded": {
           const provider = msg.provider || "claude";
           useSettingsStore.getState().setAIProvider(provider);
           connectionStore.setUsingApiKey(true);
           connectionStore.setCurrentProvider(provider);
-          // Skip the apiKey panel — go straight to fileBrowser
           const ui = useUIStore.getState();
-          if (ui.activePanel === "apiKey") {
-            ui.setActivePanel("fileBrowser");
-          }
+          if (ui.activePanel === "apiKey") ui.setActivePanel("fileBrowser");
           break;
         }
 
@@ -69,7 +77,6 @@ export function useWebSocket() {
           }
           if (msg.cwd && agentStore.agents[agentId]) {
             agentStore.setAgentCwd(agentId, msg.cwd);
-            // Only load history once per agent to avoid overwriting local messages
             if (!agentStore.agents[agentId].historyLoaded) {
               loadHistoryForAgent(msg.cwd, agentId, authToken);
             }
@@ -77,271 +84,34 @@ export function useWebSocket() {
           break;
         }
 
-        case "assistant_text": {
+        case "assistant_text":
           if (!agentStore.agents[agentId]) break;
           agentStore.updateStreamingMessage(agentId, msg.text);
           agentStore.incrementUnread(agentId);
           break;
-        }
 
-        case "tool_use": {
-          if (!agentStore.agents[agentId]) break;
-          agentStore.finalizeStreaming(agentId);
-          const toolMsg: AnyMessage = {
-            id: crypto.randomUUID(),
-            type: "tool_use",
-            tool: msg.tool,
-            input: msg.input,
-            toolUseId: msg.id,
-            timestamp: Date.now(),
-            animate: true,
-          };
-          agentStore.appendMessage(agentId, toolMsg);
-          agentStore.incrementUnread(agentId);
+        case "model_info":
+          useMetricsStore.getState().updateModelInfo(msg.model);
           break;
-        }
 
-        case "tool_result": {
-          if (!agentStore.agents[agentId]) break;
-          const resultMsg: AnyMessage = {
-            id: crypto.randomUUID(),
-            type: "tool_result",
-            content: msg.content,
-            isError: msg.is_error,
-            toolUseId: msg.tool_use_id,
-            timestamp: Date.now(),
-            animate: true,
-          };
-          agentStore.appendMessage(agentId, resultMsg);
-          agentStore.incrementUnread(agentId);
+        case "rate_limits":
+          useMetricsStore.getState().updateRateLimits(msg.limits);
           break;
-        }
 
-        case "model_info": {
-          metricsStore.updateModelInfo(msg.model);
+        case "result":
+          handleResult(msg, agentId, authToken);
           break;
-        }
 
-        case "rate_limits": {
-          metricsStore.updateRateLimits(msg.limits);
+        case "error":
+          handleError(msg, agentId);
           break;
-        }
-
-        case "result": {
-          agentStore.finalizeStreaming(agentId);
-          if (msg.usage) metricsStore.updateUsageInfo(msg.usage);
-
-          // Append system message with cost/duration info
-          if (msg.cost != null || msg.duration_ms != null) {
-            let info = "";
-            if (msg.duration_ms) info += (msg.duration_ms / 1000).toFixed(1) + "s";
-            if (msg.num_turns) info += " | " + msg.num_turns + " turns";
-            if (msg.cost) info += " | $" + msg.cost.toFixed(4);
-            if (info) {
-              agentStore.appendMessage(agentId, {
-                id: crypto.randomUUID(),
-                type: "system",
-                text: info,
-                timestamp: Date.now(),
-                animate: true,
-              });
-            }
-          }
-
-          // Store session_id for conversation resumption on reconnect
-          if (msg.session_id) {
-            agentStore.setAgentSessionId(agentId, msg.session_id);
-          }
-
-          // Auto-save conversation to history
-          autoSaveConversation(agentId, authToken);
-
-          // Auto-play TTS if enabled
-          const settings = useSettingsStore.getState();
-          if (settings.ttsEnabled && settings.ttsAutoPlay && !msg.is_error) {
-            const updatedAgent = useAgentStore.getState().agents[agentId];
-            if (updatedAgent) {
-              const lastAssistantMsg = [...updatedAgent.messages]
-                .reverse()
-                .find((m) => m.type === "assistant");
-
-              if (
-                lastAssistantMsg &&
-                lastAssistantMsg.type === "assistant" &&
-                lastAssistantMsg.text.trim()
-              ) {
-                const ttsMessageId = lastAssistantMsg.id;
-                const ttsStore = useTTSStore.getState();
-                ttsStore.setPlaybackState("loading");
-                ttsStore.setPlayingMessageId(ttsMessageId);
-
-                synthesize(
-                  lastAssistantMsg.text,
-                  settings.ttsVoice,
-                  "+0%",
-                  connectionStore.authToken
-                )
-                  .then((blob) => {
-                    if (!blob) {
-                      ttsStore.setPlaybackState("idle");
-                      ttsStore.setPlayingMessageId(null);
-                      return;
-                    }
-                    const url = URL.createObjectURL(blob);
-                    const audio = new Audio(url);
-
-                    audio.onplay = () =>
-                      useTTSStore.getState().setPlaybackState("playing");
-                    audio.onended = () => {
-                      URL.revokeObjectURL(url);
-                      useTTSStore.getState().setPlaybackState("idle");
-                      useTTSStore.getState().setPlayingMessageId(null);
-                    };
-                    audio.onerror = () => {
-                      URL.revokeObjectURL(url);
-                      useTTSStore.getState().setPlaybackState("idle");
-                      useTTSStore.getState().setPlayingMessageId(null);
-                    };
-
-                    audio.play().catch(() => {
-                      // Browser may block autoplay without recent user interaction
-                      URL.revokeObjectURL(url);
-                      useTTSStore.getState().setPlaybackState("idle");
-                      useTTSStore.getState().setPlayingMessageId(null);
-                    });
-                  })
-                  .catch(() => {
-                    useTTSStore.getState().setPlaybackState("idle");
-                    useTTSStore.getState().setPlayingMessageId(null);
-                  });
-              }
-            }
-          }
-
-          // Complete processing
-          agentStore.setProcessing(agentId, false);
-          agentStore.setInterruptPending(agentId, false);
-          const agent = agentStore.agents[agentId];
-          if (agent?.interruptTimerId) {
-            clearTimeout(agent.interruptTimerId);
-            agentStore.setInterruptTimer(agentId, null);
-          }
-          agentStore.setAgentStatus(agentId, "done");
-
-          if (agentId === agentStore.activeAgentId) {
-            connectionStore.setStatusText("Ready");
-          }
-          break;
-        }
-
-        case "error": {
-          agentStore.finalizeStreaming(agentId);
-          agentStore.appendMessage(agentId, {
-            id: crypto.randomUUID(),
-            type: "system",
-            text: "Error: " + msg.text,
-            timestamp: Date.now(),
-            animate: true,
-          });
-
-          // Toast notification for the error
-          useToastStore.getState().addToast({
-            type: "error",
-            message: msg.text,
-          });
-
-          // Complete processing with error status
-          agentStore.setProcessing(agentId, false);
-          agentStore.setInterruptPending(agentId, false);
-          const errAgent = agentStore.agents[agentId];
-          if (errAgent?.interruptTimerId) {
-            clearTimeout(errAgent.interruptTimerId);
-            agentStore.setInterruptTimer(agentId, null);
-          }
-          agentStore.setAgentStatus(agentId, "error");
-
-          if (agentId === agentStore.activeAgentId) {
-            connectionStore.setStatusText(msg.text);
-            connectionStore.setConnectionStatus("error");
-          }
-          break;
-        }
-
-        case "permission_request": {
-          if (!agentStore.agents[agentId]) break;
-          agentStore.finalizeStreaming(agentId);
-          const permMsg: AnyMessage = {
-            id: crypto.randomUUID(),
-            type: "permission_request",
-            requestId: msg.request_id,
-            tool: msg.tool,
-            input: msg.input,
-            level: msg.level,
-            reason: msg.reason,
-            status: "pending",
-            timestamp: Date.now(),
-            animate: true,
-          };
-          agentStore.appendMessage(agentId, permMsg);
-          agentStore.incrementUnread(agentId);
-          break;
-        }
-
-        // ── Computer Use messages ──
-        case "mode_changed": {
-          if (!agentStore.agents[agentId]) break;
-          agentStore.setAgentMode(agentId, msg.mode);
-          if (msg.display_info) {
-            agentStore.setDisplayInfo(agentId, msg.display_info);
-          }
-          break;
-        }
-
-        case "computer_screenshot": {
-          if (!agentStore.agents[agentId]) break;
-          agentStore.updateLastScreenshot(agentId, msg.image);
-          const screenshotMsg: ComputerScreenshotMessage = {
-            id: crypto.randomUUID(),
-            type: "computer_screenshot",
-            image: msg.image,
-            action: msg.action,
-            description: msg.description,
-            iteration: msg.iteration || 0,
-            timestamp: Date.now(),
-            animate: true,
-          };
-          agentStore.appendMessage(agentId, screenshotMsg);
-          agentStore.incrementUnread(agentId);
-          break;
-        }
-
-        case "computer_action": {
-          if (!agentStore.agents[agentId]) break;
-          const actionMsg: ComputerActionMessage = {
-            id: crypto.randomUUID(),
-            type: "computer_action",
-            tool: msg.tool,
-            action: msg.action,
-            input: msg.input,
-            description: msg.description,
-            iteration: msg.iteration || 0,
-            timestamp: Date.now(),
-            animate: true,
-          };
-          agentStore.appendMessage(agentId, actionMsg);
-          agentStore.incrementComputerIteration(agentId);
-          break;
-        }
 
         case "agent_destroyed":
-          // Handled client-side by closeAgent
           break;
 
-        case "alter_ego_changed": {
-          const egoId = msg.ego_id || "rain";
-          useSettingsStore.getState().setActiveEgoId(egoId);
+        case "alter_ego_changed":
+          useSettingsStore.getState().setActiveEgoId(msg.ego_id || "rain");
           break;
-        }
       }
     };
 
@@ -349,163 +119,131 @@ export function useWebSocket() {
     return () => ws.removeEventListener("message", handleMessage);
   }, [ws, authToken]);
 
-  // On connect, reinit agents on server (re-send API key + provider)
+  // ── On connect: reinit agents on server ──
   useEffect(() => {
     if (connectionStatus === "connected" && !notifiedRef.current) {
       notifiedRef.current = true;
       const send = useConnectionStore.getState().send;
-
-      // Re-send API key with provider/model if one was stored
       const { aiProvider, aiModel } = useSettingsStore.getState();
       const storedKey = typeof window !== "undefined"
-        ? sessionStorage.getItem(`rain-api-key-${aiProvider}`)
-        : null;
-      if (storedKey) {
-        send({ type: "set_api_key", key: storedKey, provider: aiProvider, model: aiModel });
-      }
-
-      const agentStore = useAgentStore.getState();
-      agentStore.reinitAgentsOnServer(send);
+        ? sessionStorage.getItem(`rain-api-key-${aiProvider}`) : null;
+      if (storedKey) send({ type: "set_api_key", key: storedKey, provider: aiProvider, model: aiModel });
+      useAgentStore.getState().reinitAgentsOnServer(send);
     }
-    if (connectionStatus !== "connected") {
-      notifiedRef.current = false;
-    }
+    if (connectionStatus !== "connected") notifiedRef.current = false;
   }, [connectionStatus]);
 
-  // Track connection status changes for toast notifications
+  // ── Toast on connection status change ──
   const prevStatusRef = useRef<string>(connectionStatus);
   useEffect(() => {
     const prev = prevStatusRef.current;
     prevStatusRef.current = connectionStatus;
-
     const lang = useSettingsStore.getState().language;
-
     if (connectionStatus === "disconnected" && prev === "connected") {
-      useToastStore.getState().addToast({
-        type: "warning",
-        message: translate(lang, "toast.connectionLost"),
-      });
+      useToastStore.getState().addToast({ type: "warning", message: translate(lang, "toast.connectionLost") });
     }
-
     if (connectionStatus === "connected" && (prev === "disconnected" || prev === "error")) {
-      useToastStore.getState().addToast({
-        type: "success",
-        message: translate(lang, "toast.connectionRestored"),
-      });
+      useToastStore.getState().addToast({ type: "success", message: translate(lang, "toast.connectionRestored") });
     }
   }, [connectionStatus]);
 }
 
-async function loadHistoryForAgent(
-  cwd: string,
+// ── Helpers ──
+
+/** Complete an agent turn: clear processing state, set final status. */
+function finalizeProcessing(agentId: string, status: "done" | "error") {
+  const agentStore = useAgentStore.getState();
+  agentStore.setProcessing(agentId, false);
+  agentStore.setInterruptPending(agentId, false);
+  const agent = agentStore.agents[agentId];
+  if (agent?.interruptTimerId) {
+    clearTimeout(agent.interruptTimerId);
+    agentStore.setInterruptTimer(agentId, null);
+  }
+  agentStore.setAgentStatus(agentId, status);
+}
+
+/** Try TTS auto-play for the last assistant message. */
+function maybeAutoPlayTTS(agentId: string, authToken: string | null) {
+  const settings = useSettingsStore.getState();
+  if (!settings.ttsEnabled || !settings.ttsAutoPlay) return;
+
+  const agent = useAgentStore.getState().agents[agentId];
+  if (!agent) return;
+  const lastMsg = [...agent.messages].reverse().find((m) => m.type === "assistant");
+  if (!lastMsg || lastMsg.type !== "assistant" || !lastMsg.text.trim()) return;
+
+  const ttsStore = useTTSStore.getState();
+  ttsStore.setPlaybackState("loading");
+  ttsStore.setPlayingMessageId(lastMsg.id);
+
+  const resetTTS = () => {
+    useTTSStore.getState().setPlaybackState("idle");
+    useTTSStore.getState().setPlayingMessageId(null);
+  };
+
+  synthesize(lastMsg.text, settings.ttsVoice, "+0%", authToken)
+    .then((blob) => {
+      if (!blob) { resetTTS(); return; }
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.onplay = () => useTTSStore.getState().setPlaybackState("playing");
+      audio.onended = () => { URL.revokeObjectURL(url); resetTTS(); };
+      audio.onerror = () => { URL.revokeObjectURL(url); resetTTS(); };
+      audio.play().catch(() => { URL.revokeObjectURL(url); resetTTS(); });
+    })
+    .catch(resetTTS);
+}
+
+function handleResult(
+  msg: Extract<WSReceiveMessage, { type: "result" }>,
   agentId: string,
-  authToken: string | null
+  authToken: string | null,
 ) {
-  try {
-    const data = await loadMessages(cwd, agentId, authToken);
-    const agentState = useAgentStore.getState();
-    // Mark history as loaded even if empty, to prevent future reloads
-    agentState.setHistoryLoaded(agentId, true);
-    if (!data.messages || data.messages.length === 0) return;
+  const agentStore = useAgentStore.getState();
+  agentStore.finalizeStreaming(agentId);
+  if (msg.usage) useMetricsStore.getState().updateUsageInfo(msg.usage);
 
-    const messages: AnyMessage[] = [];
-    for (const msg of data.messages) {
-      switch (msg.type) {
-        case "text":
-          messages.push({
-            id: crypto.randomUUID(),
-            type: "user",
-            text: (msg.content as { text: string }).text,
-            timestamp: msg.timestamp,
-            animate: false,
-          });
-          break;
-        case "assistant_text":
-          messages.push({
-            id: crypto.randomUUID(),
-            type: "assistant",
-            text: (msg.content as { text: string }).text,
-            isStreaming: false,
-            timestamp: msg.timestamp,
-            animate: false,
-          });
-          break;
-        case "tool_use":
-          messages.push({
-            id: crypto.randomUUID(),
-            type: "tool_use",
-            tool: (msg.content as { tool: string }).tool,
-            input: (msg.content as { input: Record<string, unknown> }).input || {},
-            toolUseId: (msg.content as { id: string }).id,
-            timestamp: msg.timestamp,
-            animate: false,
-          });
-          break;
-        case "tool_result":
-          messages.push({
-            id: crypto.randomUUID(),
-            type: "tool_result",
-            content: (msg.content as { content: string }).content,
-            isError: (msg.content as { is_error: boolean }).is_error,
-            toolUseId: (msg.content as { tool_use_id: string }).tool_use_id,
-            timestamp: msg.timestamp,
-            animate: false,
-          });
-          break;
-        case "result": {
-          const r = msg.content as {
-            cost?: number;
-            duration_ms?: number;
-            num_turns?: number;
-            session_id?: string;
-          };
-          if (r.cost != null || r.duration_ms != null) {
-            let info = "";
-            if (r.duration_ms) info += (r.duration_ms / 1000).toFixed(1) + "s";
-            if (r.num_turns) info += " | " + r.num_turns + " turns";
-            if (r.cost) info += " | $" + r.cost.toFixed(4);
-            if (info) {
-              messages.push({
-                id: crypto.randomUUID(),
-                type: "system",
-                text: info,
-                timestamp: msg.timestamp,
-                animate: false,
-              });
-            }
-          }
-          break;
-        }
-        case "error":
-          messages.push({
-            id: crypto.randomUUID(),
-            type: "system",
-            text: "Error: " + (msg.content as { text: string }).text,
-            timestamp: msg.timestamp,
-            animate: false,
-          });
-          break;
-      }
+  // Append system message with cost/duration info
+  if (msg.cost != null || msg.duration_ms != null) {
+    let info = "";
+    if (msg.duration_ms) info += (msg.duration_ms / 1000).toFixed(1) + "s";
+    if (msg.num_turns) info += " | " + msg.num_turns + " turns";
+    if (msg.cost) info += " | $" + msg.cost.toFixed(4);
+    if (info) {
+      agentStore.appendMessage(agentId, {
+        id: crypto.randomUUID(), type: "system", text: info,
+        timestamp: Date.now(), animate: true,
+      });
     }
+  }
 
-    // Safety: if user sent messages while history was loading, don't overwrite them
-    const currentAgent = useAgentStore.getState().agents[agentId];
-    if (!currentAgent || currentAgent.messages.length > 0) return;
+  if (msg.session_id) agentStore.setAgentSessionId(agentId, msg.session_id);
+  autoSaveConversation(agentId, authToken);
+  if (!msg.is_error) maybeAutoPlayTTS(agentId, authToken);
 
-    useAgentStore.getState().setMessages(agentId, messages);
+  finalizeProcessing(agentId, "done");
+  if (agentId === agentStore.activeAgentId) {
+    useConnectionStore.getState().setStatusText("Ready");
+  }
+}
 
-    // Extract session_id from the last result message for conversation resumption
-    for (let i = data.messages.length - 1; i >= 0; i--) {
-      const m = data.messages[i];
-      if (m.type === "result") {
-        const sid = (m.content as { session_id?: string }).session_id;
-        if (sid) {
-          useAgentStore.getState().setAgentSessionId(agentId, sid);
-        }
-        break;
-      }
-    }
-  } catch (err) {
-    console.warn("Failed to load history:", err);
+function handleError(
+  msg: Extract<WSReceiveMessage, { type: "error" }>,
+  agentId: string,
+) {
+  const agentStore = useAgentStore.getState();
+  agentStore.finalizeStreaming(agentId);
+  agentStore.appendMessage(agentId, {
+    id: crypto.randomUUID(), type: "system", text: "Error: " + msg.text,
+    timestamp: Date.now(), animate: true,
+  });
+  useToastStore.getState().addToast({ type: "error", message: msg.text });
+
+  finalizeProcessing(agentId, "error");
+  if (agentId === agentStore.activeAgentId) {
+    const cs = useConnectionStore.getState();
+    cs.setStatusText(msg.text);
+    cs.setConnectionStatus("error");
   }
 }

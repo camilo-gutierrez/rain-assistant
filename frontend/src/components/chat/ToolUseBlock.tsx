@@ -63,7 +63,7 @@ const ToolUseBlock = React.memo(function ToolUseBlock({ message }: Props) {
         {hasInput && (
           <button
             onClick={() => setExpanded((v) => !v)}
-            className="p-0.5 text-subtext hover:text-primary transition-colors shrink-0"
+            className="min-w-[32px] min-h-[32px] flex items-center justify-center text-subtext hover:text-primary transition-colors shrink-0 rounded-md hover:bg-surface2/60"
             aria-label={expanded ? "Collapse" : "Expand"}
           >
             {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}

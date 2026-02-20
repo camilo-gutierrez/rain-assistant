@@ -94,7 +94,7 @@ const MessageBubble = React.memo(function MessageBubble({ message }: Props) {
       {!assistantMsg.isStreaming && assistantMsg.text.trim() && (
         <button
           onClick={handleCopy}
-          className="absolute top-2 right-2 p-1 rounded-md border border-overlay bg-surface text-subtext hover:text-primary hover:border-primary transition-all opacity-0 group-hover:opacity-100 touch-visible"
+          className="absolute top-1.5 right-1.5 min-w-[32px] min-h-[32px] flex items-center justify-center rounded-md border border-overlay bg-surface text-subtext hover:text-primary hover:border-primary transition-all opacity-0 group-hover:opacity-100 touch-visible"
           aria-label="Copy"
         >
           {copied ? <Check size={14} /> : <Copy size={14} />}
@@ -108,7 +108,7 @@ const MessageBubble = React.memo(function MessageBubble({ message }: Props) {
         </div>
       ) : (
         <>
-          <div className="text-sm text-text prose prose-sm max-w-none break-words [&_pre]:bg-surface2 [&_pre]:rounded-lg [&_pre]:p-3 [&_pre]:overflow-x-auto [&_code]:font-[family-name:var(--font-jetbrains)] [&_code]:text-primary [&_pre_code]:text-text [&_a]:text-primary [&_a]:no-underline hover:[&_a]:underline [&_table]:border-overlay [&_th]:border-overlay [&_td]:border-overlay [&_blockquote]:border-l-primary/30 [&_blockquote]:text-text2">
+          <div className="text-sm text-text prose prose-sm max-w-none break-words overflow-hidden [&_pre]:bg-surface2 [&_pre]:rounded-lg [&_pre]:p-3 [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:font-[family-name:var(--font-jetbrains)] [&_code]:text-primary [&_pre_code]:text-text [&_a]:text-primary [&_a]:no-underline hover:[&_a]:underline [&_table]:border-overlay [&_th]:border-overlay [&_td]:border-overlay [&_table]:block [&_table]:overflow-x-auto [&_table]:max-w-full [&_blockquote]:border-l-primary/30 [&_blockquote]:text-text2 [&_img]:max-w-full [&_img]:h-auto">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>
               {assistantMsg.text}
             </ReactMarkdown>

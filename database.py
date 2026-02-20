@@ -7,6 +7,8 @@ from contextlib import contextmanager
 
 from cryptography.fernet import Fernet
 
+from key_manager import ensure_encryption_key
+
 DB_PATH = Path.home() / ".rain-assistant" / "conversations.db"
 CONFIG_DIR = Path.home() / ".rain-assistant"
 CONFIG_FILE = CONFIG_DIR / "config.json"
@@ -17,21 +19,9 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 # ---------------------------------------------------------------------------
 
 def _get_fernet() -> Fernet:
-    """Load or auto-generate encryption key from config.json."""
+    """Load or auto-generate encryption key via the OS keyring (with config.json fallback)."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    cfg: dict = {}
-    if CONFIG_FILE.exists():
-        try:
-            cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            pass
-
-    enc_key = cfg.get("encryption_key")
-    if not enc_key:
-        enc_key = Fernet.generate_key().decode("utf-8")
-        cfg["encryption_key"] = enc_key
-        CONFIG_FILE.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
-
+    enc_key = ensure_encryption_key(CONFIG_FILE)
     return Fernet(enc_key.encode("utf-8"))
 
 

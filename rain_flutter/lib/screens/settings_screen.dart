@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../app/l10n.dart';
 import '../models/provider_info.dart';
 import '../providers/connection_provider.dart';
+import '../providers/notification_provider.dart';
 import '../providers/settings_provider.dart';
 
 class SettingsScreen extends ConsumerWidget {
@@ -94,6 +95,41 @@ class SettingsScreen extends ConsumerWidget {
             enabled: settings.ttsEnabled,
             onChanged: notifier.setTtsVoice,
           ),
+
+          const Divider(),
+
+          // ── Voice Mode ──
+          _SectionHeader(L10n.t('settings.voiceMode', lang)),
+          _VoiceModeSelector(
+            voiceMode: settings.voiceMode,
+            lang: lang,
+            onChanged: notifier.setVoiceMode,
+          ),
+          if (settings.voiceMode != 'push-to-talk') ...[
+            _SliderTile(
+              title: L10n.t('settings.vadSensitivity', lang),
+              value: settings.vadSensitivity,
+              min: 0.3,
+              max: 0.9,
+              divisions: 12,
+              labelSuffix: '',
+              onChanged: notifier.setVadSensitivity,
+            ),
+            _SliderTile(
+              title: L10n.t('settings.silenceTimeout', lang),
+              value: settings.silenceTimeout.toDouble(),
+              min: 400,
+              max: 2000,
+              divisions: 8,
+              labelSuffix: 'ms',
+              onChanged: (v) => notifier.setSilenceTimeout(v.round()),
+            ),
+          ],
+
+          const Divider(),
+
+          // ── Notifications ──
+          _NotificationSection(lang: lang),
 
           const Divider(),
 
@@ -285,6 +321,149 @@ class _VoiceDropdown extends StatelessWidget {
             label: L10n.t('settings.ttsVoice.enMale', lang),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Notification settings section with 5 toggles.
+class _NotificationSection extends ConsumerWidget {
+  final String lang;
+  const _NotificationSection({required this.lang});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs = Theme.of(context).colorScheme;
+    final notifSettings = ref.watch(notificationSettingsProvider);
+    final notifNotifier = ref.read(notificationSettingsProvider.notifier);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _SectionHeader(L10n.t('settings.notifications', lang)),
+        SwitchListTile(
+          title: Text(L10n.t('settings.notifPermission', lang)),
+          subtitle: Text(L10n.t('settings.notifPermissionDesc', lang)),
+          secondary: Icon(Icons.shield_outlined, color: cs.primary),
+          value: notifSettings.permissionNotifications,
+          onChanged: notifNotifier.setPermissionNotifications,
+        ),
+        SwitchListTile(
+          title: Text(L10n.t('settings.notifResult', lang)),
+          secondary: const Icon(Icons.check_circle_outline),
+          value: notifSettings.resultNotifications,
+          onChanged: notifNotifier.setResultNotifications,
+        ),
+        SwitchListTile(
+          title: Text(L10n.t('settings.notifError', lang)),
+          secondary: Icon(Icons.error_outline, color: cs.error),
+          value: notifSettings.errorNotifications,
+          onChanged: notifNotifier.setErrorNotifications,
+        ),
+        SwitchListTile(
+          title: Text(L10n.t('settings.notifHaptic', lang)),
+          secondary: const Icon(Icons.vibration),
+          value: notifSettings.hapticFeedback,
+          onChanged: notifNotifier.setHapticFeedback,
+        ),
+        SwitchListTile(
+          title: Text(L10n.t('settings.notifDialog', lang)),
+          subtitle: Text(L10n.t('settings.notifDialogDesc', lang)),
+          secondary: const Icon(Icons.picture_in_picture),
+          value: notifSettings.inAppDialogs,
+          onChanged: notifNotifier.setInAppDialogs,
+        ),
+      ],
+    );
+  }
+}
+
+/// Voice mode selector using ListTiles.
+class _VoiceModeSelector extends StatelessWidget {
+  final String voiceMode;
+  final String lang;
+  final ValueChanged<String> onChanged;
+
+  const _VoiceModeSelector({
+    required this.voiceMode,
+    required this.lang,
+    required this.onChanged,
+  });
+
+  static const _modes = [
+    ('push-to-talk', Icons.touch_app, 'settings.voiceMode.pushToTalk'),
+    ('vad', Icons.graphic_eq, 'settings.voiceMode.vad'),
+    ('talk-mode', Icons.phone_in_talk, 'settings.voiceMode.talkMode'),
+    ('wake-word', Icons.hearing, 'settings.voiceMode.wakeWord'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Column(
+      children: _modes.map((m) {
+        final (value, icon, l10nKey) = m;
+        final selected = voiceMode == value;
+        return ListTile(
+          leading: Icon(
+            selected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+            color: selected ? cs.primary : cs.onSurfaceVariant,
+          ),
+          title: Row(
+            children: [
+              Icon(icon, size: 18, color: selected ? cs.primary : cs.onSurfaceVariant),
+              const SizedBox(width: 8),
+              Text(L10n.t(l10nKey, lang)),
+            ],
+          ),
+          onTap: () => onChanged(value),
+        );
+      }).toList(),
+    );
+  }
+}
+
+/// Reusable slider tile for numeric settings.
+class _SliderTile extends StatelessWidget {
+  final String title;
+  final double value;
+  final double min;
+  final double max;
+  final int divisions;
+  final String labelSuffix;
+  final ValueChanged<double> onChanged;
+
+  const _SliderTile({
+    required this.title,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.divisions,
+    required this.labelSuffix,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final displayValue = labelSuffix == 'ms'
+        ? '${value.round()}$labelSuffix'
+        : value.toStringAsFixed(2);
+    return ListTile(
+      title: Text(title),
+      subtitle: Slider(
+        value: value.clamp(min, max),
+        min: min,
+        max: max,
+        divisions: divisions,
+        label: displayValue,
+        onChanged: onChanged,
+      ),
+      trailing: Text(
+        displayValue,
+        style: TextStyle(
+          fontSize: 13,
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        ),
       ),
     );
   }

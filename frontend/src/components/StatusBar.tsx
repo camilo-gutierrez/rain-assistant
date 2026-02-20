@@ -7,7 +7,7 @@ import { useTranslation } from "@/hooks/useTranslation";
 import RateLimitBadge from "@/components/metrics/RateLimitBadge";
 import ModelSwitcher from "@/components/ModelSwitcher";
 import EgoSwitcher from "@/components/EgoSwitcher";
-import { Menu, Settings, BarChart3, Brain } from "lucide-react";
+import { Menu, Settings, BarChart3, Brain, Store } from "lucide-react";
 
 export default function StatusBar() {
   const connectionStatus = useConnectionStore((s) => s.connectionStatus);
@@ -16,6 +16,7 @@ export default function StatusBar() {
   const toggleMetrics = useUIStore((s) => s.toggleMetricsDrawer);
   const toggleSettings = useUIStore((s) => s.toggleSettingsDrawer);
   const toggleMemories = useUIStore((s) => s.toggleMemoriesDrawer);
+  const toggleMarketplace = useUIStore((s) => s.toggleMarketplaceDrawer);
   const toggleMobileSidebar = useUIStore((s) => s.toggleMobileSidebar);
   const { t } = useTranslation();
 
@@ -27,7 +28,7 @@ export default function StatusBar() {
       : "bg-subtext";
 
   return (
-    <header className="flex items-center gap-2 px-4 py-3 bg-surface shadow-sm">
+    <header className="flex items-center gap-2 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))] bg-surface shadow-sm">
       {/* Mobile hamburger */}
       <button
         onClick={toggleMobileSidebar}
@@ -65,20 +66,30 @@ export default function StatusBar() {
         <Brain size={20} />
       </button>
 
-      {/* Metrics toggle */}
+      {/* Marketplace toggle */}
+      <button
+        onClick={toggleMarketplace}
+        className="hidden md:flex min-w-[44px] min-h-[44px] items-center justify-center rounded-full hover:bg-surface2 transition-colors text-text2 hover:text-primary focus-ring"
+        aria-label={t("marketplace.title")}
+        title={t("marketplace.title")}
+      >
+        <Store size={20} />
+      </button>
+
+      {/* Metrics toggle — hidden on mobile (available in bottom nav) */}
       <button
         onClick={toggleMetrics}
-        className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full hover:bg-surface2 transition-colors text-text2 hover:text-primary focus-ring"
+        className="hidden md:flex min-w-[44px] min-h-[44px] items-center justify-center rounded-full hover:bg-surface2 transition-colors text-text2 hover:text-primary focus-ring"
         aria-label={t("btn.metricsToggle.title")}
         title={t("btn.metricsToggle.title")}
       >
         <BarChart3 size={20} />
       </button>
 
-      {/* Settings toggle */}
+      {/* Settings toggle — hidden on mobile (available in bottom nav) */}
       <button
         onClick={toggleSettings}
-        className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full hover:bg-surface2 transition-colors text-text2 hover:text-primary focus-ring"
+        className="hidden md:flex min-w-[44px] min-h-[44px] items-center justify-center rounded-full hover:bg-surface2 transition-colors text-text2 hover:text-primary focus-ring"
         aria-label={t("btn.settings.title")}
         title={t("btn.settings.title")}
       >

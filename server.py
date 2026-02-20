@@ -19,6 +19,7 @@ import httpx
 import uvicorn
 
 import database
+from key_manager import ensure_encryption_key
 
 from starlette.background import BackgroundTask
 
@@ -92,6 +93,14 @@ ensure_builtin_egos()
 
 transcriber = Transcriber(model_size="base", language="es")
 synthesizer = Synthesizer()
+
+# Voice processing (lazy — only loaded when voice features are used)
+try:
+    from voice import VoiceActivityDetector, VADEvent, WakeWordDetector, TalkSession, TalkState
+
+    VOICE_AVAILABLE = True
+except ImportError:
+    VOICE_AVAILABLE = False
 
 # ---------------------------------------------------------------------------
 # Rate limit fetching (Anthropic API headers via lightweight GET /v1/models)
@@ -188,6 +197,7 @@ WS_MAX_MSG_TYPE_LENGTH = 50              # type field
 WS_MAX_AGENT_ID_LENGTH = 100             # agent_id field
 MAX_BROWSE_PATH_LENGTH = 500             # /api/browse path
 MAX_CWD_LENGTH = 500                     # /api/messages cwd
+WS_MAX_TOOL_RESULT_WS = 500_000         # 500 KB max tool_result sent to frontend
 WS_HEARTBEAT_INTERVAL = 30              # seconds between pings
 WS_IDLE_TIMEOUT = 600                   # 10 minutes without activity → disconnect
 WS_MAX_CONCURRENT_AGENTS = 5            # max agents per connection
@@ -278,16 +288,224 @@ async def _cleanup_expired_tokens():
             print(f"  [AUTH] Cleaned up {len(expired)} expired token(s)", flush=True)
 
 
+async def _scheduler_execute_ai_prompt(task_name: str, prompt: str) -> tuple[str | None, str | None]:
+    """Execute an ai_prompt scheduled task using a temporary provider instance.
+
+    Creates a fresh provider, sends the prompt, collects the full response
+    (including any tool calls the AI may make), and tears down the provider.
+
+    Returns:
+        (result_text, error_text) -- one of them will be None.
+    """
+    import logging
+    _sched_logger = logging.getLogger("rain.scheduler")
+
+    # Load provider configuration from config
+    provider_name = config.get("default_provider", "claude")
+    provider_keys_cfg = config.get("provider_keys", {})
+    api_key = config.get("default_api_key", "")
+
+    # Resolve API key: check provider_keys first, then default_api_key
+    if isinstance(provider_keys_cfg, dict) and provider_name in provider_keys_cfg:
+        api_key = provider_keys_cfg[provider_name]
+
+    if not api_key:
+        msg = (
+            f"No API key configured for provider '{provider_name}'. "
+            "Cannot execute ai_prompt task. Set an API key in config.json "
+            "(provider_keys or default_api_key)."
+        )
+        _sched_logger.warning("[SCHEDULER] %s", msg)
+        return None, msg
+
+    provider = None
+    try:
+        provider = get_provider(provider_name)
+
+        # Use the composed system prompt for background tasks
+        system_prompt = compose_system_prompt()
+
+        # Use home directory as working directory for scheduled tasks
+        cwd = str(Path.home())
+
+        # Auto-approve GREEN tools only; deny everything else in background tasks
+        async def _scheduler_permission_callback(tool_name: str, tool_input: dict = None, _ctx=None) -> bool:
+            from tools.executor import GREEN_TOOLS
+            return tool_name in GREEN_TOOLS
+
+        await provider.initialize(
+            api_key=api_key,
+            model="auto",
+            cwd=cwd,
+            system_prompt=system_prompt,
+            can_use_tool=_scheduler_permission_callback,
+        )
+
+        # Send the prompt
+        await provider.send_message(prompt)
+
+        # Collect the full response by iterating through the stream
+        collected_text = ""
+        async for event in provider.stream_response():
+            if event.type == "assistant_text":
+                collected_text += event.data.get("text", "")
+            elif event.type == "result":
+                # Use the final result text if available (may be more complete)
+                result_text = event.data.get("text", "")
+                if result_text:
+                    collected_text = result_text
+            elif event.type == "error":
+                error_text = event.data.get("text", "Unknown provider error")
+                _sched_logger.error(
+                    "[SCHEDULER] AI prompt '%s' provider error: %s", task_name, error_text
+                )
+                return None, error_text
+
+        if not collected_text:
+            collected_text = "(empty response)"
+
+        _sched_logger.info(
+            "[SCHEDULER] AI prompt '%s' completed (%d chars)", task_name, len(collected_text)
+        )
+        return collected_text, None
+
+    except Exception as e:
+        error_msg = f"Provider error ({provider_name}): {e}"
+        _sched_logger.error("[SCHEDULER] AI prompt '%s' failed: %s", task_name, error_msg)
+        return None, error_msg
+    finally:
+        if provider:
+            try:
+                await provider.disconnect()
+            except Exception:
+                pass
+
+
+async def _scheduler_loop():
+    """Background loop for executing scheduled tasks (cron).
+
+    Checks every 30 seconds for tasks whose next_run has passed,
+    executes them, and reschedules. Supports three task types:
+
+    - reminder: logs the message and stores it as last_result
+    - bash: runs a shell command with timeout, stores stdout/stderr
+    - ai_prompt: creates a temporary AI provider, sends the prompt, collects response
+    """
+    import logging
+    _sched_logger = logging.getLogger("rain.scheduler")
+
+    while True:
+        await asyncio.sleep(30)
+        try:
+            from scheduled_tasks.storage import get_pending_tasks, mark_task_run
+            pending = get_pending_tasks()
+            for task in pending:
+                task_type = task.get("task_type", "reminder")
+                task_data = task.get("task_data", {})
+                task_name = task.get("name", "")
+                task_id = task["id"]
+                result_text: str | None = None
+                error_text: str | None = None
+
+                if task_type == "reminder":
+                    msg = task_data.get("message", task_name)
+                    result_text = msg
+                    _sched_logger.info("[SCHEDULER] Reminder: %s", msg)
+
+                elif task_type == "bash":
+                    cmd = task_data.get("command", "")
+                    if cmd:
+                        try:
+                            proc = await asyncio.create_subprocess_shell(
+                                cmd,
+                                stdout=asyncio.subprocess.PIPE,
+                                stderr=asyncio.subprocess.PIPE,
+                            )
+                            stdout, stderr = await asyncio.wait_for(
+                                proc.communicate(), timeout=60
+                            )
+                            stdout_str = stdout.decode("utf-8", errors="replace") if stdout else ""
+                            stderr_str = stderr.decode("utf-8", errors="replace") if stderr else ""
+
+                            if proc.returncode == 0:
+                                result_text = stdout_str or "(no output)"
+                                _sched_logger.info(
+                                    "[SCHEDULER] Bash '%s': exit=0, %d bytes output",
+                                    task_name, len(stdout_str),
+                                )
+                            else:
+                                error_text = (
+                                    f"exit code {proc.returncode}\n"
+                                    f"stdout: {stdout_str[:2000]}\n"
+                                    f"stderr: {stderr_str[:2000]}"
+                                )
+                                _sched_logger.error(
+                                    "[SCHEDULER] Bash '%s': exit=%d",
+                                    task_name, proc.returncode,
+                                )
+                        except asyncio.TimeoutError:
+                            error_text = "Command timed out after 60 seconds"
+                            _sched_logger.error(
+                                "[SCHEDULER] Bash '%s' timed out", task_name
+                            )
+                            try:
+                                proc.kill()
+                            except Exception:
+                                pass
+                        except Exception as e:
+                            error_text = str(e)
+                            _sched_logger.error(
+                                "[SCHEDULER] Bash '%s' failed: %s", task_name, e
+                            )
+                    else:
+                        error_text = "No command specified"
+
+                elif task_type == "ai_prompt":
+                    prompt = task_data.get("prompt", "")
+                    if prompt:
+                        _sched_logger.info(
+                            "[SCHEDULER] AI prompt '%s': executing...", task_name
+                        )
+                        try:
+                            result_text, error_text = await asyncio.wait_for(
+                                _scheduler_execute_ai_prompt(task_name, prompt),
+                                timeout=120,
+                            )
+                        except asyncio.TimeoutError:
+                            error_text = "AI prompt execution timed out after 120 seconds"
+                            _sched_logger.error(
+                                "[SCHEDULER] AI prompt '%s' timed out", task_name
+                            )
+                    else:
+                        error_text = "No prompt specified"
+
+                # Mark the task as run and store result/error
+                mark_task_run(task_id, result=result_text, error=error_text)
+
+        except ImportError:
+            pass  # croniter not installed
+        except Exception as e:
+            _sched_logger.error("[SCHEDULER] Unexpected error: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(application: FastAPI):
+    # Ensure the encryption key is in the OS keyring (auto-migrates from config.json)
+    ensure_encryption_key(CONFIG_FILE)
     database._ensure_db()
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, transcriber.load_model)
     cleanup_task = asyncio.create_task(_cleanup_expired_tokens())
+    scheduler_task = asyncio.create_task(_scheduler_loop())
     yield
     cleanup_task.cancel()
+    scheduler_task.cancel()
     try:
         await cleanup_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await scheduler_task
     except asyncio.CancelledError:
         pass
 
@@ -348,7 +566,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Per-token sliding window rate limiting for HTTP endpoints."""
 
-    _EXEMPT_PATHS = {"/", "/sw.js", "/api/auth"}
+    _EXEMPT_PATHS = {"/", "/sw.js"}
 
     async def dispatch(self, request: StarletteRequest, call_next):
         path = request.url.path
@@ -357,11 +575,18 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if path in self._EXEMPT_PATHS or path.startswith("/static"):
             return await call_next(request)
 
-        # Extract token
+        # Extract token — for unauthenticated endpoints (e.g. /api/auth),
+        # use the client IP as the rate-limit key instead of a Bearer token.
         auth_header = request.headers.get("authorization", "")
         token = auth_header[7:] if auth_header.startswith("Bearer ") else ""
         if not token:
-            return await call_next(request)
+            # For auth endpoint, rate-limit by client IP
+            category = categorize_endpoint(path)
+            if category == EndpointCategory.AUTH:
+                client_ip = request.client.host if request.client else "unknown"
+                token = f"ip:{client_ip}"
+            else:
+                return await call_next(request)
 
         category = categorize_endpoint(path)
         result = rate_limiter.check(token, category)
@@ -633,6 +858,40 @@ async def logout_all(request: Request):
         endpoint="/api/logout-all",
     )
     return {"logged_out_all": True, "tokens_revoked": count}
+
+
+# ---------------------------------------------------------------------------
+# REST: Check Claude OAuth credentials
+# ---------------------------------------------------------------------------
+
+@app.get("/api/check-oauth")
+async def check_oauth(request: Request):
+    if not verify_token(get_token(request)):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    creds_path = Path.home() / ".claude" / ".credentials.json"
+    if not creds_path.exists():
+        return JSONResponse({"available": False})
+
+    try:
+        creds = json.loads(creds_path.read_text(encoding="utf-8"))
+        oauth = creds.get("claudeAiOauth", {})
+
+        if not oauth.get("accessToken"):
+            return JSONResponse({"available": False})
+
+        # Check if token is expired
+        expires_at = oauth.get("expiresAt", 0)
+        is_expired = expires_at < (time.time() * 1000)  # expiresAt is in ms
+
+        return JSONResponse({
+            "available": True,
+            "subscriptionType": oauth.get("subscriptionType", "unknown"),
+            "rateLimitTier": oauth.get("rateLimitTier", ""),
+            "expired": is_expired,
+        })
+    except Exception:
+        return JSONResponse({"available": False})
 
 
 # ---------------------------------------------------------------------------
@@ -1079,6 +1338,106 @@ async def api_delete_alter_ego(request: Request, ego_id: str):
 
 
 # ---------------------------------------------------------------------------
+# REST API: Skills Marketplace
+# ---------------------------------------------------------------------------
+
+from marketplace import MarketplaceRegistry
+
+_marketplace: MarketplaceRegistry | None = None
+
+
+def _get_marketplace() -> MarketplaceRegistry:
+    global _marketplace
+    if _marketplace is None:
+        _marketplace = MarketplaceRegistry()
+    return _marketplace
+
+
+@app.get("/api/marketplace/skills")
+async def api_marketplace_search(request: Request, q: str = "", category: str = "",
+                                  tag: str = "", page: int = 1):
+    if not verify_token(get_token(request)):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    mp = _get_marketplace()
+    await mp.refresh_index()
+    return mp.search_skills(query=q, category=category, tag=tag, page=page)
+
+
+@app.get("/api/marketplace/skills/{skill_name}")
+async def api_marketplace_skill_info(request: Request, skill_name: str):
+    if not verify_token(get_token(request)):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    mp = _get_marketplace()
+    await mp.refresh_index()
+    info = mp.get_skill_info(skill_name)
+    if not info:
+        return JSONResponse({"error": "Skill not found"}, status_code=404)
+    installed_version = mp.get_installed_version(skill_name)
+    return {"skill": info.__dict__, "installed_version": installed_version}
+
+
+@app.get("/api/marketplace/categories")
+async def api_marketplace_categories(request: Request):
+    if not verify_token(get_token(request)):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    mp = _get_marketplace()
+    await mp.refresh_index()
+    return {"categories": [c.__dict__ for c in mp.get_categories()]}
+
+
+@app.post("/api/marketplace/install/{skill_name}")
+async def api_marketplace_install(request: Request, skill_name: str):
+    if not verify_token(get_token(request)):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    mp = _get_marketplace()
+    await mp.refresh_index()
+    result = await mp.install_skill(skill_name)
+    if result.get("error"):
+        return JSONResponse({"error": result["error"]}, status_code=400)
+    return result
+
+
+@app.delete("/api/marketplace/install/{skill_name}")
+async def api_marketplace_uninstall(request: Request, skill_name: str):
+    if not verify_token(get_token(request)):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    mp = _get_marketplace()
+    result = await mp.uninstall_skill(skill_name)
+    if result.get("error"):
+        return JSONResponse({"error": result["error"]}, status_code=400)
+    return result
+
+
+@app.get("/api/marketplace/installed")
+async def api_marketplace_installed(request: Request):
+    if not verify_token(get_token(request)):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    mp = _get_marketplace()
+    return {"skills": [s.__dict__ for s in mp.list_installed()]}
+
+
+@app.get("/api/marketplace/updates")
+async def api_marketplace_check_updates(request: Request):
+    if not verify_token(get_token(request)):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    mp = _get_marketplace()
+    await mp.refresh_index()
+    return {"updates": mp.check_updates()}
+
+
+@app.post("/api/marketplace/update/{skill_name}")
+async def api_marketplace_update(request: Request, skill_name: str):
+    if not verify_token(get_token(request)):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    mp = _get_marketplace()
+    await mp.refresh_index()
+    result = await mp.update_skill(skill_name)
+    if result.get("error"):
+        return JSONResponse({"error": result["error"]}, status_code=400)
+    return result
+
+
+# ---------------------------------------------------------------------------
 # WebSocket: Multi-agent Claude Code interaction
 # ---------------------------------------------------------------------------
 
@@ -1101,9 +1460,37 @@ async def websocket_endpoint(ws: WebSocket):
     current_ego_id: str = get_active_ego_id()
     last_activity: float = time.time()
 
+    # Sub-agent manager (initialized after send() is defined below)
+    subagent_manager = None  # type: ignore[assignment]
+
+    # ── Model Failover ──
+    # Stores API keys per provider for automatic failover.
+    # Populated from config and updated when user sets keys via WebSocket.
+    provider_keys: dict[str, str] = {}
+    _cfg_keys = config.get("provider_keys", {})
+    if isinstance(_cfg_keys, dict):
+        provider_keys.update(_cfg_keys)
+    # Ensure the default key is registered for the default provider
+    if api_key and current_provider_name:
+        provider_keys.setdefault(current_provider_name, api_key)
+
+    PROVIDER_LABELS = {"claude": "Claude", "openai": "OpenAI", "gemini": "Gemini", "ollama": "Ollama"}
+    FAILOVER_ORDER = ["claude", "openai", "gemini", "ollama"]
+
+    def get_failover_chain(failed_provider: str) -> list[str]:
+        """Return ordered list of fallback providers that have API keys configured."""
+        return [
+            p for p in FAILOVER_ORDER
+            if p != failed_provider and p in provider_keys and provider_keys[p]
+        ]
+
     # Permission request tracking
     pending_permissions: dict[str, asyncio.Event] = {}   # request_id → Event
     permission_responses: dict[str, dict] = {}            # request_id → {approved, pin}
+
+    # ── Voice state per agent ──
+    # voice_sessions: agent_id → { vad, mode, audio_buffer, audio_task }
+    voice_sessions: dict[str, dict] = {}
 
     async def send(msg: dict):
         try:
@@ -1134,6 +1521,32 @@ async def websocket_endpoint(ws: WebSocket):
             "type": "api_key_loaded",
             "provider": current_provider_name,
         })
+
+    # ── Sub-agent manager ──
+    from subagents import SubAgentManager, create_subagent_handler
+
+    def _get_subagent_provider_config() -> dict:
+        """Return current provider config for sub-agent spawning."""
+        return {
+            "api_key": api_key or "",
+            "provider_name": current_provider_name,
+            "model": current_model,
+            "compose_system_prompt": lambda: compose_system_prompt(current_ego_id),
+            "mcp_servers": None,  # Sub-agents don't get MCP by default
+            # Permission infrastructure (connection-scoped)
+            "pending_permissions": pending_permissions,
+            "permission_responses": permission_responses,
+            "send_fn": send,
+            "classify_fn": classify,
+            "get_danger_reason_fn": get_danger_reason,
+            "config": config,
+        }
+
+    subagent_manager = SubAgentManager(
+        agents=agents,
+        send_fn=send,
+        get_provider_config=_get_subagent_provider_config,
+    )
 
     def _get_active_streaming_agent() -> str | None:
         """Find the agent that currently has an active streaming task."""
@@ -1219,11 +1632,14 @@ async def websocket_endpoint(ws: WebSocket):
             )
             return PermissionResultDeny(message="Operation denied by user.")
 
-    async def stream_provider_response(provider, agent_id: str):
+    async def stream_provider_response(provider, agent_id: str, user_text: str | None = None):
         """Stream any provider's response to the frontend. Runs as a background task.
 
         All providers emit NormalizedEvent objects that map directly to
         the existing WSReceiveMessage types, so the frontend needs no changes.
+
+        If streaming fails and failover providers are available, automatically
+        re-initializes with the next provider and replays the user message.
         """
         agent = agents.get(agent_id)
         if not agent:
@@ -1254,7 +1670,11 @@ async def websocket_endpoint(ws: WebSocket):
                     flush_text()
                     if cwd:
                         database.save_message(cwd, "tool", "tool_result", event.data, agent_id=agent_id)
-                    await send({"type": "tool_result", "agent_id": agent_id, **event.data})
+                    # Truncate large content (e.g. base64 screenshots) to avoid WebSocket overflow
+                    ws_data = {**event.data}
+                    if len(ws_data.get("content", "")) > WS_MAX_TOOL_RESULT_WS:
+                        ws_data["content"] = ws_data["content"][:WS_MAX_TOOL_RESULT_WS] + "\n... [truncated for display]"
+                    await send({"type": "tool_result", "agent_id": agent_id, **ws_data})
 
                 elif event.type == "model_info":
                     await send({"type": "model_info", "agent_id": agent_id, **event.data})
@@ -1282,7 +1702,71 @@ async def websocket_endpoint(ws: WebSocket):
             flush_text()
         except Exception as e:
             flush_text()
-            await send({"type": "error", "agent_id": agent_id, "text": str(e)})
+            # ── Streaming failover ──
+            # If we have fallback providers and a user message to replay, try them.
+            failed_name = agent.get("provider_name", current_provider_name)
+            fallbacks = get_failover_chain(failed_name)
+            if user_text and fallbacks and cwd:
+                for fb_name in fallbacks:
+                    fb_label = PROVIDER_LABELS.get(fb_name, fb_name)
+                    try:
+                        await send({
+                            "type": "status", "agent_id": agent_id,
+                            "text": f"Provider error. Failing over to {fb_label}...",
+                        })
+                        fb_provider = get_provider(fb_name)
+                        await fb_provider.initialize(
+                            api_key=provider_keys[fb_name],
+                            model="auto",
+                            cwd=cwd,
+                            system_prompt=compose_system_prompt(current_ego_id),
+                            can_use_tool=can_use_tool_callback if fb_name == "claude" else tool_permission_callback,
+                            mcp_servers=mcp_servers if fb_name == "claude" else None,
+                        )
+                        # Update agent with new provider
+                        agents[agent_id]["provider"] = fb_provider
+                        agents[agent_id]["provider_name"] = fb_name
+                        await fb_provider.send_message(user_text)
+                        await send({
+                            "type": "status", "agent_id": agent_id,
+                            "text": f"Failover active: now using {fb_label}",
+                        })
+                        # Stream from failover provider (no further failover)
+                        async for event in fb_provider.stream_response():
+                            if event.type == "assistant_text":
+                                accumulated_text += event.data.get("text", "")
+                                await send({"type": "assistant_text", "agent_id": agent_id, **event.data})
+                            elif event.type == "tool_use":
+                                flush_text()
+                                if cwd:
+                                    database.save_message(cwd, "tool", "tool_use", event.data, agent_id=agent_id)
+                                await send({"type": "tool_use", "agent_id": agent_id, **event.data})
+                            elif event.type == "tool_result":
+                                flush_text()
+                                if cwd:
+                                    database.save_message(cwd, "tool", "tool_result", event.data, agent_id=agent_id)
+                                ws_data = {**event.data}
+                                if len(ws_data.get("content", "")) > WS_MAX_TOOL_RESULT_WS:
+                                    ws_data["content"] = ws_data["content"][:WS_MAX_TOOL_RESULT_WS] + "\n... [truncated for display]"
+                                await send({"type": "tool_result", "agent_id": agent_id, **ws_data})
+                            elif event.type == "result":
+                                flush_text()
+                                if cwd:
+                                    database.save_message(cwd, "assistant", "result", event.data, agent_id=agent_id)
+                                await send({"type": "result", "agent_id": agent_id, **event.data})
+                            elif event.type == "status":
+                                await send({"type": "status", "agent_id": agent_id, **event.data})
+                            elif event.type == "error":
+                                flush_text()
+                                await send({"type": "error", "agent_id": agent_id, **event.data})
+                        flush_text()
+                        return  # Failover succeeded
+                    except Exception:
+                        continue
+                # All failovers failed
+                await send({"type": "error", "agent_id": agent_id, "text": f"All providers failed. Original error: {e}"})
+            else:
+                await send({"type": "error", "agent_id": agent_id, "text": str(e)})
 
     async def cancel_agent_streaming(agent_id: str):
         """Cancel the streaming task for a specific agent."""
@@ -1319,13 +1803,24 @@ async def websocket_endpoint(ws: WebSocket):
             executor.release_all()
 
     async def destroy_agent(agent_id: str):
-        """Fully disconnect and remove an agent."""
+        """Fully disconnect and remove an agent (and its sub-agents)."""
+        # First, clean up any sub-agents spawned by this agent
+        if subagent_manager:
+            await subagent_manager.cleanup_children(agent_id)
+
         await cancel_agent_streaming(agent_id)
         await cancel_computer_use_task(agent_id)
         agent = agents.pop(agent_id, None)
         if agent and agent.get("provider"):
+            provider = agent["provider"]
+            # Release browser page for this agent via the ToolExecutor
+            if hasattr(provider, '_tool_executor') and provider._tool_executor:
+                try:
+                    await provider._tool_executor.cleanup()
+                except Exception:
+                    pass
             try:
-                await agent["provider"].disconnect()
+                await provider.disconnect()
             except Exception:
                 pass
 
@@ -1659,18 +2154,30 @@ async def websocket_endpoint(ws: WebSocket):
 
             # ---- Set API key (global, not per-agent) ----
             if msg_type == "set_api_key":
-                key = data.get("key", "").strip()
-                if not key:
-                    await send({"type": "error", "agent_id": agent_id, "text": "API key is required."})
-                    continue
-                if len(key) > WS_MAX_KEY_LENGTH:
-                    await send({"type": "error", "agent_id": agent_id, "text": "API key too long."})
-                    continue
-                api_key = key
-                current_provider_name = data.get("provider", "claude")
-                current_model = data.get("model", "auto")
-                provider_label = {"claude": "Claude", "openai": "OpenAI", "gemini": "Gemini"}.get(current_provider_name, current_provider_name)
-                await send({"type": "status", "agent_id": agent_id, "text": f"API key set for {provider_label}."})
+                auth_mode = data.get("auth_mode", "api_key")
+
+                if auth_mode == "oauth":
+                    # Personal account mode — no API key needed, SDK uses ~/.claude/.credentials.json
+                    api_key = ""
+                    current_provider_name = "claude"
+                    current_model = data.get("model", "auto")
+                    await send({"type": "api_key_loaded", "provider": "claude"})
+                    await send({"type": "status", "agent_id": agent_id, "text": "Using personal Claude account (Max/Pro)."})
+                else:
+                    key = data.get("key", "").strip()
+                    if not key:
+                        await send({"type": "error", "agent_id": agent_id, "text": "API key is required."})
+                        continue
+                    if len(key) > WS_MAX_KEY_LENGTH:
+                        await send({"type": "error", "agent_id": agent_id, "text": "API key too long."})
+                        continue
+                    api_key = key
+                    current_provider_name = data.get("provider", "claude")
+                    current_model = data.get("model", "auto")
+                    # Store key for failover
+                    provider_keys[current_provider_name] = key
+                    provider_label = PROVIDER_LABELS.get(current_provider_name, current_provider_name)
+                    await send({"type": "status", "agent_id": agent_id, "text": f"API key set for {provider_label}."})
 
             # ---- Set transcription language ----
             elif msg_type == "set_transcription_lang":
@@ -1683,6 +2190,12 @@ async def websocket_endpoint(ws: WebSocket):
             elif msg_type == "set_cwd":
                 new_cwd = data.get("path", "")
 
+                # Accept model/provider overrides from frontend
+                if data.get("model"):
+                    current_model = data["model"]
+                if data.get("provider"):
+                    current_provider_name = data["provider"]
+
                 if len(new_cwd) > WS_MAX_PATH_LENGTH:
                     await send({"type": "error", "agent_id": agent_id, "text": "Path too long."})
                     continue
@@ -1693,8 +2206,11 @@ async def websocket_endpoint(ws: WebSocket):
                     await send({"type": "error", "agent_id": agent_id, "text": f"Not a directory: {new_cwd}"})
                     continue
 
-                # ── 6d. Max concurrent agents ──
-                if agent_id not in agents and len(agents) >= WS_MAX_CONCURRENT_AGENTS:
+                # ── 6d. Max concurrent agents (exclude sub-agents) ──
+                regular_count = sum(
+                    1 for a in agents.values() if not a.get("is_subagent")
+                )
+                if agent_id not in agents and regular_count >= WS_MAX_CONCURRENT_AGENTS:
                     await send({
                         "type": "error", "agent_id": agent_id,
                         "text": f"Max {WS_MAX_CONCURRENT_AGENTS} concurrent agents reached. Close one first.",
@@ -1723,6 +2239,13 @@ async def websocket_endpoint(ws: WebSocket):
                         "search_files": "Glob", "grep_search": "Grep",
                         "write_file": "Write", "edit_file": "Edit",
                         "bash": "Bash",
+                        "browser_navigate": "browser_navigate",
+                        "browser_screenshot": "browser_screenshot",
+                        "browser_click": "browser_click",
+                        "browser_type": "browser_type",
+                        "browser_extract_text": "browser_extract_text",
+                        "browser_scroll": "browser_scroll",
+                        "browser_close": "browser_close",
                     }
                     classifier_name = tool_map.get(tool_name, tool_name)
                     level = classify(classifier_name, tool_input)
@@ -1769,24 +2292,61 @@ async def websocket_endpoint(ws: WebSocket):
 
                     return approved
 
-                # Create provider via factory
-                provider = get_provider(current_provider_name)
-                try:
-                    await provider.initialize(
-                        api_key=api_key or "",
-                        model=current_model,
+                # Create provider via factory — with automatic failover
+                async def _try_init_provider(prov_name: str, prov_key: str) -> tuple:
+                    """Try to initialize a provider. Returns (provider, prov_name) or raises."""
+                    prov = get_provider(prov_name)
+                    await prov.initialize(
+                        api_key=prov_key,
+                        model=current_model if prov_name == current_provider_name else "auto",
                         cwd=resolved_cwd,
                         system_prompt=compose_system_prompt(current_ego_id),
-                        can_use_tool=can_use_tool_callback if current_provider_name == "claude" else tool_permission_callback,
-                        resume_session_id=resume_session_id if provider.supports_session_resumption() else None,
-                        mcp_servers=mcp_servers if current_provider_name == "claude" else None,
+                        can_use_tool=can_use_tool_callback if prov_name == "claude" else tool_permission_callback,
+                        resume_session_id=resume_session_id if prov.supports_session_resumption() else None,
+                        mcp_servers=mcp_servers if prov_name == "claude" else None,
+                        agent_id=agent_id,
                     )
-                except Exception as e:
-                    await send({"type": "error", "agent_id": agent_id, "text": f"Provider init failed: {e}"})
-                    continue
+                    return prov, prov_name
+
+                init_provider_name = current_provider_name
+                provider = None
+                try:
+                    provider, init_provider_name = await _try_init_provider(
+                        current_provider_name, api_key or ""
+                    )
+                except Exception as primary_err:
+                    # Try failover providers
+                    fallbacks = get_failover_chain(current_provider_name)
+                    failover_succeeded = False
+                    for fb_name in fallbacks:
+                        fb_label = PROVIDER_LABELS.get(fb_name, fb_name)
+                        try:
+                            await send({
+                                "type": "status", "agent_id": agent_id,
+                                "text": f"Primary provider failed. Trying {fb_label}...",
+                            })
+                            provider, init_provider_name = await _try_init_provider(
+                                fb_name, provider_keys[fb_name]
+                            )
+                            failover_succeeded = True
+                            await send({
+                                "type": "status", "agent_id": agent_id,
+                                "text": f"Failover: switched to {fb_label}",
+                            })
+                            break
+                        except Exception:
+                            continue
+
+                    if not failover_succeeded:
+                        await send({
+                            "type": "error", "agent_id": agent_id,
+                            "text": f"Provider init failed: {primary_err} (no fallback available)",
+                        })
+                        continue
 
                 agents[agent_id] = {
                     "provider": provider,
+                    "provider_name": init_provider_name,
                     "cwd": resolved_cwd,
                     "streaming_task": None,
                     # Computer Use fields
@@ -1795,7 +2355,12 @@ async def websocket_endpoint(ws: WebSocket):
                     "computer_task": None,
                 }
 
-                provider_label = {"claude": "Claude", "openai": "OpenAI", "gemini": "Gemini"}.get(current_provider_name, current_provider_name)
+                # Inject sub-agent handler into the provider's ToolExecutor
+                if hasattr(provider, '_tool_executor') and provider._tool_executor:
+                    sa_handler = create_subagent_handler(subagent_manager, agent_id)
+                    provider._tool_executor._handlers["manage_subagents"] = sa_handler
+
+                provider_label = PROVIDER_LABELS.get(init_provider_name, init_provider_name)
                 await send({
                     "type": "status",
                     "agent_id": agent_id,
@@ -1851,7 +2416,7 @@ async def websocket_endpoint(ws: WebSocket):
                     provider = agent["provider"]
                     await provider.send_message(text)
                     task = asyncio.create_task(
-                        stream_provider_response(provider, agent_id)
+                        stream_provider_response(provider, agent_id, user_text=text)
                     )
                     agents[agent_id]["streaming_task"] = task
                 except Exception as e:
@@ -2014,6 +2579,216 @@ async def websocket_endpoint(ws: WebSocket):
                 })
 
             # ---- Permission response from frontend ----
+            # ── Voice: set voice mode ──
+            elif msg_type == "voice_mode_set":
+                mode = data.get("mode", "push-to-talk")
+                if mode not in ("push-to-talk", "vad", "talk-mode", "wake-word"):
+                    await send({"type": "error", "agent_id": agent_id, "text": "Invalid voice mode."})
+                    continue
+                if mode != "push-to-talk" and not VOICE_AVAILABLE:
+                    await send({
+                        "type": "error", "agent_id": agent_id,
+                        "text": "Voice features unavailable. Install with: pip install rain-assistant[voice]",
+                    })
+                    continue
+
+                # Initialize or update voice session for this agent
+                vs = voice_sessions.get(agent_id)
+                if vs and vs.get("audio_task") and not vs["audio_task"].done():
+                    vs["audio_task"].cancel()
+
+                if mode == "push-to-talk":
+                    voice_sessions.pop(agent_id, None)
+                else:
+                    vs_data: dict = {
+                        "mode": mode,
+                        "vad": VoiceActivityDetector(
+                            threshold=data.get("vad_threshold", 0.5),
+                            min_silence_ms=data.get("silence_timeout", 800),
+                        ),
+                        "audio_buffer": bytearray(),
+                        "is_recording": False,
+                        "audio_task": None,
+                        "wake_active": False,
+                    }
+                    if mode == "wake-word":
+                        vs_data["wake_word"] = WakeWordDetector()
+                        vs_data["wake_active"] = False  # waiting for wake word
+                    voice_sessions[agent_id] = vs_data
+
+                await send({
+                    "type": "voice_mode_changed", "agent_id": agent_id,
+                    "mode": mode,
+                })
+
+            # ── Voice: process audio chunk ──
+            elif msg_type == "audio_chunk":
+                vs = voice_sessions.get(agent_id)
+                if not vs or not VOICE_AVAILABLE:
+                    continue
+
+                import base64
+                try:
+                    pcm_data = base64.b64decode(data.get("data", ""))
+                except Exception:
+                    continue
+
+                if len(pcm_data) == 0:
+                    continue
+
+                vad: VoiceActivityDetector = vs["vad"]
+                chunk_size = VoiceActivityDetector.CHUNK_SAMPLES * 2  # 1024 bytes
+
+                # ── Wake word gate: if in wake-word mode, check wake word first ──
+                wake_detector = vs.get("wake_word")
+                if wake_detector and not vs.get("wake_active"):
+                    ww_chunk_size = WakeWordDetector.FRAME_SAMPLES * 2  # 2560 bytes
+                    vs["ww_buffer"] = vs.get("ww_buffer", bytearray())
+                    vs["ww_buffer"].extend(pcm_data)
+                    while len(vs["ww_buffer"]) >= ww_chunk_size:
+                        ww_chunk = bytes(vs["ww_buffer"][:ww_chunk_size])
+                        vs["ww_buffer"] = vs["ww_buffer"][ww_chunk_size:]
+                        detected, confidence = wake_detector.process_chunk(ww_chunk)
+                        if detected:
+                            vs["wake_active"] = True
+                            await send({
+                                "type": "wake_word_detected",
+                                "agent_id": agent_id,
+                                "confidence": round(confidence, 3),
+                            })
+                            break
+                    if not vs.get("wake_active"):
+                        continue  # Still waiting for wake word, skip VAD
+
+                # Process audio in VAD-sized chunks
+                vs["audio_buffer_raw"] = vs.get("audio_buffer_raw", bytearray())
+                vs["audio_buffer_raw"].extend(pcm_data)
+
+                while len(vs["audio_buffer_raw"]) >= chunk_size:
+                    chunk = bytes(vs["audio_buffer_raw"][:chunk_size])
+                    vs["audio_buffer_raw"] = vs["audio_buffer_raw"][chunk_size:]
+
+                    event = vad.process_chunk(chunk)
+
+                    if event == VADEvent.SPEECH_START:
+                        vs["is_recording"] = True
+                        vs["audio_buffer"] = bytearray(chunk)
+                        await send({
+                            "type": "vad_event", "agent_id": agent_id,
+                            "event": "speech_start",
+                        })
+
+                    elif event == VADEvent.SPEECH_ONGOING and vs["is_recording"]:
+                        vs["audio_buffer"].extend(chunk)
+
+                    elif event == VADEvent.SPEECH_END and vs["is_recording"]:
+                        vs["audio_buffer"].extend(chunk)
+                        vs["is_recording"] = False
+                        await send({
+                            "type": "vad_event", "agent_id": agent_id,
+                            "event": "speech_end",
+                        })
+
+                        # Transcribe the accumulated speech
+                        audio_bytes = bytes(vs["audio_buffer"])
+                        vs["audio_buffer"] = bytearray()
+
+                        async def _transcribe_voice(ab: bytes, aid: str):
+                            """Save PCM buffer to temp WAV and transcribe."""
+                            import struct
+                            import wave
+
+                            tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+                            try:
+                                with wave.open(tmp.name, "wb") as wf:
+                                    wf.setnchannels(1)
+                                    wf.setsampwidth(2)
+                                    wf.setframerate(16000)
+                                    wf.writeframes(ab)
+                                loop = asyncio.get_event_loop()
+                                text = await loop.run_in_executor(
+                                    None, transcriber.transcribe, tmp.name
+                                )
+                                if text and text.strip():
+                                    await send({
+                                        "type": "voice_transcription",
+                                        "agent_id": aid,
+                                        "text": text.strip(),
+                                        "is_final": True,
+                                    })
+                                else:
+                                    await send({
+                                        "type": "vad_event", "agent_id": aid,
+                                        "event": "no_speech",
+                                    })
+                            except Exception as exc:
+                                await send({
+                                    "type": "error", "agent_id": aid,
+                                    "text": f"Transcription error: {exc}",
+                                })
+                            finally:
+                                try:
+                                    os.unlink(tmp.name)
+                                except OSError:
+                                    pass
+
+                        vs["audio_task"] = asyncio.create_task(
+                            _transcribe_voice(audio_bytes, agent_id)
+                        )
+
+            # ── Voice: talk mode start/stop ──
+            elif msg_type == "talk_mode_start":
+                if not VOICE_AVAILABLE:
+                    await send({
+                        "type": "error", "agent_id": agent_id,
+                        "text": "Voice features unavailable. Install with: pip install rain-assistant[voice]",
+                    })
+                    continue
+                # Initialize talk session with VAD
+                vs = voice_sessions.get(agent_id)
+                if not vs:
+                    voice_sessions[agent_id] = {
+                        "mode": "talk-mode",
+                        "vad": VoiceActivityDetector(),
+                        "audio_buffer": bytearray(),
+                        "is_recording": False,
+                        "audio_task": None,
+                        "talk_active": True,
+                    }
+                else:
+                    vs["mode"] = "talk-mode"
+                    vs["talk_active"] = True
+                await send({
+                    "type": "talk_state_changed", "agent_id": agent_id,
+                    "state": "listening",
+                })
+
+            elif msg_type == "talk_mode_stop":
+                vs = voice_sessions.get(agent_id)
+                if vs:
+                    vs["talk_active"] = False
+                    vs["is_recording"] = False
+                    vs["audio_buffer"] = bytearray()
+                    vs["vad"].reset()
+                    if vs.get("audio_task") and not vs["audio_task"].done():
+                        vs["audio_task"].cancel()
+                await send({
+                    "type": "talk_state_changed", "agent_id": agent_id,
+                    "state": "idle",
+                })
+
+            # ── Voice: interruption (user speaks during TTS) ──
+            elif msg_type == "talk_interruption":
+                vs = voice_sessions.get(agent_id)
+                if vs and vs.get("talk_active"):
+                    vs["is_recording"] = False
+                    vs["audio_buffer"] = bytearray()
+                    vs["vad"].reset()
+                    await send({
+                        "type": "talk_state_changed", "agent_id": agent_id,
+                        "state": "listening",
+                    })
+
             elif msg_type == "permission_response":
                 request_id = data.get("request_id", "")
                 if request_id in pending_permissions:
@@ -2040,6 +2815,17 @@ async def websocket_endpoint(ws: WebSocket):
             await heartbeat_task
         except asyncio.CancelledError:
             pass
+
+        # Cleanup voice sessions
+        for vs in voice_sessions.values():
+            task = vs.get("audio_task")
+            if task and not task.done():
+                task.cancel()
+        voice_sessions.clear()
+
+        # Cleanup all sub-agents first
+        if subagent_manager:
+            await subagent_manager.cleanup_all()
 
         # Cleanup all agents on disconnect
         for aid in list(agents.keys()):
@@ -2138,15 +2924,16 @@ def _run_setup_wizard(force: bool = False):
     print("    1 = Claude (Anthropic)", flush=True)
     print("    2 = OpenAI", flush=True)
     print("    3 = Gemini (Google)", flush=True)
+    print("    4 = Ollama (Local)", flush=True)
     print("    Enter = Saltar (configura en la web despues)", flush=True)
     print(flush=True)
 
     try:
-        choice = input("  Elige [1/2/3/Enter]: ").strip()
+        choice = input("  Elige [1/2/3/4/Enter]: ").strip()
     except (EOFError, KeyboardInterrupt):
         choice = ""
 
-    provider_map = {"1": "claude", "2": "openai", "3": "gemini"}
+    provider_map = {"1": "claude", "2": "openai", "3": "gemini", "4": "ollama"}
     provider = provider_map.get(choice)
 
     if provider:
@@ -2154,11 +2941,16 @@ def _run_setup_wizard(force: bool = False):
             "claude": "API Key de Claude (sk-ant-...)",
             "openai": "API Key de OpenAI (sk-...)",
             "gemini": "API Key de Gemini",
+            "ollama": "URL de Ollama (Enter = http://localhost:11434)",
         }
         try:
             api_key_input = input(f"  {key_labels[provider]}: ").strip()
         except (EOFError, KeyboardInterrupt):
             api_key_input = ""
+
+        # For Ollama, empty input means use default localhost URL
+        if not api_key_input and provider == "ollama":
+            api_key_input = "http://localhost:11434"
 
         if api_key_input:
             CONFIG_DIR.mkdir(parents=True, exist_ok=True)

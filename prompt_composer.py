@@ -6,8 +6,12 @@ and telegram_bot.py call compose_system_prompt() instead of using a hardcoded
 constant.
 """
 
+import logging
+
 from alter_egos.storage import load_ego, get_active_ego_id, ensure_builtin_egos
-from memories.storage import load_memories as _load_memories
+from memories.storage import load_memories as _load_memories, search_memories as _search_memories, embeddings_available
+
+logger = logging.getLogger(__name__)
 
 # Fallback system prompt (used only if all else fails)
 _FALLBACK_PROMPT = (
@@ -23,6 +27,7 @@ _FALLBACK_PROMPT = (
 def compose_system_prompt(
     ego_id: str | None = None,
     memories: list[dict] | None = None,
+    user_message: str | None = None,
 ) -> str:
     """
     Build the final system prompt.
@@ -30,6 +35,9 @@ def compose_system_prompt(
     Args:
         ego_id: Alter ego ID to use. If None, uses the globally active ego.
         memories: List of memory dicts. If None, loads from disk.
+        user_message: The current user message. When provided and embeddings are
+            available, only the most relevant memories (top 10) are included
+            instead of all memories.
 
     Returns:
         Complete system prompt string = ego.system_prompt + formatted memories.
@@ -46,9 +54,20 @@ def compose_system_prompt(
     else:
         prompt = _FALLBACK_PROMPT
 
-    # Resolve memories
+    # Resolve memories — use semantic search when possible
     if memories is None:
-        memories = _load_memories()
+        if user_message and embeddings_available():
+            # Semantic search: pick the most relevant memories for this message
+            try:
+                memories = _search_memories(user_message, top_k=10)
+                # Strip internal _score key before including in prompt
+                memories = [{k: v for k, v in m.items() if k != "_score"} for m in memories]
+            except Exception as e:
+                logger.warning("Semantic memory search failed, loading all: %s", e)
+                memories = _load_memories()
+        else:
+            # No user message or no embeddings — include all memories
+            memories = _load_memories()
 
     if memories:
         prompt += "\n\n## User Memories & Preferences\n"
@@ -58,5 +77,25 @@ def compose_system_prompt(
             content = m.get("content", "")
             if content:
                 prompt += f"- [{category}] {content}\n"
+
+    # Inject relevant document chunks (RAG)
+    if user_message:
+        try:
+            from documents.storage import search_documents
+            doc_results = search_documents(user_message, top_k=5)
+            if doc_results:
+                prompt += "\n\n## Relevant Document Context\n"
+                prompt += "The following excerpts from the user's documents may be relevant:\n"
+                for chunk in doc_results:
+                    doc_name = chunk.get("doc_name", "unknown")
+                    content = chunk.get("content", "")
+                    idx = chunk.get("chunk_index", 0)
+                    total = chunk.get("total_chunks", 1)
+                    if content:
+                        prompt += f"\n--- [{doc_name}, chunk {idx + 1}/{total}] ---\n{content}\n"
+        except ImportError:
+            pass  # documents module not available
+        except Exception as e:
+            logger.warning("Document search failed: %s", e)
 
     return prompt

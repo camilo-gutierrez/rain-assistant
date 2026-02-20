@@ -83,7 +83,7 @@ export default function HistorySidebar({ mode }: HistorySidebarProps) {
           </div>
           <button
             onClick={toggleMobileSidebar}
-            className="min-w-[36px] min-h-[36px] flex items-center justify-center rounded-xl hover:bg-surface2 transition-colors text-text2 hover:text-text focus-ring"
+            className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl hover:bg-surface2 transition-colors text-text2 hover:text-text focus-ring"
             aria-label="Close"
           >
             <X size={18} />
@@ -168,7 +168,7 @@ export default function HistorySidebar({ mode }: HistorySidebarProps) {
       )}
       <div
         ref={drawerRef}
-        className={`fixed top-0 left-0 h-full w-80 max-w-[85vw] bg-surface z-50 flex flex-col shadow-lg transition-transform duration-300 ${
+        className={`fixed top-0 left-0 h-full w-80 max-w-[85vw] bg-surface z-50 flex flex-col shadow-lg transition-transform duration-300 pl-[env(safe-area-inset-left)] ${
           mobileSidebarOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >

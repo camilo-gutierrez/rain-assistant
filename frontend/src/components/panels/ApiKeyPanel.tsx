@@ -13,7 +13,7 @@ import {
 } from "@/lib/types";
 import { Eye, EyeOff, Key } from "lucide-react";
 
-const PROVIDERS: AIProvider[] = ["claude", "openai", "gemini"];
+const PROVIDERS: AIProvider[] = ["claude", "openai", "gemini", "ollama"];
 
 function getStorageKey(provider: AIProvider) {
   return `rain-api-key-${provider}`;
@@ -79,11 +79,16 @@ export default function ApiKeyPanel() {
     setAIModel(firstModel);
   };
 
+  const isOllama = aiProvider === "ollama";
+
   const handleConnect = () => {
     const key = apiKey.trim();
-    if (!key) return;
-    sessionStorage.setItem(getStorageKey(aiProvider), key);
-    send({ type: "set_api_key", key, provider: aiProvider, model: aiModel });
+    // For Ollama, empty key is valid (defaults to localhost:11434)
+    if (!key && !isOllama) return;
+    const effectiveKey = key || (isOllama ? "http://localhost:11434" : "");
+    if (!effectiveKey) return;
+    sessionStorage.setItem(getStorageKey(aiProvider), effectiveKey);
+    send({ type: "set_api_key", key: effectiveKey, provider: aiProvider, model: aiModel });
     setUsingApiKey(true);
     setCurrentProvider(aiProvider);
     addToast({ type: "success", message: t("toast.connectSuccess") });
@@ -195,7 +200,7 @@ export default function ApiKeyPanel() {
 
         <button
           onClick={handleConnect}
-          disabled={!apiKey.trim()}
+          disabled={!apiKey.trim() && !isOllama}
           className="w-full min-h-[44px] py-3 rounded-lg text-sm font-semibold bg-primary text-on-primary transition-all disabled:opacity-40 disabled:cursor-not-allowed hover:bg-primary-dark shadow-sm focus-ring"
         >
           {t("apiKey.connect")}

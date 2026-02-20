@@ -72,6 +72,13 @@ class AgentNotifier extends StateNotifier<AgentState> {
     state = state.copyWith(agents: newAgents, activeAgentId: newActive);
   }
 
+  void renameAgent(String agentId, String newLabel) {
+    final agent = state.agents[agentId];
+    if (agent == null) return;
+    agent.label = newLabel;
+    _notify();
+  }
+
   void setAgentCwd(String agentId, String cwd) {
     final agent = state.agents[agentId];
     if (agent == null) return;

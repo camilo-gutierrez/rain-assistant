@@ -78,6 +78,26 @@ export interface ComputerActionMessage extends BaseMessage {
   iteration: number;
 }
 
+// === Sub-Agent Messages ===
+export interface SubAgentMessage extends BaseMessage {
+  type: "subagent_event";
+  subAgentId: string;
+  shortName: string;
+  eventType: "spawned" | "completed" | "text" | "tool" | "error";
+  content: string;
+  status?: "running" | "completed" | "error" | "cancelled";
+  task?: string;
+}
+
+// === Sub-Agent Info ===
+export interface SubAgentInfo {
+  id: string;
+  shortName: string;
+  parentId: string;
+  task: string;
+  status: "running" | "completed" | "error" | "cancelled";
+}
+
 export type AnyMessage =
   | UserMessage
   | AssistantMessage
@@ -86,7 +106,8 @@ export type AnyMessage =
   | ToolResultMessage
   | PermissionRequestMessage
   | ComputerScreenshotMessage
-  | ComputerActionMessage;
+  | ComputerActionMessage
+  | SubAgentMessage;
 
 // === Agent ===
 export type AgentPanel = "fileBrowser" | "chat";
@@ -113,6 +134,8 @@ export interface Agent {
   displayInfo: DisplayInfo | null;
   lastScreenshot: string | null;
   computerIteration: number;
+  // Sub-agents
+  subAgents: SubAgentInfo[];
 }
 
 // === Rate Limits ===
@@ -164,7 +187,13 @@ export type WSSendMessage =
   | { type: "set_mode"; agent_id: string; mode: AgentMode }
   | { type: "emergency_stop"; agent_id: string }
   | { type: "set_alter_ego"; ego_id: string }
-  | { type: "pong" };
+  | { type: "pong" }
+  // Voice
+  | { type: "voice_mode_set"; mode: VoiceMode; agent_id: string; vad_threshold?: number; silence_timeout?: number }
+  | { type: "audio_chunk"; data: string; agent_id: string }
+  | { type: "talk_mode_start"; agent_id: string }
+  | { type: "talk_mode_stop"; agent_id: string }
+  | { type: "talk_interruption"; agent_id: string };
 
 // === WebSocket Receive Messages ===
 export type WSReceiveMessage =
@@ -201,10 +230,19 @@ export type WSReceiveMessage =
   | { type: "computer_action"; agent_id: string; tool: string; action: string; input: Record<string, unknown>; description: string; iteration: number }
   | { type: "ping"; ts: number }
   | { type: "api_key_loaded"; provider: AIProvider }
-  | { type: "alter_ego_changed"; ego_id: string; agent_id: string };
+  | { type: "alter_ego_changed"; ego_id: string; agent_id: string }
+  | { type: "subagent_spawned"; agent_id: string; parent_agent_id: string; short_name: string; task: string }
+  | { type: "subagent_completed"; agent_id: string; parent_agent_id: string; status: string; result_preview?: string }
+  // Voice
+  | { type: "vad_event"; agent_id: string; event: "speech_start" | "speech_end" | "silence" | "no_speech" }
+  | { type: "wake_word_detected"; agent_id: string; confidence: number }
+  | { type: "talk_state_changed"; agent_id: string; state: VoiceState }
+  | { type: "voice_transcription"; agent_id: string; text: string; is_final: boolean }
+  | { type: "voice_mode_changed"; agent_id: string; mode: VoiceMode }
+  | { type: "partial_transcription"; agent_id: string; text: string; is_final: boolean };
 
 // === AI Provider ===
-export type AIProvider = "claude" | "openai" | "gemini";
+export type AIProvider = "claude" | "openai" | "gemini" | "ollama";
 
 export interface ProviderModelInfo {
   id: string;
@@ -229,6 +267,16 @@ export const PROVIDER_MODELS: Record<AIProvider, ProviderModelInfo[]> = {
     { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
     { id: "gemini-2.0-flash", name: "Gemini 2.0 Flash" },
     { id: "gemini-2.0-flash-lite", name: "Gemini 2.0 Flash Lite" },
+  ],
+  ollama: [
+    { id: "auto", name: "Auto (default)" },
+    { id: "llama3.1", name: "Llama 3.1" },
+    { id: "llama3.2", name: "Llama 3.2" },
+    { id: "qwen2.5", name: "Qwen 2.5" },
+    { id: "mistral", name: "Mistral" },
+    { id: "codellama", name: "Code Llama" },
+    { id: "deepseek-r1", name: "DeepSeek R1" },
+    { id: "phi4", name: "Phi-4" },
   ],
 };
 
@@ -255,6 +303,12 @@ export const PROVIDER_INFO: Record<AIProvider, {
     keyPlaceholder: "AIza...",
     consoleUrl: "https://aistudio.google.com/apikey",
     consoleName: "aistudio.google.com",
+  },
+  ollama: {
+    name: "Ollama",
+    keyPlaceholder: "http://localhost:11434 (or leave empty)",
+    consoleUrl: "https://ollama.com/download",
+    consoleName: "ollama.com",
   },
 };
 
@@ -291,6 +345,17 @@ export type TTSVoice =
 
 export type TTSPlaybackState = "idle" | "loading" | "playing";
 
+// === Voice Mode ===
+export type VoiceMode = "push-to-talk" | "vad" | "talk-mode" | "wake-word";
+export type VoiceState =
+  | "idle"
+  | "wake_listening"
+  | "listening"
+  | "recording"
+  | "transcribing"
+  | "processing"
+  | "speaking";
+
 // === Memories ===
 export interface Memory {
   id: string;
@@ -308,6 +373,48 @@ export interface AlterEgo {
   system_prompt: string;
   color: string;
   is_builtin: boolean;
+}
+
+// === Skills Marketplace ===
+export interface MarketplaceSkill {
+  name: string;
+  display_name: string;
+  description: string;
+  description_es: string;
+  version: string;
+  author: string;
+  category: string;
+  tags: string[];
+  permission_level: string;
+  execution_type: string;
+  requires_env: string[];
+  downloads: number;
+  verified: boolean;
+  license: string;
+  homepage: string;
+  updated_at: string;
+  min_rain_version: string;
+}
+
+export interface MarketplaceCategory {
+  id: string;
+  name: string;
+  name_es: string;
+  emoji: string;
+}
+
+export interface InstalledMarketplaceSkill {
+  name: string;
+  version: string;
+  source: string;
+  installed_at: number;
+  updated_at: number;
+}
+
+export interface SkillUpdate {
+  name: string;
+  current_version: string;
+  latest_version: string;
 }
 
 // === Active Panel ===

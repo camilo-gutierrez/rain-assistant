@@ -38,6 +38,17 @@ export default function ChatInput() {
     adjustHeight();
   }, [text]);
 
+  // Scroll textarea into view when mobile keyboard opens
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const handleResize = () => {
+      textareaRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    };
+    vv.addEventListener("resize", handleResize);
+    return () => vv.removeEventListener("resize", handleResize);
+  }, []);
+
   const handleSend = () => {
     const trimmed = text.trim();
     if (!trimmed || !activeAgentId || !hasCwd || isProcessing) return;
@@ -95,8 +106,10 @@ export default function ChatInput() {
         onKeyDown={handleKeyDown}
         placeholder={t("chat.inputPlaceholder")}
         disabled={isDisabled}
+        enterKeyHint="send"
+        autoComplete="off"
         style={{ minHeight: "44px", maxHeight: "200px", resize: "none", overflowY: "hidden" }}
-        className={`flex-1 bg-surface2 text-text border border-overlay rounded-2xl px-4 py-2.5 text-sm placeholder:text-subtext focus-ring transition-all disabled:opacity-50 disabled:cursor-not-allowed`}
+        className={`flex-1 bg-surface2 text-text border border-overlay rounded-2xl px-4 py-2.5 text-[16px] sm:text-sm placeholder:text-subtext focus-ring transition-all disabled:opacity-50 disabled:cursor-not-allowed`}
       />
       <button
         onClick={handleSend}

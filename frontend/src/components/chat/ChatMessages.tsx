@@ -8,6 +8,7 @@ import ToolResultBlock from "@/components/chat/ToolResultBlock";
 import PermissionRequestBlock from "@/components/chat/PermissionRequestBlock";
 import ScreenshotViewer from "@/components/computer-use/ScreenshotViewer";
 import ComputerActionBubble from "@/components/computer-use/ComputerActionBubble";
+import SubAgentIndicator from "@/components/chat/SubAgentIndicator";
 
 function MessageSkeleton() {
   return (
@@ -89,6 +90,8 @@ export default function ChatMessages() {
               return <ScreenshotViewer key={msg.id} message={msg} />;
             case "computer_action":
               return <ComputerActionBubble key={msg.id} message={msg} />;
+            case "subagent_event":
+              return <SubAgentIndicator key={msg.id} message={msg} />;
             default:
               return null;
           }

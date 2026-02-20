@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import type { Theme, Language, TTSVoice, AIProvider } from "@/lib/types";
+import type { Theme, Language, TTSVoice, AIProvider, VoiceMode } from "@/lib/types";
 
 interface SettingsState {
   theme: Theme;
@@ -15,6 +15,10 @@ interface SettingsState {
   aiModel: string;
   // Alter Ego
   activeEgoId: string;
+  // Voice
+  voiceMode: VoiceMode;
+  vadSensitivity: number;
+  silenceTimeout: number;
 
   setTheme: (theme: Theme) => void;
   setLanguage: (lang: Language) => void;
@@ -25,6 +29,9 @@ interface SettingsState {
   setAIProvider: (provider: AIProvider) => void;
   setAIModel: (model: string) => void;
   setActiveEgoId: (id: string) => void;
+  setVoiceMode: (mode: VoiceMode) => void;
+  setVadSensitivity: (val: number) => void;
+  setSilenceTimeout: (val: number) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -39,6 +46,9 @@ export const useSettingsStore = create<SettingsState>()(
       aiProvider: "claude" as AIProvider,
       aiModel: "auto",
       activeEgoId: "rain",
+      voiceMode: "push-to-talk" as VoiceMode,
+      vadSensitivity: 0.5,
+      silenceTimeout: 800,
 
       setTheme: (theme) => {
         if (typeof document !== "undefined") {
@@ -61,10 +71,13 @@ export const useSettingsStore = create<SettingsState>()(
       setAIProvider: (aiProvider) => set({ aiProvider }),
       setAIModel: (aiModel) => set({ aiModel }),
       setActiveEgoId: (activeEgoId) => set({ activeEgoId }),
+      setVoiceMode: (voiceMode) => set({ voiceMode }),
+      setVadSensitivity: (vadSensitivity) => set({ vadSensitivity }),
+      setSilenceTimeout: (silenceTimeout) => set({ silenceTimeout }),
     }),
     {
       name: "rain-settings",
-      version: 4,
+      version: 5,
       migrate: (persisted, version) => {
         const state = persisted as Record<string, unknown>;
         if (version < 2) {
@@ -76,6 +89,11 @@ export const useSettingsStore = create<SettingsState>()(
         }
         if (version < 4) {
           state.activeEgoId = state.activeEgoId ?? "rain";
+        }
+        if (version < 5) {
+          state.voiceMode = state.voiceMode ?? "push-to-talk";
+          state.vadSensitivity = state.vadSensitivity ?? 0.5;
+          state.silenceTimeout = state.silenceTimeout ?? 800;
         }
         return persisted as SettingsState;
       },

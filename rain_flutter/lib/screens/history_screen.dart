@@ -6,6 +6,7 @@ import '../models/message.dart';
 import '../providers/agent_provider.dart';
 import '../providers/connection_provider.dart';
 import '../providers/settings_provider.dart';
+import '../widgets/toast.dart';
 
 class HistoryScreen extends ConsumerStatefulWidget {
   const HistoryScreen({super.key});
@@ -78,6 +79,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
       double totalCost = 0;
       for (final m in agent.messages) {
         if (m is SystemMessage) {
+          // TODO(audit#7): Parse cost from structured data instead of fragile regex on message text
           final match = RegExp(r'\$(\d+\.\d+)').firstMatch(m.text);
           if (match != null) {
             totalCost += double.tryParse(match.group(1)!) ?? 0;
@@ -101,9 +103,15 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
       });
 
       if (!mounted) return;
+      final lang = ref.read(settingsProvider).language;
+      showToast(context, L10n.t('toast.saveSuccess', lang),
+          type: ToastType.success);
       await _loadHistory();
     } catch (_) {
-      // ignore
+      if (!mounted) return;
+      final lang = ref.read(settingsProvider).language;
+      showToast(context, L10n.t('toast.saveFailed', lang),
+          type: ToastType.error);
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -115,6 +123,9 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
       final dio = auth.authenticatedDio;
       await dio.delete('/history/$id');
       if (!mounted) return;
+      final lang = ref.read(settingsProvider).language;
+      showToast(context, L10n.t('toast.deletedConversation', lang),
+          type: ToastType.info);
       await _loadHistory();
     } catch (_) {}
   }

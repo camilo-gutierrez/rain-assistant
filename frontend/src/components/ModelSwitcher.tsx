@@ -14,12 +14,13 @@ import {
 } from "@/lib/types";
 import { ChevronDown, Check } from "lucide-react";
 
-const PROVIDERS: AIProvider[] = ["claude", "openai", "gemini"];
+const PROVIDERS: AIProvider[] = ["claude", "openai", "gemini", "ollama"];
 
 const PROVIDER_COLORS: Record<AIProvider, string> = {
   claude: "bg-[#d97706]",   // amber/orange for Anthropic
   openai: "bg-[#10a37f]",   // OpenAI green
   gemini: "bg-[#4285f4]",   // Google blue
+  ollama: "bg-[#ffffff]",   // Ollama white
 };
 
 function hasStoredKey(provider: AIProvider): boolean {
