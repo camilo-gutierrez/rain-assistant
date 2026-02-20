@@ -5,6 +5,7 @@ In-memory implementation — no external dependencies (Redis, etc.).
 Thread-safe for asyncio (single-threaded event loop).
 """
 
+import hashlib
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -41,13 +42,23 @@ class RateLimitResult:
     retry_after: float  # seconds until next slot opens (0 if allowed)
 
 
+MAX_WINDOWS = 10_000  # Hard cap to prevent unbounded memory growth
+
+
 class RateLimiter:
-    """Sliding-window rate limiter keyed by (token_prefix, category)."""
+    """Sliding-window rate limiter keyed by (token_hash, category)."""
 
     def __init__(self):
         self._windows: dict[tuple[str, str], deque[float]] = {}
         self._last_cleanup: float = 0.0
         self._cleanup_interval = 300  # every 5 minutes
+
+    @staticmethod
+    def _token_key(token: str) -> str:
+        """Hash the full token to avoid prefix-collision issues."""
+        if not token:
+            return "anon"
+        return hashlib.sha256(token.encode()).hexdigest()[:16]
 
     def check(self, token: str, category: EndpointCategory) -> RateLimitResult:
         """Check if a request is allowed. If allowed, records it.
@@ -57,7 +68,7 @@ class RateLimiter:
         """
         now = time.time()
         limit = RATE_LIMITS[category]
-        key = (token[:8] if token else "anon", category.value)
+        key = (self._token_key(token), category.value)
 
         # Lazy cleanup of stale windows
         if now - self._last_cleanup > self._cleanup_interval:
@@ -65,6 +76,9 @@ class RateLimiter:
 
         window = self._windows.get(key)
         if window is None:
+            # Enforce max windows to prevent memory exhaustion
+            if len(self._windows) >= MAX_WINDOWS:
+                self._cleanup(now)
             window = deque()
             self._windows[key] = window
 
@@ -89,6 +103,17 @@ class RateLimiter:
         return RateLimitResult(
             allowed=True, limit=limit, remaining=remaining, retry_after=0
         )
+
+    def reset(self, token: str | None = None) -> None:
+        """Clear rate-limit state. If token is given, clear only that token's
+        windows; otherwise clear everything. Safe for use in tests."""
+        if token is None:
+            self._windows.clear()
+            return
+        token_hash = self._token_key(token)
+        keys_to_delete = [k for k in self._windows if k[0] == token_hash]
+        for k in keys_to_delete:
+            del self._windows[k]
 
     def _cleanup(self, now: float):
         """Remove windows that have been idle for over 2x the window period."""

@@ -55,7 +55,7 @@ def ws_client(test_app, mock_provider):
 
         # Clear rate limiter state to prevent 429s across tests
         from rate_limiter import rate_limiter as rl
-        rl._windows.clear()
+        rl.reset()
 
         client = TestClient(test_app["app"])
 
@@ -377,14 +377,14 @@ class TestRateLimiting:
             ws.receive_json()  # drain initial status
 
             # Clear rate limiter state
-            rl._windows.clear()
+            rl.reset()
 
             error_found = False
             for i in range(70):
                 ws.send_json({"type": "pong"})  # pong is lightweight
 
             # pong is skipped before rate limit check, so use a real message type
-            rl._windows.clear()
+            rl.reset()
             for i in range(70):
                 ws.send_json({"type": "send_message", "agent_id": "default", "text": f"msg{i}"})
 
@@ -403,7 +403,7 @@ class TestRateLimiting:
 
         with ws_connect(ws_client) as ws:
             ws.receive_json()
-            rl._windows.clear()
+            rl.reset()
 
             for i in range(70):
                 ws.send_json({"type": "send_message", "agent_id": "default", "text": f"m{i}"})

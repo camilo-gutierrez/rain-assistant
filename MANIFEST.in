@@ -1,6 +1,8 @@
 # Root Python modules
 include server.py
 include database.py
+include key_manager.py
+include prompt_composer.py
 include transcriber.py
 include synthesizer.py
 include permission_classifier.py
@@ -23,3 +25,16 @@ recursive-include static *
 recursive-include plugins *.py *.yaml
 recursive-include providers *.py
 recursive-include tools *.py
+recursive-include memories *.py
+recursive-include documents *.py
+recursive-include alter_egos *.py
+recursive-include scheduled_tasks *.py
+recursive-include subagents *.py
+recursive-include marketplace *.py
+recursive-include voice *.py
+
+# Exclude development / backup directories
+recursive-exclude static_backup *
+recursive-exclude rain_flutter *
+recursive-exclude frontend *
+recursive-exclude tests *

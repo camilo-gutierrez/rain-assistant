@@ -1,0 +1,23 @@
+name: url_shortener
+description: >-
+  Shorten long URLs using the is.gd free URL shortening service. Returns a
+  short link that redirects to the original URL. No API key required.
+version: "1.0"
+author: rain-community
+enabled: true
+permission_level: green
+
+parameters:
+  - name: url
+    type: string
+    description: The full URL to shorten (must include https:// or http://).
+    required: true
+
+execution:
+  type: http
+  method: GET
+  url: "https://is.gd/create.php"
+  params:
+    format: json
+    url: "{{url}}"
+  extract: "shorturl"

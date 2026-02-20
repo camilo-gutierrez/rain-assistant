@@ -216,7 +216,10 @@ class OllamaProvider(BaseProvider):
                     "input": args,
                 })
 
-                result = await self._tool_executor.execute(tc["name"], args)
+                try:
+                    result = await self._tool_executor.execute(tc["name"], args)
+                except Exception as e:
+                    result = {"content": f"Tool execution error: {e}", "is_error": True}
 
                 yield NormalizedEvent("tool_result", {
                     "tool_use_id": tc["id"],

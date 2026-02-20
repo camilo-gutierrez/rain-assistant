@@ -79,6 +79,37 @@ CONFIG_DIR = Path.home() / ".rain-assistant"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 OLD_CONFIG_DIR = Path.home() / ".voice-claude"
 
+# ---------------------------------------------------------------------------
+# MCP config loader (graceful degradation)
+# ---------------------------------------------------------------------------
+
+_MCP_CONFIG_PATH = Path(__file__).parent / ".mcp.json"
+
+
+def _load_mcp_config() -> dict | str:
+    """Load MCP server configuration from .mcp.json with graceful error handling.
+
+    Returns the config file path as a string (for the Claude SDK) if valid,
+    or an empty dict if the file is missing or corrupted.
+    """
+    if not _MCP_CONFIG_PATH.exists():
+        return {}
+    try:
+        # Validate that the JSON is parseable before passing the path to the SDK
+        raw = _MCP_CONFIG_PATH.read_text(encoding="utf-8")
+        parsed = json.loads(raw)
+        if not isinstance(parsed, dict):
+            print(f"  [MCP] Warning: .mcp.json is not a JSON object, MCP servers disabled", flush=True)
+            return {}
+        return str(_MCP_CONFIG_PATH)
+    except json.JSONDecodeError as e:
+        print(f"  [MCP] Warning: .mcp.json has invalid JSON ({e}), MCP servers disabled", flush=True)
+        return {}
+    except OSError as e:
+        print(f"  [MCP] Warning: Could not read .mcp.json ({e}), MCP servers disabled", flush=True)
+        return {}
+
+
 from prompt_composer import compose_system_prompt
 from alter_egos.storage import (
     load_all_egos, load_ego, save_ego, delete_ego,
@@ -665,6 +696,9 @@ app.add_middleware(AccessLogMiddleware)
 
 from fastapi.middleware.cors import CORSMiddleware
 
+# SECURITY NOTE: These are local-development origins.  For production or
+# public-facing deployments, restrict cors_origins in config.json to the
+# exact domain(s) serving the frontend (e.g. "https://rain.example.com").
 CORS_ORIGINS = [
     "http://localhost:8000", "http://127.0.0.1:8000",
     "http://localhost:3000", "http://127.0.0.1:3000",
@@ -1492,11 +1526,16 @@ async def websocket_endpoint(ws: WebSocket):
     # voice_sessions: agent_id → { vad, mode, audio_buffer, audio_task }
     voice_sessions: dict[str, dict] = {}
 
+    _send_failed = False
+
     async def send(msg: dict):
+        nonlocal _send_failed
         try:
             await ws.send_json(msg)
         except Exception:
-            pass
+            if not _send_failed:
+                _send_failed = True
+                print(f"[WS] send failed for token={token[:8] if token else '?'}, connection likely closed")
 
     # Heartbeat loop: ping every 30s, close after idle timeout
     async def heartbeat_loop():
@@ -2120,7 +2159,15 @@ async def websocket_endpoint(ws: WebSocket):
                 await send({"type": "error", "agent_id": "default", "text": "Message too large"})
                 continue
 
-            data = json.loads(raw)
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                database.log_security_event(
+                    "invalid_json", "warning",
+                    token_prefix=token[:8] if token else "",
+                )
+                await send({"type": "error", "agent_id": "default", "text": "Invalid JSON"})
+                continue
             msg_type = data.get("type", "")
             agent_id = data.get("agent_id", "default")
 
@@ -2224,11 +2271,8 @@ async def websocket_endpoint(ws: WebSocket):
                 resolved_cwd = str(cwd_path.resolve())
                 resume_session_id = data.get("session_id")
 
-                # Load MCP server configuration from .mcp.json
-                mcp_config_path = Path(__file__).parent / ".mcp.json"
-                mcp_servers: dict | str = {}
-                if mcp_config_path.exists():
-                    mcp_servers = str(mcp_config_path)
+                # Load MCP server configuration (graceful degradation)
+                mcp_servers = _load_mcp_config()
 
                 # Permission callback for non-Claude providers
                 async def tool_permission_callback(tool_name: str, _tool_name2: str, tool_input: dict) -> bool:
@@ -2520,11 +2564,8 @@ async def websocket_endpoint(ws: WebSocket):
                 set_active_ego_id(new_ego_id)
                 new_prompt = compose_system_prompt(current_ego_id)
 
-                # Load MCP config for re-init
-                _mcp_config_path = Path(__file__).parent / ".mcp.json"
-                _mcp_servers: dict | str = {}
-                if _mcp_config_path.exists():
-                    _mcp_servers = str(_mcp_config_path)
+                # Load MCP config for re-init (graceful degradation)
+                _mcp_servers = _load_mcp_config()
 
                 # Re-initialize all active agents with the new system prompt
                 for aid, agent_data in list(agents.items()):
@@ -2806,8 +2847,14 @@ async def websocket_endpoint(ws: WebSocket):
 
     except WebSocketDisconnect:
         pass
-    except Exception:
-        pass
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        database.log_security_event(
+            "ws_unhandled_error", "error",
+            token_prefix=token[:8] if token else "",
+            details=str(exc)[:500],
+        )
     finally:
         # Cancel heartbeat
         heartbeat_task.cancel()
@@ -2821,11 +2868,24 @@ async def websocket_endpoint(ws: WebSocket):
             task = vs.get("audio_task")
             if task and not task.done():
                 task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
         voice_sessions.clear()
+
+        # Release pending permission waiters
+        for evt in pending_permissions.values():
+            evt.set()
+        pending_permissions.clear()
+        permission_responses.clear()
 
         # Cleanup all sub-agents first
         if subagent_manager:
-            await subagent_manager.cleanup_all()
+            try:
+                await subagent_manager.cleanup_all()
+            except Exception:
+                pass
 
         # Cleanup all agents on disconnect
         for aid in list(agents.keys()):
@@ -2834,9 +2894,17 @@ async def websocket_endpoint(ws: WebSocket):
                 task = agent.get("streaming_task")
                 if task and not task.done():
                     task.cancel()
+                    try:
+                        await task
+                    except (asyncio.CancelledError, Exception):
+                        pass
                 cu_task = agent.get("computer_task")
                 if cu_task and not cu_task.done():
                     cu_task.cancel()
+                    try:
+                        await cu_task
+                    except (asyncio.CancelledError, Exception):
+                        pass
                 executor = agent.get("computer_executor")
                 if executor:
                     executor.release_all()

@@ -43,7 +43,8 @@ rain-assistant/
 │   ├── base.py            # BaseProvider abstract class
 │   ├── claude_provider.py # Claude Agent SDK
 │   ├── openai_provider.py # OpenAI function calling
-│   └── gemini_provider.py # Google Gemini
+│   ├── gemini_provider.py # Google Gemini
+│   └── ollama_provider.py # Ollama (local models)
 ├── tools/                 # Built-in tool system
 │   ├── definitions.py     # Tool schemas (OpenAI format)
 │   ├── executor.py        # Tool execution + permissions
@@ -101,6 +102,21 @@ rain-assistant/
 3. Implement: `initialize`, `send_message`, `stream_response`, `interrupt`, `disconnect`
 4. Register in `providers/__init__.py` → `get_provider()` factory
 5. Add pricing to your provider's `MODEL_PRICING` dict
+6. **Wrap tool execution in try-except** — a failing tool must not crash the stream:
+   ```python
+   try:
+       result = await self._tool_executor.execute(name, args)
+   except Exception as e:
+       result = {"content": f"Tool execution error: {e}", "is_error": True}
+   ```
+7. **Wrap streaming in try-except** — network/API errors should yield an error event, not crash:
+   ```python
+   try:
+       async for chunk in stream:
+           ...
+   except Exception as e:
+       yield NormalizedEvent("error", {"text": f"Stream error: {e}"})
+   ```
 
 ## Adding a New Plugin
 
@@ -123,6 +139,26 @@ execution:
   params:
     q: "{{input}}"
 ```
+
+## Testing
+
+### Running Tests
+
+```bash
+pytest tests/ -v
+```
+
+### Rate Limiter in Tests
+
+The rate limiter is a global singleton. Always call `rl.reset()` in test fixtures to avoid state bleed between tests:
+
+```python
+from rate_limiter import rate_limiter as rl
+rl.reset()  # Clear all state
+rl.reset("specific-token")  # Clear only one token's state
+```
+
+Never access `rl._windows` directly — use the public `reset()` API.
 
 ## License
 

@@ -10,3 +10,4 @@ final audioServiceProvider = Provider<AudioService>((ref) {
 });
 
 final isRecordingProvider = StateProvider<bool>((ref) => false);
+final isTranscribingProvider = StateProvider<bool>((ref) => false);

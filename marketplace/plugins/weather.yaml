@@ -1,0 +1,28 @@
+name: weather
+description: >-
+  Get current weather information for any city using wttr.in. Returns
+  temperature, conditions, humidity, wind speed, and forecast. No API key
+  required.
+version: "1.0"
+author: rain-community
+enabled: true
+permission_level: green
+
+parameters:
+  - name: city
+    type: string
+    description: >-
+      City name to get weather for (e.g. "Madrid", "New York", "Tokyo").
+      Supports city names in any language.
+    required: true
+
+execution:
+  type: http
+  method: GET
+  url: "https://wttr.in/{{city}}"
+  headers:
+    Accept: application/json
+    User-Agent: Rain-Assistant/1.0
+  params:
+    format: j1
+  extract: "current_condition"

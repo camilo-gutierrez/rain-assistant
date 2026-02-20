@@ -80,54 +80,62 @@ class OpenAIProvider(BaseProvider):
             api_messages = [{"role": "system", "content": self._system_prompt}] + self._messages
 
             # Call OpenAI with streaming
-            stream = await self._client.chat.completions.create(
-                model=self._model,
-                messages=api_messages,
-                tools=get_all_tool_definitions(),
-                stream=True,
-                stream_options={"include_usage": True},
-            )
+            try:
+                stream = await self._client.chat.completions.create(
+                    model=self._model,
+                    messages=api_messages,
+                    tools=get_all_tool_definitions(),
+                    stream=True,
+                    stream_options={"include_usage": True},
+                )
+            except Exception as e:
+                yield NormalizedEvent("error", {"text": f"OpenAI API error: {e}"})
+                break
 
             # Accumulate streamed response
             full_content = ""
             tool_calls_map: dict[int, dict] = {}  # index -> {id, name, arguments}
 
-            async for chunk in stream:
-                if self._interrupted:
-                    break
+            try:
+                async for chunk in stream:
+                    if self._interrupted:
+                        break
 
-                # Usage is in the final chunk
-                if chunk.usage:
-                    total_input_tokens += chunk.usage.prompt_tokens or 0
-                    total_output_tokens += chunk.usage.completion_tokens or 0
+                    # Usage is in the final chunk
+                    if chunk.usage:
+                        total_input_tokens += chunk.usage.prompt_tokens or 0
+                        total_output_tokens += chunk.usage.completion_tokens or 0
 
-                if not chunk.choices:
-                    continue
+                    if not chunk.choices:
+                        continue
 
-                delta = chunk.choices[0].delta
+                    delta = chunk.choices[0].delta
 
-                # Stream text content
-                if delta and delta.content:
-                    full_content += delta.content
-                    yield NormalizedEvent("assistant_text", {"text": delta.content})
+                    # Stream text content
+                    if delta and delta.content:
+                        full_content += delta.content
+                        yield NormalizedEvent("assistant_text", {"text": delta.content})
 
-                # Accumulate tool call deltas
-                if delta and delta.tool_calls:
-                    for tc_delta in delta.tool_calls:
-                        idx = tc_delta.index
-                        if idx not in tool_calls_map:
-                            tool_calls_map[idx] = {
-                                "id": tc_delta.id or "",
-                                "name": "",
-                                "arguments": "",
-                            }
-                        if tc_delta.id:
-                            tool_calls_map[idx]["id"] = tc_delta.id
-                        if tc_delta.function:
-                            if tc_delta.function.name:
-                                tool_calls_map[idx]["name"] = tc_delta.function.name
-                            if tc_delta.function.arguments:
-                                tool_calls_map[idx]["arguments"] += tc_delta.function.arguments
+                    # Accumulate tool call deltas
+                    if delta and delta.tool_calls:
+                        for tc_delta in delta.tool_calls:
+                            idx = tc_delta.index
+                            if idx not in tool_calls_map:
+                                tool_calls_map[idx] = {
+                                    "id": tc_delta.id or "",
+                                    "name": "",
+                                    "arguments": "",
+                                }
+                            if tc_delta.id:
+                                tool_calls_map[idx]["id"] = tc_delta.id
+                            if tc_delta.function:
+                                if tc_delta.function.name:
+                                    tool_calls_map[idx]["name"] = tc_delta.function.name
+                                if tc_delta.function.arguments:
+                                    tool_calls_map[idx]["arguments"] += tc_delta.function.arguments
+            except Exception as e:
+                yield NormalizedEvent("error", {"text": f"OpenAI stream error: {e}"})
+                break
 
             if self._interrupted:
                 break
@@ -173,7 +181,10 @@ class OpenAIProvider(BaseProvider):
                     "input": args,
                 })
 
-                result = await self._tool_executor.execute(tc["name"], args)
+                try:
+                    result = await self._tool_executor.execute(tc["name"], args)
+                except Exception as e:
+                    result = {"content": f"Tool execution error: {e}", "is_error": True}
 
                 yield NormalizedEvent("tool_result", {
                     "tool_use_id": tc["id"],

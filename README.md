@@ -16,7 +16,7 @@
 
 ## Features
 
-- **Multi-Provider AI** — Claude, OpenAI (GPT-4o), and Google Gemini through a unified interface
+- **Multi-Provider AI** — Claude, OpenAI (GPT-4o), Google Gemini, and Ollama (local) through a unified interface
 - **Voice Input/Output** — Whisper transcription + Edge TTS synthesis
 - **Dynamic Plugin System** — Add capabilities by chatting: _"I want you to search Google"_ and Rain creates the plugin automatically
 - **Telegram Bot** — Use Rain from Telegram with voice messages, inline permissions, and all the same tools
@@ -25,7 +25,10 @@
 - **File & Code Tools** — Read, write, edit files, run bash commands, search codebases
 - **Conversation History** — Persistent sessions with SQLite, resume conversations
 - **Modern Web UI** — Next.js 16 + Zustand + Tailwind CSS with 3 themes
-- **MCP Integration** — Connect to Home Assistant, Gmail, and more via Model Context Protocol
+- **MCP Integration** — Connect to Home Assistant, Gmail, and more via Model Context Protocol (graceful degradation if unavailable)
+- **Marketplace** — Ready-to-use plugins: weather, translator, URL shortener, system info, JSON formatter
+- **Rate Limiting** — Per-token sliding-window protection across 6 endpoint categories
+- **Documents / RAG** — Ingest PDFs, Markdown, and text files for context-aware conversations
 
 ## Architecture
 
@@ -46,13 +49,14 @@
                     │ Claude (SDK+MCP)  │
                     │ OpenAI (GPT-4o)   │
                     │ Gemini (Flash)    │
+                    │ Ollama (local)    │
                     └─────────┬─────────┘
                               │
               ┌───────────────┼───────────────┐
               │               │               │
      ┌────────▼──────┐ ┌─────▼──────┐ ┌──────▼───────┐
      │ Built-in Tools│ │  Plugins   │ │ Computer Use │
-     │ (7 tools)     │ │ (YAML/HTTP)│ │ (PyAutoGUI)  │
+     │ (17 tools)    │ │ (YAML/HTTP)│ │ (PyAutoGUI)  │
      └───────────────┘ └────────────┘ └──────────────┘
 ```
 

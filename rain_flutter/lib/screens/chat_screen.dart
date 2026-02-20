@@ -190,12 +190,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
     if (isRecording) {
       ref.read(isRecordingProvider.notifier).state = false;
-      final text = await audioService.stopAndUpload();
-      if (text != null && text.isNotEmpty) {
-        _inputController.text = text;
-        _inputController.selection = TextSelection.collapsed(
-          offset: text.length,
-        );
+      ref.read(isTranscribingProvider.notifier).state = true;
+      try {
+        final text = await audioService.stopAndUpload();
+        if (text != null && text.isNotEmpty) {
+          _inputController.text = text;
+          _inputController.selection = TextSelection.collapsed(
+            offset: text.length,
+          );
+        }
+      } finally {
+        ref.read(isTranscribingProvider.notifier).state = false;
       }
     } else {
       ref.read(isRecordingProvider.notifier).state = true;
@@ -344,6 +349,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final wsStatus = ref.watch(connectionStatusProvider);
     final statusText = ref.watch(statusTextProvider);
     final isRecording = ref.watch(isRecordingProvider);
+    final isTranscribing = ref.watch(isTranscribingProvider);
 
     final messages = agent?.messages ?? [];
     final isProcessing = agent?.isProcessing ?? false;
@@ -512,6 +518,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             controller: _inputController,
             isProcessing: isProcessing,
             isRecording: isRecording,
+            isTranscribing: isTranscribing,
             onSend: _sendMessage,
             onToggleRecording: _toggleRecording,
             lang: lang,

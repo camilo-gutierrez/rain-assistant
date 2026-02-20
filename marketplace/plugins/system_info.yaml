@@ -1,0 +1,74 @@
+name: system_info
+description: >-
+  Display detailed system information including operating system, CPU, memory
+  (RAM) usage, and disk space. Works on Linux, macOS, and Windows. No
+  parameters needed.
+version: "1.0"
+author: rain-community
+enabled: true
+permission_level: green
+
+parameters: []
+
+execution:
+  type: bash
+  command: |
+    echo "=== System Information ==="
+    echo ""
+
+    # OS info
+    echo "--- Operating System ---"
+    if command -v uname > /dev/null 2>&1; then
+      echo "System: $(uname -s)"
+      echo "Release: $(uname -r)"
+      echo "Machine: $(uname -m)"
+      if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        echo "Distribution: $PRETTY_NAME"
+      fi
+    elif command -v systeminfo > /dev/null 2>&1; then
+      systeminfo 2>/dev/null | findstr /B /C:"OS Name" /C:"OS Version" /C:"System Type" 2>/dev/null || echo "Windows (details unavailable)"
+    fi
+    echo ""
+
+    # CPU info
+    echo "--- CPU ---"
+    if [ -f /proc/cpuinfo ]; then
+      grep -m1 "model name" /proc/cpuinfo 2>/dev/null | cut -d: -f2 | xargs
+      echo "Cores: $(grep -c ^processor /proc/cpuinfo 2>/dev/null)"
+    elif command -v sysctl > /dev/null 2>&1; then
+      sysctl -n machdep.cpu.brand_string 2>/dev/null || echo "CPU info unavailable"
+      echo "Cores: $(sysctl -n hw.ncpu 2>/dev/null)"
+    elif command -v wmic > /dev/null 2>&1; then
+      wmic cpu get Name 2>/dev/null | tail -n +2 | head -1
+      echo "Cores: $(wmic cpu get NumberOfCores 2>/dev/null | tail -n +2 | head -1 | xargs)"
+    fi
+    echo ""
+
+    # Memory info
+    echo "--- Memory ---"
+    if command -v free > /dev/null 2>&1; then
+      free -h 2>/dev/null | head -2
+    elif command -v sysctl > /dev/null 2>&1; then
+      total_mem=$(sysctl -n hw.memsize 2>/dev/null)
+      if [ -n "$total_mem" ]; then
+        echo "Total: $((total_mem / 1024 / 1024)) MB"
+      fi
+    elif command -v wmic > /dev/null 2>&1; then
+      total=$(wmic OS get TotalVisibleMemorySize 2>/dev/null | tail -n +2 | head -1 | xargs)
+      free=$(wmic OS get FreePhysicalMemory 2>/dev/null | tail -n +2 | head -1 | xargs)
+      if [ -n "$total" ] && [ -n "$free" ]; then
+        echo "Total: $((total / 1024)) MB"
+        echo "Free: $((free / 1024)) MB"
+        echo "Used: $(( (total - free) / 1024 )) MB"
+      fi
+    fi
+    echo ""
+
+    # Disk info
+    echo "--- Disk ---"
+    if command -v df > /dev/null 2>&1; then
+      df -h / 2>/dev/null | tail -1
+    elif command -v wmic > /dev/null 2>&1; then
+      wmic LogicalDisk where "DriveType=3" get Name,Size,FreeSpace 2>/dev/null | head -5
+    fi

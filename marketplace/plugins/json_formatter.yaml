@@ -1,0 +1,68 @@
+name: json_formatter
+description: >-
+  Validate and pretty-print JSON text. Detects syntax errors with line and
+  column information. Can also minify JSON or sort keys. Useful for debugging
+  API responses and config files.
+version: "1.0"
+author: rain-community
+enabled: true
+permission_level: green
+
+parameters:
+  - name: json_text
+    type: string
+    description: The JSON text to format/validate.
+    required: true
+  - name: action
+    type: string
+    description: >-
+      What to do with the JSON: "format" for pretty-print (default),
+      "minify" to compact it, "validate" to only check validity.
+    required: false
+    default: format
+  - name: sort_keys
+    type: boolean
+    description: Whether to sort object keys alphabetically. Defaults to false.
+    required: false
+    default: false
+
+execution:
+  type: python
+  script: |
+    import json
+    import sys
+
+    args = json.loads(sys.stdin.read())
+    json_text = args.get("json_text", "")
+    action = args.get("action", "format")
+    sort_keys = args.get("sort_keys", False)
+
+    if not json_text.strip():
+        print("Error: No JSON text provided.")
+        sys.exit(1)
+
+    # Try to parse the JSON
+    try:
+        data = json.loads(json_text)
+    except json.JSONDecodeError as e:
+        print(f"Invalid JSON: {e.msg}")
+        print(f"  Line {e.lineno}, Column {e.colno}")
+        print(f"  Near: ...{json_text[max(0, e.pos-20):e.pos+20]}...")
+        sys.exit(1)
+
+    if action == "validate":
+        # Count elements
+        if isinstance(data, dict):
+            info = f"Valid JSON object with {len(data)} key(s)"
+        elif isinstance(data, list):
+            info = f"Valid JSON array with {len(data)} element(s)"
+        else:
+            info = f"Valid JSON value of type {type(data).__name__}"
+        print(info)
+
+    elif action == "minify":
+        print(json.dumps(data, ensure_ascii=False, separators=(",", ":"), sort_keys=sort_keys))
+
+    else:
+        # Default: pretty-print
+        print(json.dumps(data, indent=2, ensure_ascii=False, sort_keys=sort_keys))

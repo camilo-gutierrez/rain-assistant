@@ -1,0 +1,76 @@
+name: translator
+description: >-
+  Translate text between languages using the MyMemory free translation API.
+  Supports all major languages. No API key required. Specify target language
+  as a two-letter ISO 639-1 code (e.g. en, es, fr, de, ja, zh, pt, it, ko, ru).
+version: "1.0"
+author: rain-community
+enabled: true
+permission_level: green
+
+parameters:
+  - name: text
+    type: string
+    description: The text to translate.
+    required: true
+  - name: target_language
+    type: string
+    description: >-
+      Target language as ISO 639-1 code (e.g. "es" for Spanish, "fr" for
+      French, "de" for German, "ja" for Japanese, "zh" for Chinese).
+    required: true
+  - name: source_language
+    type: string
+    description: >-
+      Source language as ISO 639-1 code. Defaults to "auto" for automatic
+      detection.
+    required: false
+    default: auto
+
+execution:
+  type: python
+  script: |
+    import json
+    import sys
+    import urllib.request
+    import urllib.parse
+
+    args = json.loads(sys.stdin.read())
+    text = args.get("text", "")
+    target = args.get("target_language", "en")
+    source = args.get("source_language", "auto")
+
+    if not text.strip():
+        print("Error: No text provided to translate.")
+        sys.exit(1)
+
+    # Build the language pair (e.g. "en|es")
+    lang_pair = f"{source}|{target}"
+
+    # Use MyMemory free translation API
+    params = urllib.parse.urlencode({"q": text, "langpair": lang_pair})
+    url = f"https://api.mymemory.translated.net/get?{params}"
+
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Rain-Assistant/1.0"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+
+        if data.get("responseStatus") == 200:
+            translated = data["responseData"]["translatedText"]
+            match_pct = data["responseData"].get("match", 0)
+            result = {
+                "original": text,
+                "translated": translated,
+                "source_language": source,
+                "target_language": target,
+                "confidence": match_pct
+            }
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            error_msg = data.get("responseDetails", "Unknown error")
+            print(f"Translation error: {error_msg}")
+            sys.exit(1)
+    except Exception as e:
+        print(f"Error connecting to translation service: {e}")
+        sys.exit(1)

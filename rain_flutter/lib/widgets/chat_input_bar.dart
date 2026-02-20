@@ -5,6 +5,7 @@ class ChatInputBar extends StatelessWidget {
   final TextEditingController controller;
   final bool isProcessing;
   final bool isRecording;
+  final bool isTranscribing;
   final VoidCallback onSend;
   final VoidCallback onToggleRecording;
   final String lang;
@@ -18,6 +19,7 @@ class ChatInputBar extends StatelessWidget {
     required this.controller,
     required this.isProcessing,
     required this.isRecording,
+    this.isTranscribing = false,
     required this.onSend,
     required this.onToggleRecording,
     required this.lang,
@@ -81,18 +83,30 @@ class ChatInputBar extends StatelessWidget {
           Row(
             children: [
               // Mic button
-              IconButton(
-                onPressed: isProcessing ? null : onToggleRecording,
-                icon: isRecording
-                    ? Icon(Icons.stop, color: cs.error)
-                    : const Icon(Icons.mic_none),
-                style: isRecording
-                    ? IconButton.styleFrom(
-                        backgroundColor:
-                            cs.errorContainer.withValues(alpha: 0.3),
-                      )
-                    : null,
-              ),
+              isTranscribing
+                  ? Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.5,
+                          color: cs.primary,
+                        ),
+                      ),
+                    )
+                  : IconButton(
+                      onPressed: isProcessing ? null : onToggleRecording,
+                      icon: isRecording
+                          ? Icon(Icons.stop, color: cs.error)
+                          : const Icon(Icons.mic_none),
+                      style: isRecording
+                          ? IconButton.styleFrom(
+                              backgroundColor:
+                                  cs.errorContainer.withValues(alpha: 0.3),
+                            )
+                          : null,
+                    ),
               // Talk Mode button (only shown for non-push-to-talk modes)
               if (voiceMode != 'push-to-talk' && onToggleTalkMode != null)
                 IconButton(
@@ -120,11 +134,13 @@ class ChatInputBar extends StatelessWidget {
                   onSubmitted: (_) => onSend(),
                   maxLines: 4,
                   minLines: 1,
-                  enabled: !isRecording,
+                  enabled: !isRecording && !isTranscribing,
                   decoration: InputDecoration(
                     hintText: isRecording
                         ? L10n.t('chat.recording', lang)
-                        : L10n.t('chat.inputPlaceholder', lang),
+                        : isTranscribing
+                            ? L10n.t('chat.transcribing', lang)
+                            : L10n.t('chat.inputPlaceholder', lang),
                     filled: true,
                     fillColor: cs.surface,
                     border: OutlineInputBorder(
