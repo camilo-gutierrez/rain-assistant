@@ -3135,16 +3135,16 @@ def _run_doctor():
 
 
 def _find_available_port(host, preferred, max_attempts=10):
-    """Find an available port, starting from preferred."""
+    """Find an available port, starting from preferred.
+    Uses connect to check if something is already listening."""
     import socket
     for offset in range(max_attempts):
         port = preferred + offset
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.bind((host if host != "0.0.0.0" else "127.0.0.1", port))
-                return port
-        except OSError:
-            continue
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(1)
+            # If connect succeeds, something is listening = port busy
+            if s.connect_ex(("127.0.0.1", port)) != 0:
+                return port  # Connection refused = port is free
     return None
 
 
