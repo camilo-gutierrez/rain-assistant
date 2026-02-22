@@ -3134,13 +3134,40 @@ def _run_doctor():
     print(flush=True)
 
 
+def _find_available_port(host, preferred, max_attempts=10):
+    """Find an available port, starting from preferred."""
+    import socket
+    for offset in range(max_attempts):
+        port = preferred + offset
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind((host if host != "0.0.0.0" else "127.0.0.1", port))
+                return port
+        except OSError:
+            continue
+    return None
+
+
 def _start_server(cmd_args):
     """Start the FastAPI server."""
     import socket
     import webbrowser
 
-    PORT = cmd_args.port
     HOST = cmd_args.host
+    preferred_port = cmd_args.port
+
+    # Auto-find available port
+    PORT = _find_available_port(HOST, preferred_port)
+    if PORT is None:
+        print(flush=True)
+        print(f"  ERROR: No hay puertos disponibles ({preferred_port}-{preferred_port + 9})", flush=True)
+        print(f"  Intenta con: rain --port {preferred_port + 100}", flush=True)
+        print(flush=True)
+        sys.exit(1)
+
+    if PORT != preferred_port:
+        print(flush=True)
+        print(f"  Puerto {preferred_port} ocupado, usando {PORT}", flush=True)
 
     hostname = socket.gethostname()
     try:
@@ -3167,6 +3194,12 @@ def _start_server(cmd_args):
     async def _run():
         serve_task = asyncio.create_task(server.serve())
         while not server.started:
+            if serve_task.done():
+                # Server failed to start
+                exc = serve_task.exception()
+                if exc:
+                    print(f"  ERROR al iniciar servidor: {exc}", flush=True)
+                sys.exit(1)
             await asyncio.sleep(0.1)
 
         # Auto-open browser
