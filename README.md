@@ -101,15 +101,47 @@ cd rain-assistant
 docker compose up -d
 ```
 
+### Update
+
+**Windows** (one-liner install):
+```powershell
+%USERPROFILE%\.rain\python\python.exe -m pip install --upgrade --no-cache-dir rain-assistant
+```
+
+**macOS/Linux** (one-liner install):
+```bash
+~/.rain/venv/bin/pip install --upgrade rain-assistant
+```
+
+**pip** (system install):
+```bash
+pip install --upgrade rain-assistant
+```
+
+### Uninstall
+
+**Windows**:
+```powershell
+powershell %USERPROFILE%\.rain\uninstall.ps1
+```
+
+**macOS/Linux**:
+```bash
+bash ~/.rain/uninstall.sh
+```
+
 ### CLI Commands
 
 ```bash
-rain              # Start server (auto-opens browser)
-rain doctor       # Check all dependencies
-rain setup        # Re-run first-time wizard
-rain --version    # Show version
-rain --no-browser # Start without opening browser
-rain --port 9000  # Custom port
+rain                   # Start server (auto-opens browser)
+rain doctor            # Check all dependencies
+rain setup             # Re-run first-time wizard
+rain --version         # Show version
+rain --no-browser      # Start without opening browser
+rain --port 9000       # Custom port
+rain --host 127.0.0.1  # Bind to localhost only
+rain --telegram        # Start with Telegram bot
+rain --telegram-only   # Telegram bot only (no web server)
 ```
 
 ## Usage
