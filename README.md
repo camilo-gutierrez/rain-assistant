@@ -4,6 +4,7 @@
 
 **AI-powered coding assistant with voice, plugins, web UI, and Telegram bot**
 
+[![PyPI](https://img.shields.io/pypi/v/rain-assistant.svg)](https://pypi.org/project/rain-assistant/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.11+-green.svg)](https://python.org)
 [![Next.js](https://img.shields.io/badge/Next.js-16-black.svg)](https://nextjs.org)
@@ -62,25 +63,34 @@
 
 ## Installation
 
-### pip (recommended)
+### One-liner (recommended — nothing pre-installed needed)
 
-```bash
-pip install rain-assistant
-rain
-```
-
-That's it. On first run, Rain guides you through setup (API key, dependencies check) and opens your browser automatically.
-
-### One-liner (Windows)
-
+**Windows** (PowerShell):
 ```powershell
 irm https://raw.githubusercontent.com/camilo-gutierrez/rain-assistant/main/install.ps1 | iex
 ```
 
-### One-liner (Linux/macOS)
-
+**Linux/macOS**:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/camilo-gutierrez/rain-assistant/main/install.sh | bash
+```
+
+These scripts automatically download Python, ffmpeg, and everything needed. Zero dependencies required on a clean machine.
+
+### pip (if you already have Python 3.11+)
+
+```bash
+pip install rain-assistant
+```
+
+### With optional extras
+
+```bash
+# Telegram bot support
+pip install "rain-assistant[telegram]"
+
+# Everything included (telegram, computer-use, browser, scheduler, ollama, memory, voice)
+pip install "rain-assistant[all]"
 ```
 
 ### Docker
