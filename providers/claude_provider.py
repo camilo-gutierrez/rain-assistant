@@ -96,56 +96,77 @@ class ClaudeProvider(BaseProvider):
             return
 
         try:
-            async for message in self._client.receive_response():
-                if isinstance(message, AssistantMessage):
-                    model_name = getattr(message, "model", None)
-                    if model_name:
-                        yield NormalizedEvent("model_info", {"model": model_name})
+            # Wrap the SDK iterator to survive unknown message types
+            # (e.g. rate_limit_event) that the SDK doesn't handle
+            response_iter = self._client.receive_response().__aiter__()
+            while True:
+                try:
+                    message = await response_iter.__anext__()
+                except StopAsyncIteration:
+                    break
+                except Exception as iter_err:
+                    # SDK raised on an unrecognized message — skip and continue
+                    print(f"  [Claude] Skipping SDK event: {iter_err}", flush=True)
+                    continue
 
-                    for block in message.content:
-                        if isinstance(block, TextBlock):
-                            yield NormalizedEvent("assistant_text", {"text": block.text})
+                try:
+                    if isinstance(message, AssistantMessage):
+                        model_name = getattr(message, "model", None)
+                        if model_name:
+                            yield NormalizedEvent("model_info", {"model": model_name})
 
-                        elif isinstance(block, ToolUseBlock):
-                            yield NormalizedEvent("tool_use", {
-                                "tool": block.name,
-                                "id": block.id,
-                                "input": block.input,
-                            })
+                        for block in message.content:
+                            if isinstance(block, TextBlock):
+                                yield NormalizedEvent("assistant_text", {"text": block.text})
 
-                        elif isinstance(block, ToolResultBlock):
-                            content_str = ""
-                            if isinstance(block.content, str):
-                                content_str = block.content
-                            elif isinstance(block.content, list):
-                                content_str = json.dumps(block.content, default=str)
-                            elif block.content is not None:
-                                content_str = str(block.content)
+                            elif isinstance(block, ToolUseBlock):
+                                yield NormalizedEvent("tool_use", {
+                                    "tool": block.name,
+                                    "id": block.id,
+                                    "input": block.input,
+                                })
 
-                            yield NormalizedEvent("tool_result", {
-                                "tool_use_id": block.tool_use_id,
-                                "content": content_str,
-                                "is_error": block.is_error or False,
-                            })
+                            elif isinstance(block, ToolResultBlock):
+                                content_str = ""
+                                if isinstance(block.content, str):
+                                    content_str = block.content
+                                elif isinstance(block.content, list):
+                                    content_str = json.dumps(block.content, default=str)
+                                elif block.content is not None:
+                                    content_str = str(block.content)
 
-                elif isinstance(message, StreamEvent):
-                    pass  # Text already handled via AssistantMessage TextBlocks
+                                yield NormalizedEvent("tool_result", {
+                                    "tool_use_id": block.tool_use_id,
+                                    "content": content_str,
+                                    "is_error": block.is_error or False,
+                                })
 
-                elif isinstance(message, ResultMessage):
-                    yield NormalizedEvent("result", {
-                        "text": message.result or "",
-                        "session_id": message.session_id,
-                        "cost": message.total_cost_usd,
-                        "duration_ms": message.duration_ms,
-                        "num_turns": message.num_turns,
-                        "is_error": message.is_error,
-                        "usage": message.usage,
-                    })
+                    elif isinstance(message, StreamEvent):
+                        pass  # Text already handled via AssistantMessage TextBlocks
 
-                elif isinstance(message, SDKSystemMessage):
-                    yield NormalizedEvent("status", {
-                        "text": f"System: {message.subtype}",
-                    })
+                    elif isinstance(message, ResultMessage):
+                        yield NormalizedEvent("result", {
+                            "text": message.result or "",
+                            "session_id": message.session_id,
+                            "cost": message.total_cost_usd,
+                            "duration_ms": message.duration_ms,
+                            "num_turns": message.num_turns,
+                            "is_error": message.is_error,
+                            "usage": message.usage,
+                        })
+
+                    elif isinstance(message, SDKSystemMessage):
+                        yield NormalizedEvent("status", {
+                            "text": f"System: {message.subtype}",
+                        })
+
+                    # else: silently ignore unknown message types (e.g. rate_limit_event)
+
+                except Exception as inner_err:
+                    # Don't break the stream for a single bad message
+                    print(f"  [Claude] Skipping message: {inner_err}", flush=True)
+                    continue
+
         except Exception as e:
             yield NormalizedEvent("error", {"text": f"Claude SDK error: {e}"})
 
