@@ -16,9 +16,9 @@ PACKAGE_NAME="rain-assistant"
 MIN_PY_MAJOR=3
 MIN_PY_MINOR=11
 
-# To install from GitHub instead of PyPI, uncomment:
-# PACKAGE_SOURCE="git+https://github.com/camilo-gutierrez/rain-assistant.git"
-PACKAGE_SOURCE="$PACKAGE_NAME"
+# Install from GitHub repo zip (no git required, PyPI not yet published)
+PACKAGE_SOURCE="https://github.com/camilo-gutierrez/rain-assistant/archive/refs/heads/main.zip"
+# When published to PyPI, switch to: PACKAGE_SOURCE="$PACKAGE_NAME"
 
 # ── Colors ─────────────────────────────────────────────────────────────────────
 RED='\033[0;31m'
