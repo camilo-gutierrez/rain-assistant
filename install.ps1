@@ -15,9 +15,8 @@ $GETPIP_URL     = "https://bootstrap.pypa.io/get-pip.py"
 $FFMPEG_URL     = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
 $PACKAGE_NAME   = "rain-assistant"
 
-# Install from GitHub repo zip (no git required, PyPI not yet published)
-$PACKAGE_SOURCE = "https://github.com/camilo-gutierrez/rain-assistant/archive/refs/heads/main.zip"
-# When published to PyPI, switch to: $PACKAGE_SOURCE = $PACKAGE_NAME
+# Install from PyPI (published package)
+$PACKAGE_SOURCE = $PACKAGE_NAME
 
 # ── Banner ─────────────────────────────────────────────────────────────────────
 Write-Host ""
