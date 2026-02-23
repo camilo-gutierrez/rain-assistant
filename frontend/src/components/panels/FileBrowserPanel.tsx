@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { browseDirectory } from "@/lib/api";
 import { useAgentStore } from "@/stores/useAgentStore";
 import { useConnectionStore } from "@/stores/useConnectionStore";
@@ -48,44 +48,57 @@ export default function FileBrowserPanel() {
   const activeAgent = activeAgentId ? agents[activeAgentId] : null;
   const browsePath = activeAgent?.currentBrowsePath || "~";
 
+  // Prevent useEffect from re-fetching after user-initiated navigation
+  const isUserNav = useRef(false);
+  // Ignore stale responses from concurrent requests
+  const requestId = useRef(0);
+
   const loadDirectory = useCallback(
     async (path: string) => {
+      const rid = ++requestId.current;
       setLoading(true);
       try {
         const data = await browseDirectory(path, authToken);
+        if (rid !== requestId.current) return; // stale — a newer request is in flight
         setEntries(data.entries);
         setCurrentPath(data.current);
         if (activeAgentId) {
           setAgentBrowsePath(activeAgentId, data.current);
         }
       } catch (err) {
+        if (rid !== requestId.current) return;
         console.error("Browse error:", err);
       } finally {
-        setLoading(false);
+        if (rid === requestId.current) {
+          setLoading(false);
+        }
       }
     },
     [authToken, activeAgentId, setAgentBrowsePath]
   );
 
+  // Load directory on mount, agent switch, or auth change.
+  // Skip when the effect fires because navigateTo already updated browsePath.
   useEffect(() => {
+    if (isUserNav.current) {
+      isUserNav.current = false;
+      return;
+    }
     loadDirectory(browsePath);
   }, [browsePath, loadDirectory]);
 
   const navigateTo = (path: string) => {
+    isUserNav.current = true;
     loadDirectory(path);
   };
 
   const goUp = () => {
-    const parts = currentPath.replace(/\\/g, "/").split("/").filter(Boolean);
-    if (parts.length > 1) {
-      parts.pop();
-      const parent = parts.join("/");
-      if (currentPath.includes(":\\") || currentPath.includes(":/")) {
-        navigateTo(parent);
-      } else {
-        navigateTo("/" + parent);
-      }
+    // Use the ".." entry from the server if available (it has the correct resolved path)
+    const parentEntry = entries.find((e) => e.name === "..");
+    if (parentEntry) {
+      navigateTo(parentEntry.path);
     }
+    // If no ".." entry, we're at ALLOWED_ROOT — do nothing
   };
 
   const handleSelect = () => {
