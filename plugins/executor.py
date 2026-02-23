@@ -12,11 +12,43 @@ Security measures for subprocess-based plugins (bash, python):
 
 import asyncio
 import json
+import logging
 import os
 import re
+import shlex
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
+
+_audit = logging.getLogger("rain.plugin.audit")
+
+# Persistent audit log for plugin executions
+_AUDIT_LOG_DIR = Path.home() / ".rain-assistant" / "logs"
+
+
+def _log_plugin_execution(plugin_name: str, exec_type: str, args_keys: list, success: bool, error: str = ""):
+    """Write plugin execution to persistent audit log."""
+    try:
+        _AUDIT_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        log_file = _AUDIT_LOG_DIR / "plugin_audit.log"
+        timestamp = datetime.now(timezone.utc).isoformat()
+        status = "SUCCESS" if success else "FAILURE"
+        entry = f"{timestamp} | {status} | {plugin_name} | type={exec_type} | args={args_keys}"
+        if error:
+            entry += f" | error={error[:200]}"
+        entry += "\n"
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(entry)
+        # Set file permissions
+        if sys.platform != "win32":
+            try:
+                os.chmod(log_file, 0o600)
+            except OSError:
+                pass
+    except Exception:
+        pass  # Never let audit logging break plugin execution
 
 from .schema import Plugin, PluginExecution
 from .loader import get_plugin_env
@@ -98,10 +130,14 @@ def _get_preexec_fn():
 
 
 def _resolve_value(key: str, arguments: dict, env: dict) -> str:
-    """Resolve a template key like 'query' or 'env.API_KEY'."""
+    """Resolve a template key like 'query' or 'env.API_KEY'.
+
+    Only looks up plugin-specific env vars — never falls back to
+    os.environ to avoid exposing system secrets to plugins.
+    """
     if key.startswith("env."):
         env_key = key[4:]
-        return env.get(env_key, os.environ.get(env_key, ""))
+        return env.get(env_key, "")
     return str(arguments.get(key, ""))
 
 
@@ -111,6 +147,51 @@ def _resolve_template(template: str, arguments: dict, env: dict) -> str:
         return str(template)
     return TEMPLATE_PATTERN.sub(
         lambda m: _resolve_value(m.group(1), arguments, env),
+        template,
+    )
+
+
+def _escape_cmd_arg(value: str) -> str:
+    """Escape a value for Windows cmd.exe."""
+    # Replace special cmd.exe characters
+    dangerous = ['&', '|', '<', '>', '^', '%', '!']
+    result = value
+    for ch in dangerous:
+        result = result.replace(ch, f'^{ch}')
+    return f'"{result}"'
+
+
+def _resolve_template_bash(template: str, arguments: dict, env: dict) -> str:
+    """Replace {{key}} placeholders with shell-escaped values.
+
+    Uses platform-appropriate escaping: shlex.quote() on POSIX,
+    _escape_cmd_arg() on Windows.  Prevents shell injection in bash
+    plugin commands.
+    """
+    if not isinstance(template, str):
+        return str(template)
+
+    def _escape(match):
+        raw = _resolve_value(match.group(1), arguments, env)
+        if sys.platform == "win32":
+            safe_val = _escape_cmd_arg(str(raw))
+        else:
+            safe_val = shlex.quote(str(raw))
+        return safe_val
+
+    return TEMPLATE_PATTERN.sub(_escape, template)
+
+
+def _resolve_template_python(template: str, arguments: dict, env: dict) -> str:
+    """Replace {{key}} placeholders with repr()-escaped values.
+
+    Prevents code injection in Python plugin scripts by ensuring each
+    substituted value is a safely-quoted Python string literal.
+    """
+    if not isinstance(template, str):
+        return str(template)
+    return TEMPLATE_PATTERN.sub(
+        lambda m: repr(_resolve_value(m.group(1), arguments, env)),
         template,
     )
 
@@ -171,20 +252,124 @@ def _extract_data(data: Any, path: str) -> Any:
     return result
 
 
+def _is_unsafe_ip(ip: "ipaddress.IPv4Address | ipaddress.IPv6Address") -> bool:
+    """Return True if *ip* is a private, loopback, reserved, link-local, or
+    unspecified address — including IPv4-mapped IPv6, 6to4, and Teredo tunnels
+    that embed a private IPv4 address.
+    """
+    import ipaddress
+
+    if ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_reserved or ip.is_unspecified:
+        return True
+
+    # IPv6-specific: check embedded IPv4 addresses
+    if isinstance(ip, ipaddress.IPv6Address):
+        # ::ffff:127.0.0.1 — IPv4-mapped IPv6
+        if ip.ipv4_mapped:
+            mapped = ip.ipv4_mapped
+            if mapped.is_private or mapped.is_loopback or mapped.is_reserved or mapped.is_link_local:
+                return True
+        # 6to4 tunneling (2002::/16) — embeds an IPv4 address
+        if ip.sixtofour:
+            if ip.sixtofour.is_private or ip.sixtofour.is_loopback or ip.sixtofour.is_reserved:
+                return True
+        # Teredo tunneling (2001::/32) — embeds client and server IPv4
+        if ip.teredo:
+            server_ip, client_ip = ip.teredo
+            if server_ip.is_private or server_ip.is_loopback or server_ip.is_reserved:
+                return True
+            if client_ip.is_private or client_ip.is_loopback or client_ip.is_reserved:
+                return True
+
+    return False
+
+
+# Well-known hostnames that must never be contacted by HTTP plugins.
+# Covers cloud metadata services (GCP, AWS, Azure) and loopback aliases.
+_BLOCKED_HOSTNAMES = {
+    "localhost",
+    "metadata.google.internal",
+    "metadata.internal",
+    # AWS / EC2 instance metadata
+    "instance-data",
+    "169.254.169.254",
+    # Azure instance metadata
+    "metadata.azure.com",
+}
+
+
+def _is_safe_url(url: str) -> bool:
+    """Check that a URL does not target internal/private network addresses.
+
+    Blocks localhost, private IP ranges (RFC 1918), link-local (169.254.x.x),
+    loopback (127.x.x.x, ::1), IPv4-mapped IPv6 (::ffff:127.0.0.1), 6to4,
+    Teredo tunnels with embedded private IPs, and known cloud metadata
+    endpoints to prevent Server-Side Request Forgery (SSRF) attacks.
+
+    DNS resolution failures are treated as *unsafe* to prevent DNS rebinding:
+    if we cannot verify the target IP right now, we refuse the request.
+    """
+    import ipaddress
+    import socket
+
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+        if not hostname:
+            return False
+
+        # Block well-known internal / metadata hostnames
+        if hostname.lower() in _BLOCKED_HOSTNAMES:
+            return False
+
+        # Resolve hostname to IP addresses and check each one
+        try:
+            addrinfos = socket.getaddrinfo(hostname, None)
+        except socket.gaierror:
+            # Cannot resolve — block it (prevents DNS rebinding where a
+            # transient failure could let a later resolution hit 127.0.0.1)
+            return False
+
+        if not addrinfos:
+            return False
+
+        for family, _, _, _, sockaddr in addrinfos:
+            ip_str = sockaddr[0]
+            try:
+                ip = ipaddress.ip_address(ip_str)
+            except ValueError:
+                return False  # Unparseable IP → not safe
+
+            if _is_unsafe_ip(ip):
+                return False
+
+        return True
+    except Exception:
+        return False
+
+
 async def execute_plugin(plugin: Plugin, arguments: dict, cwd: str) -> dict:
     """Execute a plugin with given arguments. Returns {content, is_error}."""
     env = get_plugin_env()
 
+    _audit.info("Executing plugin %s (type=%s) with args=%s", plugin.name, plugin.execution.type, list(arguments.keys()))
+
     try:
         if plugin.execution.type == "http":
-            return await _execute_http(plugin.execution, arguments, env)
+            result = await _execute_http(plugin.execution, arguments, env)
         elif plugin.execution.type == "bash":
-            return await _execute_bash(plugin.execution, arguments, env, cwd)
+            result = await _execute_bash(plugin.execution, arguments, env, cwd)
         elif plugin.execution.type == "python":
-            return await _execute_python(plugin.execution, arguments, env, cwd)
+            result = await _execute_python(plugin.execution, arguments, env, cwd)
         else:
-            return {"content": f"Unknown execution type: {plugin.execution.type}", "is_error": True}
+            result = {"content": f"Unknown execution type: {plugin.execution.type}", "is_error": True}
+
+        _audit.info("Plugin %s completed (error=%s)", plugin.name, result.get("is_error", False))
+        _log_plugin_execution(plugin.name, plugin.execution.type, list(arguments.keys()), success=not result.get("is_error", False))
+        return result
     except Exception as e:
+        _audit.warning("Plugin %s failed: %s", plugin.name, e)
+        _log_plugin_execution(plugin.name, plugin.execution.type, list(arguments.keys()), success=False, error=str(e))
         return {"content": f"Plugin execution error: {e}", "is_error": True}
 
 
@@ -196,10 +381,55 @@ async def _execute_http(
     HTTP plugins are inherently sandboxed — they only make outbound HTTP
     requests and cannot access the local filesystem.  The httpx timeout
     (TIMEOUT seconds) prevents hanging on unresponsive servers.
+
+    DNS rebinding mitigation: the hostname is resolved *twice* — once in
+    ``_is_safe_url`` (initial gate) and again immediately before the HTTP
+    call.  If the second resolution returns a private/internal IP (i.e. the
+    DNS record changed between the two lookups), the request is blocked.
     """
+    import ipaddress
+    import socket
+
     import httpx
 
     url = _resolve_template(execution.url, arguments, env)
+
+    # SSRF protection: block requests to internal/private addresses
+    if not _is_safe_url(url):
+        return {
+            "content": f"Blocked: URL targets a private/internal address: {url}",
+            "is_error": True,
+        }
+
+    # --- DNS rebinding mitigation -------------------------------------------
+    # Re-resolve the hostname right before issuing the HTTP request.  If the
+    # DNS answer has changed to a private/loopback IP since _is_safe_url ran,
+    # we refuse to proceed.
+    parsed_url = urlparse(url)
+    hostname = parsed_url.hostname
+    if hostname:
+        try:
+            resolved = socket.getaddrinfo(hostname, parsed_url.port or 80)
+            for family, _, _, _, sockaddr in resolved:
+                try:
+                    ip = ipaddress.ip_address(sockaddr[0])
+                except ValueError:
+                    return {
+                        "content": f"SSRF blocked: cannot parse resolved IP for {hostname}",
+                        "is_error": True,
+                    }
+                if _is_unsafe_ip(ip):
+                    return {
+                        "content": f"SSRF blocked: {hostname} resolves to private/internal IP {ip}",
+                        "is_error": True,
+                    }
+        except socket.gaierror:
+            return {
+                "content": f"DNS resolution failed for {hostname}",
+                "is_error": True,
+            }
+    # -----------------------------------------------------------------------
+
     method = execution.method.upper()
     headers = _resolve_dict(execution.headers, arguments, env)
     params = _resolve_dict(execution.params, arguments, env)
@@ -257,7 +487,7 @@ async def _execute_bash(
       - Timeout via asyncio.wait_for
       - Output cap at MAX_OUTPUT chars
     """
-    command = _resolve_template(execution.command, arguments, env)
+    command = _resolve_template_bash(execution.command, arguments, env)
     if not command.strip():
         return {"content": "Error: Empty command after template resolution", "is_error": True}
 
@@ -266,11 +496,11 @@ async def _execute_bash(
     preexec = _get_preexec_fn()
 
     if sys.platform == "win32":
-        proc = await asyncio.create_subprocess_shell(
-            command, cwd=safe_cwd,
+        # Use cmd.exe explicitly, avoid shell=True interpretation
+        proc = await asyncio.create_subprocess_exec(
+            "cmd.exe", "/c", command, cwd=safe_cwd,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             env=proc_env,
-            shell=True,
         )
     else:
         proc = await asyncio.create_subprocess_exec(
@@ -315,10 +545,21 @@ async def _execute_python(
       - Timeout via asyncio.wait_for
       - Output cap at MAX_OUTPUT chars
     """
-    script = _resolve_template(execution.script, arguments, env)
+    # Use repr()-escaped template substitution to prevent code injection
+    script = _resolve_template_python(execution.script, arguments, env)
+
+    # Prepend a helper that makes arguments available as _args dict,
+    # so plugin scripts can use _args["key"] instead of {{key}} templates.
+    args_preamble = (
+        "import json as _json, os as _os; "
+        "_args = _json.loads(_os.environ.get('RAIN_PLUGIN_ARGS', '{}'))\n"
+    )
+    script = args_preamble + script
 
     safe_cwd = _get_safe_cwd(cwd)
     proc_env = _build_sandboxed_env(env)
+    # Pass arguments as a JSON env var for safe access from the script
+    proc_env["RAIN_PLUGIN_ARGS"] = json.dumps(arguments, ensure_ascii=False)
     preexec = _get_preexec_fn()
 
     kwargs: dict[str, Any] = dict(

@@ -11,7 +11,7 @@ import json
 import time
 from typing import AsyncIterator, Callable, Awaitable, Any
 
-from .base import BaseProvider, NormalizedEvent
+from .base import BaseProvider, NormalizedEvent, _sanitize_api_error
 from tools import ToolExecutor
 from tools.definitions import get_all_tool_definitions_gemini
 
@@ -44,6 +44,7 @@ class GeminiProvider(BaseProvider):
         self._tool_executor: ToolExecutor | None = None
         self._interrupted = False
         self._genai = None
+        self._api_key: str | None = None
 
     async def initialize(
         self,
@@ -55,10 +56,12 @@ class GeminiProvider(BaseProvider):
         resume_session_id: str | None = None,
         mcp_servers: dict | str | None = None,
         agent_id: str = "default",
+        user_id: str = "default",
     ) -> None:
         import google.generativeai as genai
 
         self._genai = genai
+        self._api_key = api_key
         genai.configure(api_key=api_key)
 
         self._model_name = model if model and model != "auto" else "gemini-2.0-flash"
@@ -71,7 +74,7 @@ class GeminiProvider(BaseProvider):
             tools=gemini_tools,
         )
         self._chat = self._model.start_chat()
-        self._tool_executor = ToolExecutor(cwd=cwd, permission_callback=can_use_tool, agent_id=agent_id)
+        self._tool_executor = ToolExecutor(cwd=cwd, permission_callback=can_use_tool, agent_id=agent_id, user_id=user_id)
         self._interrupted = False
 
     async def send_message(self, text: str) -> None:
@@ -94,11 +97,15 @@ class GeminiProvider(BaseProvider):
         while iterations < MAX_ITERATIONS and not self._interrupted:
             iterations += 1
 
+            # Re-configure before each call to prevent race conditions in multi-user mode
+            # (genai.configure sets a global key; another user's request could overwrite it)
+            self._genai.configure(api_key=self._api_key)
+
             # Send message to Gemini using native async API
             try:
                 response = await self._chat.send_message_async(current_content)
             except Exception as e:
-                yield NormalizedEvent("error", {"text": f"Gemini API error: {e}"})
+                yield NormalizedEvent("error", {"text": _sanitize_api_error("Gemini", e)})
                 break
 
             if self._interrupted:
@@ -155,7 +162,7 @@ class GeminiProvider(BaseProvider):
                 try:
                     result = await self._tool_executor.execute(fc["name"], fc["args"])
                 except Exception as e:
-                    result = {"content": f"Tool execution error: {e}", "is_error": True}
+                    result = {"content": _sanitize_api_error("Gemini/tool", e), "is_error": True}
 
                 yield NormalizedEvent("tool_result", {
                     "tool_use_id": tool_id,

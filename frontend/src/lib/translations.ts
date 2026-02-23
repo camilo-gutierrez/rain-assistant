@@ -28,6 +28,7 @@ const translations: Record<Language, Record<string, string>> = {
     "pin.tooManyAttempts": "Too many attempts. Try again in {time}",
     "pin.incorrectRemaining": "Incorrect PIN — {n} attempts remaining",
     "pin.incorrectRemainingOne": "Incorrect PIN — 1 attempt remaining",
+    "pin.cancel": "Cancel",
 
     // API key panel
     "apiKey.title": "Rain Assistant",
@@ -242,6 +243,31 @@ const translations: Record<Language, Record<string, string>> = {
     "marketplace.installing": "Installing...",
     "marketplace.requiresEnv": "Requires configuration",
     "marketplace.allCategories": "All",
+
+    // Devices
+    "devices.title": "Connected Devices",
+    "devices.thisDevice": "This device",
+    "devices.revoke": "Revoke",
+    "devices.rename": "Rename",
+    "devices.revokeConfirm": "Revoke this device? It will be disconnected immediately.",
+    "devices.limitReached": "Maximum devices reached ({max}). Remove a device from Settings on an active device.",
+    "devices.count": "{n}/{max} devices",
+    "devices.lastActive": "Last active",
+    "devices.noDevices": "No devices connected",
+    "devices.renamed": "Device renamed",
+    "devices.revoked": "Device revoked",
+    "devices.loading": "Loading devices...",
+    "devices.loadError": "Could not load devices",
+    "devices.replaceTitle": "Device Limit Reached",
+    "devices.replaceSubtitle": "You have {max} devices connected. Choose one to replace with this device.",
+    "devices.replace": "Replace",
+    "devices.replaceConfirmTitle": "Replace Device?",
+    "devices.replaceConfirmBody": "\"{name}\" will be disconnected immediately and replaced by this device.",
+    "devices.justNow": "just now",
+    "devices.revokeAll": "Remove all devices",
+    "devices.revokeAllConfirmTitle": "Remove All Devices?",
+    "devices.revokeAllConfirmBody": "All connected devices will be disconnected immediately. You can then log in with this device.",
+    "devices.revokeAllError": "Could not remove devices. Try again.",
   },
   es: {
     // Status bar
@@ -270,6 +296,7 @@ const translations: Record<Language, Record<string, string>> = {
     "pin.tooManyAttempts": "Demasiados intentos. Intenta en {time}",
     "pin.incorrectRemaining": "PIN incorrecto \u2014 {n} intentos restantes",
     "pin.incorrectRemainingOne": "PIN incorrecto \u2014 1 intento restante",
+    "pin.cancel": "Cancelar",
 
     // API key panel
     "apiKey.title": "Rain Assistant",
@@ -484,6 +511,31 @@ const translations: Record<Language, Record<string, string>> = {
     "marketplace.installing": "Instalando...",
     "marketplace.requiresEnv": "Requiere configuracion",
     "marketplace.allCategories": "Todos",
+
+    // Devices
+    "devices.title": "Dispositivos Conectados",
+    "devices.thisDevice": "Este dispositivo",
+    "devices.revoke": "Revocar",
+    "devices.rename": "Renombrar",
+    "devices.revokeConfirm": "Revocar este dispositivo? Se desconectara inmediatamente.",
+    "devices.limitReached": "Maximo de dispositivos alcanzado ({max}). Elimina un dispositivo desde Configuracion en un dispositivo activo.",
+    "devices.count": "{n}/{max} dispositivos",
+    "devices.lastActive": "Ultima actividad",
+    "devices.noDevices": "No hay dispositivos conectados",
+    "devices.renamed": "Dispositivo renombrado",
+    "devices.revoked": "Dispositivo revocado",
+    "devices.loading": "Cargando dispositivos...",
+    "devices.loadError": "No se pudieron cargar los dispositivos",
+    "devices.replaceTitle": "Limite de Dispositivos",
+    "devices.replaceSubtitle": "Tienes {max} dispositivos conectados. Elige uno para reemplazar con este dispositivo.",
+    "devices.replace": "Reemplazar",
+    "devices.replaceConfirmTitle": "Reemplazar dispositivo?",
+    "devices.replaceConfirmBody": "\"{name}\" se desconectara inmediatamente y sera reemplazado por este dispositivo.",
+    "devices.justNow": "ahora",
+    "devices.revokeAll": "Eliminar todos los dispositivos",
+    "devices.revokeAllConfirmTitle": "Eliminar todos los dispositivos?",
+    "devices.revokeAllConfirmBody": "Todos los dispositivos conectados se desconectaran inmediatamente. Podras iniciar sesion con este dispositivo.",
+    "devices.revokeAllError": "No se pudieron eliminar los dispositivos. Intenta de nuevo.",
   },
 };
 

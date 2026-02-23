@@ -1,4 +1,5 @@
 import json
+import os
 import sqlite3
 import time
 from datetime import datetime, timedelta
@@ -14,6 +15,14 @@ CONFIG_DIR = Path.home() / ".rain-assistant"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
 
+def _secure_chmod(path: Path, mode: int) -> None:
+    """Best-effort chmod. Windows has limited support, so errors are ignored."""
+    try:
+        os.chmod(str(path), mode)
+    except OSError:
+        pass  # Windows has limited chmod support
+
+
 # ---------------------------------------------------------------------------
 # Encryption key management (Fernet)
 # ---------------------------------------------------------------------------
@@ -21,6 +30,7 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 def _get_fernet() -> Fernet:
     """Load or auto-generate encryption key via the OS keyring (with config.json fallback)."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    _secure_chmod(CONFIG_DIR, 0o700)
     enc_key = ensure_encryption_key(CONFIG_FILE)
     return Fernet(enc_key.encode("utf-8"))
 
@@ -42,20 +52,41 @@ def encrypt_field(plaintext: str) -> str:
     return _get_cipher().encrypt(plaintext.encode("utf-8")).decode("utf-8")
 
 
+_FERNET_PREFIX = "gAAAA"
+
+
 def decrypt_field(ciphertext: str) -> str:
-    """Decrypt a field from DB. Returns original if decryption fails (backward compat)."""
+    """Decrypt a field, with backward compat for pre-encryption data.
+
+    - Legacy unencrypted data (not starting with ``gAAAA``) is returned as-is.
+    - Valid Fernet tokens are decrypted normally.
+    - If a Fernet token fails to decrypt, a ``ValueError`` is raised to signal
+      possible data tampering or key mismatch.
+    """
     if not ciphertext:
         return ciphertext
+
+    # Check if this looks like a Fernet token
+    if not ciphertext.startswith(_FERNET_PREFIX):
+        # Legacy unencrypted data — return as-is
+        return ciphertext
+
     try:
         return _get_cipher().decrypt(ciphertext.encode("utf-8")).decode("utf-8")
-    except Exception:
-        # Backward compat: data was stored unencrypted before this feature
-        return ciphertext
+    except Exception as e:
+        # This IS a Fernet token but decryption failed — possible tampering
+        import logging
+        logging.getLogger(__name__).error(
+            "Decryption failed for Fernet token (possible data tampering): %s",
+            type(e).__name__
+        )
+        raise ValueError("Decryption failed — possible data tampering or key mismatch") from e
 
 
 def _ensure_db():
     """Create tables and indexes if they don't exist."""
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _secure_chmod(DB_PATH.parent, 0o700)
     with _connect() as conn:
         # Enable WAL mode for better concurrent read/write performance
         conn.execute("PRAGMA journal_mode=WAL")
@@ -167,7 +198,32 @@ def _ensure_db():
             ON active_sessions(last_activity DESC)
         """)
 
+        # Users table for per-user data isolation
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id       TEXT PRIMARY KEY,
+                created_at    REAL NOT NULL,
+                last_login    REAL NOT NULL,
+                metadata      TEXT DEFAULT '{}'
+            )
+        """)
+
+        # Migrate: add device columns if missing (upgrade from old schema)
+        _migrate_device_columns(conn)
+
+        # Migration: add user_id to active_sessions if missing
+        cursor = conn.execute("PRAGMA table_info(active_sessions)")
+        columns = {row[1] for row in cursor.fetchall()}
+        if "user_id" not in columns:
+            conn.execute("ALTER TABLE active_sessions ADD COLUMN user_id TEXT DEFAULT 'default'")
+            conn.execute("UPDATE active_sessions SET user_id = 'default' WHERE user_id IS NULL")
+            conn.commit()
+
         conn.commit()
+
+    # Restrict DB file permissions after creation
+    if DB_PATH.exists():
+        _secure_chmod(DB_PATH, 0o600)
 
 
 def _migrate_agent_id(conn):
@@ -180,6 +236,21 @@ def _migrate_agent_id(conn):
             CREATE INDEX IF NOT EXISTS idx_messages_cwd_agent
             ON messages(cwd, agent_id, timestamp)
         """)
+
+
+def _migrate_device_columns(conn):
+    """Add device_id and device_name columns to active_sessions."""
+    cursor = conn.execute("PRAGMA table_info(active_sessions)")
+    columns = [row[1] for row in cursor.fetchall()]
+    if "device_id" not in columns:
+        conn.execute("ALTER TABLE active_sessions ADD COLUMN device_id TEXT DEFAULT ''")
+        conn.execute("ALTER TABLE active_sessions ADD COLUMN device_name TEXT DEFAULT ''")
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sessions_device
+            ON active_sessions(device_id)
+        """)
+    if "encrypted_token" not in columns:
+        conn.execute("ALTER TABLE active_sessions ADD COLUMN encrypted_token TEXT DEFAULT ''")
 
 
 @contextmanager
@@ -228,7 +299,10 @@ def get_messages(cwd: str, agent_id: str = "default") -> list[dict]:
         raw = r["content_json"]
         # Decrypt if this type is encrypted
         if r["type"] in _ENCRYPTED_MSG_TYPES:
-            raw = decrypt_field(raw)
+            try:
+                raw = decrypt_field(raw)
+            except ValueError:
+                raw = json.dumps({"text": "[encrypted content — decryption failed]"})
         results.append({
             "id": r["id"],
             "role": r["role"],
@@ -441,8 +515,9 @@ def log_access(
                  client_ip, token_prefix[:16], user_agent[:200]),
             )
             conn.commit()
-    except Exception:
-        pass  # Never let logging break the application
+    except Exception as e:
+        import sys
+        print(f"[SECURITY LOG FAILURE] log_access: {e}", file=sys.stderr, flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -464,8 +539,9 @@ def log_security_event(
                  token_prefix[:16], encrypt_field(details[:2000]), endpoint[:500]),
             )
             conn.commit()
-    except Exception:
-        pass
+    except Exception as e:
+        import sys
+        print(f"[SECURITY LOG FAILURE] log_security_event: {e}", file=sys.stderr, flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -526,15 +602,23 @@ def increment_audio_seconds(token_prefix: str, date_key: str, seconds: float) ->
 # Session management
 # ---------------------------------------------------------------------------
 
-def create_session(token_hash: str, client_ip: str, user_agent: str = "") -> None:
+def create_session(
+    token_hash: str,
+    client_ip: str,
+    user_agent: str = "",
+    device_id: str = "",
+    device_name: str = "",
+    user_id: str = "default",
+    encrypted_token: str = "",
+) -> None:
     """Record a new active session."""
     now = time.time()
     with _connect() as conn:
         conn.execute(
             "INSERT OR REPLACE INTO active_sessions "
-            "(token_hash, created_at, last_activity, client_ip, user_agent, request_count) "
-            "VALUES (?, ?, ?, ?, ?, 0)",
-            (token_hash, now, now, client_ip, user_agent[:200]),
+            "(token_hash, created_at, last_activity, client_ip, user_agent, request_count, device_id, device_name, user_id, encrypted_token) "
+            "VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?)",
+            (token_hash, now, now, client_ip, user_agent[:200], device_id[:64], device_name[:100], user_id, encrypted_token),
         )
         conn.commit()
 
@@ -549,8 +633,9 @@ def update_session_activity(token_hash: str) -> None:
                 (time.time(), token_hash),
             )
             conn.commit()
-    except Exception:
-        pass
+    except Exception as e:
+        import sys
+        print(f"[SECURITY LOG FAILURE] update_session_activity: {e}", file=sys.stderr, flush=True)
 
 
 def revoke_session(token_hash: str) -> None:
@@ -566,3 +651,136 @@ def revoke_all_sessions() -> int:
         cur = conn.execute("DELETE FROM active_sessions")
         conn.commit()
         return cur.rowcount
+
+
+# ---------------------------------------------------------------------------
+# Device management
+# ---------------------------------------------------------------------------
+
+def get_active_devices() -> list[dict]:
+    """Return all active sessions with device info."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT token_hash, device_id, device_name, client_ip, user_agent, "
+            "created_at, last_activity FROM active_sessions "
+            "ORDER BY last_activity DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def count_active_devices(max_age_seconds: float = 0) -> int:
+    """Count distinct active device_ids (excluding empty).
+
+    If *max_age_seconds* > 0, only sessions whose ``last_activity`` is
+    within that window are counted — stale/expired sessions are ignored.
+    """
+    with _connect() as conn:
+        if max_age_seconds > 0:
+            cutoff = time.time() - max_age_seconds
+            row = conn.execute(
+                "SELECT COUNT(DISTINCT device_id) FROM active_sessions "
+                "WHERE device_id != '' AND last_activity >= ?",
+                (cutoff,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT COUNT(DISTINCT device_id) FROM active_sessions WHERE device_id != ''"
+            ).fetchone()
+        return row[0] if row else 0
+
+
+def get_session_by_device_id(device_id: str) -> dict | None:
+    """Find an existing session for a device."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT token_hash, device_id, device_name, client_ip, user_agent, "
+            "created_at, last_activity FROM active_sessions WHERE device_id = ?",
+            (device_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def revoke_session_by_device_id(device_id: str) -> str | None:
+    """Delete session by device_id. Returns token_hash for in-memory cleanup, or None."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT token_hash FROM active_sessions WHERE device_id = ?",
+            (device_id,),
+        ).fetchone()
+        if not row:
+            return None
+        token_hash = row[0]
+        conn.execute("DELETE FROM active_sessions WHERE device_id = ?", (device_id,))
+        conn.commit()
+        return token_hash
+
+
+def rename_device(device_id: str, new_name: str) -> bool:
+    """Update device_name for a device. Returns True if updated."""
+    with _connect() as conn:
+        cur = conn.execute(
+            "UPDATE active_sessions SET device_name = ? WHERE device_id = ?",
+            (new_name[:100], device_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def cleanup_expired_sessions(max_age_seconds: float) -> int:
+    """Delete sessions older than max_age_seconds. Returns count deleted."""
+    cutoff = time.time() - max_age_seconds
+    with _connect() as conn:
+        cur = conn.execute(
+            "DELETE FROM active_sessions WHERE last_activity < ?", (cutoff,)
+        )
+        conn.commit()
+        return cur.rowcount
+
+
+def load_persisted_tokens(max_age_seconds: float) -> list[dict]:
+    """Load non-expired sessions that have an encrypted_token.
+
+    Returns list of {encrypted_token, token_hash, device_id, created_at, last_activity}.
+    """
+    cutoff = time.time() - max_age_seconds
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT encrypted_token, token_hash, device_id, created_at, last_activity "
+            "FROM active_sessions "
+            "WHERE encrypted_token != '' AND last_activity >= ?",
+            (cutoff,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Per-user data isolation helpers
+# ---------------------------------------------------------------------------
+
+def get_user_id_from_token(token_hash: str) -> str:
+    """Look up user_id from a token_hash. Returns 'default' if not found."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT user_id FROM active_sessions WHERE token_hash = ?",
+            (token_hash,)
+        ).fetchone()
+        return row[0] if row and row[0] else "default"
+
+
+def create_user(user_id: str, metadata: dict | None = None) -> None:
+    """Create a new user record (idempotent)."""
+    import json as _json
+    now = time.time()
+    with _connect() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO users (user_id, created_at, last_login, metadata) VALUES (?, ?, ?, ?)",
+            (user_id, now, now, _json.dumps(metadata or {}))
+        )
+        conn.commit()
+
+
+def update_user_login(user_id: str) -> None:
+    """Update user's last_login timestamp."""
+    with _connect() as conn:
+        conn.execute("UPDATE users SET last_login = ? WHERE user_id = ?", (time.time(), user_id))
+        conn.commit()

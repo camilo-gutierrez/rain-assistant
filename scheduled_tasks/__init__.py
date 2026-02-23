@@ -10,6 +10,7 @@ from .storage import (
     disable_task,
     get_pending_tasks,
     mark_task_run,
+    migrate_legacy_scheduled_tasks,
 )
 from .meta_tool import (
     MANAGE_SCHEDULED_TASKS_DEFINITION,
@@ -26,6 +27,7 @@ __all__ = [
     "disable_task",
     "get_pending_tasks",
     "mark_task_run",
+    "migrate_legacy_scheduled_tasks",
     "MANAGE_SCHEDULED_TASKS_DEFINITION",
     "handle_manage_scheduled_tasks",
 ]

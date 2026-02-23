@@ -19,6 +19,8 @@ interface SettingsState {
   voiceMode: VoiceMode;
   vadSensitivity: number;
   silenceTimeout: number;
+  // API keys — memory-only, never persisted (security: not in storage)
+  providerKeys: Record<string, string>;
 
   setTheme: (theme: Theme) => void;
   setLanguage: (lang: Language) => void;
@@ -32,11 +34,14 @@ interface SettingsState {
   setVoiceMode: (mode: VoiceMode) => void;
   setVadSensitivity: (val: number) => void;
   setSilenceTimeout: (val: number) => void;
+  setProviderKey: (provider: AIProvider, key: string) => void;
+  clearProviderKey: (provider: AIProvider) => void;
+  getProviderKey: (provider: AIProvider) => string | null;
 }
 
 export const useSettingsStore = create<SettingsState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       theme: "light" as Theme,
       language: "es" as Language,
       voiceLang: "es" as Language,
@@ -49,6 +54,7 @@ export const useSettingsStore = create<SettingsState>()(
       voiceMode: "push-to-talk" as VoiceMode,
       vadSensitivity: 0.5,
       silenceTimeout: 800,
+      providerKeys: {} as Record<string, string>,
 
       setTheme: (theme) => {
         if (typeof document !== "undefined") {
@@ -74,10 +80,22 @@ export const useSettingsStore = create<SettingsState>()(
       setVoiceMode: (voiceMode) => set({ voiceMode }),
       setVadSensitivity: (vadSensitivity) => set({ vadSensitivity }),
       setSilenceTimeout: (silenceTimeout) => set({ silenceTimeout }),
+      setProviderKey: (provider, key) =>
+        set({ providerKeys: { ...get().providerKeys, [provider]: key } }),
+      clearProviderKey: (provider) => {
+        const { [provider]: _, ...rest } = get().providerKeys;
+        set({ providerKeys: rest });
+      },
+      getProviderKey: (provider) => get().providerKeys[provider] || null,
     }),
     {
       name: "rain-settings",
       version: 5,
+      partialize: (state) => {
+        // Exclude providerKeys from persistence — they must stay memory-only
+        const { providerKeys: _, ...rest } = state;
+        return rest;
+      },
       migrate: (persisted, version) => {
         const state = persisted as Record<string, unknown>;
         if (version < 2) {

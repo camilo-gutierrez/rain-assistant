@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 
 from cryptography.fernet import Fernet
@@ -23,6 +24,15 @@ log = logging.getLogger("rain.key_manager")
 
 SERVICE_NAME = "rain-assistant"
 KEY_NAME = "encryption_key"
+
+
+def _secure_chmod(path: Path, mode: int) -> None:
+    """Best-effort chmod. Windows has limited support, so errors are ignored."""
+    try:
+        os.chmod(str(path), mode)
+    except OSError:
+        pass  # Windows has limited chmod support
+
 
 # ---------------------------------------------------------------------------
 # Internal: keyring helpers (with graceful fallback)
@@ -143,6 +153,7 @@ def migrate_key_from_config(config_path: Path) -> bool:
     )
     try:
         config_path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+        _secure_chmod(config_path, 0o600)
     except OSError as exc:
         log.warning("Could not update config.json after migration: %s", exc)
         # The key is already in the keyring, so this is non-fatal.
@@ -155,12 +166,18 @@ def ensure_encryption_key(config_path: Path) -> str:
     """Main entry point: return an encryption key, migrating if necessary.
 
     Resolution order:
+    0. ``RAIN_ENCRYPTION_KEY`` environment variable (preferred for server deployments)
     1. OS keyring
     2. config.json  (migrate to keyring if possible)
     3. Generate new  (store in keyring, or fall back to config.json)
 
     This function is idempotent and safe to call multiple times.
     """
+    # 0. Check for environment variable first (preferred for server deployments)
+    env_key = os.environ.get("RAIN_ENCRYPTION_KEY")
+    if env_key:
+        return env_key
+
     # 1. Try keyring
     key = _keyring_get()
     if key:
@@ -188,12 +205,19 @@ def ensure_encryption_key(config_path: Path) -> str:
                 config_path.write_text(
                     json.dumps(cfg, indent=2), encoding="utf-8"
                 )
+                _secure_chmod(config_path, 0o600)
             except OSError:
                 pass
             log.info("Encryption key migrated from config.json to OS keyring.")
         else:
             log.info(
                 "Keyring unavailable -- encryption key stays in config.json."
+            )
+            import sys
+            print(
+                "[SECURITY WARNING] Encryption key stored in config.json (plaintext). "
+                "Set RAIN_ENCRYPTION_KEY env var or install a keyring backend for better security.",
+                file=sys.stderr, flush=True,
             )
         return existing_key
 
@@ -205,16 +229,24 @@ def ensure_encryption_key(config_path: Path) -> str:
     else:
         # Fall back: store in config.json
         config_path.parent.mkdir(parents=True, exist_ok=True)
+        _secure_chmod(config_path.parent, 0o700)
         cfg["encryption_key"] = new_key
         try:
             config_path.write_text(
                 json.dumps(cfg, indent=2), encoding="utf-8"
             )
+            _secure_chmod(config_path, 0o600)
         except OSError as exc:
             log.error("Could not persist new encryption key: %s", exc)
         log.info(
             "New encryption key generated and stored in config.json "
             "(keyring unavailable)."
+        )
+        import sys
+        print(
+            "[SECURITY WARNING] Encryption key stored in config.json (plaintext). "
+            "Set RAIN_ENCRYPTION_KEY env var or install a keyring backend for better security.",
+            file=sys.stderr, flush=True,
         )
 
     return new_key

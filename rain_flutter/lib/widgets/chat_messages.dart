@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../app/l10n.dart';
@@ -38,6 +39,8 @@ class MessageTile extends ConsumerWidget {
           message: message as ComputerScreenshotMessage, lang: lang),
       ComputerActionMessage() => ComputerActionBlock(
           message: message as ComputerActionMessage, lang: lang),
+      SubAgentMessage() =>
+        _SubAgentBubble(message: message as SubAgentMessage),
     };
   }
 }
@@ -105,6 +108,9 @@ class AssistantBubble extends ConsumerWidget {
             MarkdownBody(
               data: displayText,
               selectable: true,
+              builders: {
+                'code': _CodeBlockBuilder(context),
+              },
               styleSheet: MarkdownStyleSheet(
                 p: TextStyle(color: cs.onSurface, fontSize: 15, height: 1.5),
                 code: TextStyle(
@@ -113,11 +119,8 @@ class AssistantBubble extends ConsumerWidget {
                   fontSize: 13,
                   fontFamily: 'monospace',
                 ),
-                codeblockDecoration: BoxDecoration(
-                  color: cs.surfaceContainer,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                codeblockPadding: const EdgeInsets.all(12),
+                codeblockDecoration: const BoxDecoration(),
+                codeblockPadding: EdgeInsets.zero,
                 blockquoteDecoration: BoxDecoration(
                   border: Border(
                     left: BorderSide(color: cs.primary, width: 3),
@@ -144,10 +147,18 @@ class AssistantBubble extends ConsumerWidget {
                     color: cs.onSurface, fontStyle: FontStyle.italic),
               ),
             ),
-            if (showTtsButton)
+            if (showTtsButton || (!isStreaming && text.isNotEmpty))
               Align(
                 alignment: Alignment.centerRight,
-                child: TtsPlayButton(text: text),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (!isStreaming && text.isNotEmpty)
+                      _CopyButton(text: text),
+                    if (showTtsButton)
+                      TtsPlayButton(text: text),
+                  ],
+                ),
               ),
           ],
         ),
@@ -252,6 +263,145 @@ class _TtsPlayButtonState extends ConsumerState<TtsPlayButton> {
           ),
         );
       },
+    );
+  }
+}
+
+// ── Copy button (reused for message-level and code-block-level copy) ──
+
+class _CopyButton extends StatelessWidget {
+  final String text;
+  const _CopyButton({required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return SizedBox(
+      width: 32,
+      height: 32,
+      child: IconButton(
+        onPressed: () {
+          Clipboard.setData(ClipboardData(text: text));
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Copied!'),
+              duration: Duration(seconds: 1),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        },
+        padding: EdgeInsets.zero,
+        visualDensity: VisualDensity.compact,
+        icon: Icon(Icons.content_copy, size: 16, color: cs.onSurfaceVariant),
+        tooltip: 'Copy',
+      ),
+    );
+  }
+}
+
+// ── Code block builder for fenced code blocks with header + copy button ──
+
+class _CodeBlockBuilder extends MarkdownElementBuilder {
+  final BuildContext _context;
+
+  _CodeBlockBuilder(this._context);
+
+  @override
+  Widget? visitElementAfter(element, TextStyle? preferredStyle) {
+    // Inline code: element has no children that are themselves elements,
+    // and its textContent is short / has no newlines typically.
+    // For fenced blocks, the element is inside a <pre> tag.
+    // We detect fenced blocks by checking if the parent tag is 'pre'.
+    final isBlock = element.attributes.containsKey('class') ||
+        (element.textContent.contains('\n'));
+
+    if (!isBlock) {
+      // Inline code: return null to let flutter_markdown use default styling
+      return null;
+    }
+
+    final cs = Theme.of(_context).colorScheme;
+
+    // Extract language from class attribute (e.g. "language-dart")
+    String? language;
+    final cls = element.attributes['class'];
+    if (cls != null && cls.startsWith('language-')) {
+      language = cls.substring('language-'.length);
+    }
+
+    final codeText = element.textContent.trimRight();
+
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainer,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Header bar with language label and copy button
+          Container(
+            padding: const EdgeInsets.only(left: 12, right: 4, top: 2, bottom: 2),
+            decoration: BoxDecoration(
+              color: cs.surfaceContainerHighest,
+            ),
+            child: Row(
+              children: [
+                if (language != null)
+                  Text(
+                    language,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      color: cs.onSurfaceVariant,
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                const Spacer(),
+                SizedBox(
+                  width: 28,
+                  height: 28,
+                  child: IconButton(
+                    onPressed: () {
+                      Clipboard.setData(ClipboardData(text: codeText));
+                      ScaffoldMessenger.of(_context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Copied!'),
+                          duration: Duration(seconds: 1),
+                          behavior: SnackBarBehavior.floating,
+                        ),
+                      );
+                    },
+                    padding: EdgeInsets.zero,
+                    visualDensity: VisualDensity.compact,
+                    icon: Icon(Icons.content_copy, size: 14, color: cs.onSurfaceVariant),
+                    tooltip: 'Copy code',
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Code content
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: SelectableText(
+                codeText,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontFamily: 'monospace',
+                  color: cs.onSurface,
+                  height: 1.4,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -747,6 +897,151 @@ class _PermissionBlockState extends ConsumerState<PermissionBlock> {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Sub-agent status bubble ──
+
+class _SubAgentBubble extends StatelessWidget {
+  final SubAgentMessage message;
+  const _SubAgentBubble({required this.message});
+
+  Color _statusColor(ColorScheme cs) {
+    return switch (message.status) {
+      'spawned' => Colors.blue,
+      'running' => Colors.orange,
+      'completed' => Colors.green,
+      'error' => cs.error,
+      _ => cs.onSurfaceVariant,
+    };
+  }
+
+  IconData _statusIcon() {
+    return switch (message.status) {
+      'spawned' => Icons.play_arrow,
+      'running' => Icons.sync,
+      'completed' => Icons.check_circle,
+      'error' => Icons.error,
+      _ => Icons.help_outline,
+    };
+  }
+
+  String _statusLabel() {
+    return switch (message.status) {
+      'spawned' => 'Spawned',
+      'running' => 'Running',
+      'completed' => 'Completed',
+      'error' => 'Error',
+      _ => message.status,
+    };
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final color = _statusColor(cs);
+
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width * 0.85),
+        child: Card(
+          elevation: 0,
+          margin: EdgeInsets.zero,
+          color: cs.surfaceContainerHigh,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(
+              color: cs.outlineVariant.withValues(alpha: 0.3),
+            ),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Colored left border
+                Container(
+                  width: 4,
+                  color: color,
+                ),
+                // Content
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Header row: icon + "Sub-agent" + status badge
+                        Row(
+                          children: [
+                            Icon(_statusIcon(), size: 18, color: color),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Sub-agent',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: cs.onSurface,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: color.withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Text(
+                                _statusLabel(),
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w500,
+                                  color: color,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        // Task description
+                        Text(
+                          message.task,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: cs.onSurface,
+                            height: 1.4,
+                          ),
+                        ),
+                        // Preview text (if available)
+                        if (message.preview.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            message.preview,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: cs.onSurfaceVariant,
+                              height: 1.3,
+                            ),
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );

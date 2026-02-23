@@ -8,6 +8,7 @@ from .storage import (
     get_active_ego_id,
     set_active_ego_id,
     ensure_builtin_egos,
+    migrate_shared_ego_to_user_isolated,
 )
 from .meta_tool import (
     MANAGE_ALTER_EGOS_DEFINITION,
@@ -22,6 +23,7 @@ __all__ = [
     "get_active_ego_id",
     "set_active_ego_id",
     "ensure_builtin_egos",
+    "migrate_shared_ego_to_user_isolated",
     "MANAGE_ALTER_EGOS_DEFINITION",
     "handle_manage_alter_egos",
 ]

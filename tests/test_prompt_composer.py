@@ -28,6 +28,8 @@ def prompt_env(tmp_path):
 
     mem_storage.CONFIG_DIR = tmp_path
     mem_storage.MEMORIES_FILE = tmp_path / "memories.json"
+    # Ensure per-user directory exists for default user
+    (tmp_path / "users" / "default").mkdir(parents=True, exist_ok=True)
 
     # Initialize builtins
     ae_storage.ensure_builtin_egos()

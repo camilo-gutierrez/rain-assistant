@@ -1,4 +1,4 @@
-import type { AuthResponse, BrowseResponse, ConversationFull, ConversationMeta, HistoryMessage, MetricsData, Memory, AlterEgo, MarketplaceSkill, MarketplaceCategory, InstalledMarketplaceSkill, SkillUpdate } from "./types";
+import type { AuthResponse, BrowseResponse, ConversationFull, ConversationMeta, HistoryMessage, MetricsData, Memory, AlterEgo, MarketplaceSkill, MarketplaceCategory, InstalledMarketplaceSkill, SkillUpdate, DeviceInfo } from "./types";
 import { getApiUrl } from "./constants";
 
 function authHeaders(token: string | null): HeadersInit {
@@ -26,12 +26,106 @@ async function fetchWithRetry(
   return res;
 }
 
-export async function authenticate(pin: string): Promise<AuthResponse> {
+export async function authenticate(
+  pin: string,
+  deviceId: string = "",
+  deviceName: string = "",
+  replaceDeviceId: string = "",
+): Promise<AuthResponse> {
+  const body: Record<string, string> = { pin, device_id: deviceId, device_name: deviceName };
+  if (replaceDeviceId) body.replace_device_id = replaceDeviceId;
   const res = await fetch(`${getApiUrl()}/auth`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ pin }),
+    body: JSON.stringify(body),
   });
+  return res.json();
+}
+
+export async function fetchDevicesWithPin(
+  pin: string,
+): Promise<{ devices: DeviceInfo[]; max_devices: number } | null> {
+  try {
+    const res = await fetch(`${getApiUrl()}/auth/devices`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pin }),
+    });
+    if (!res.ok) return null;
+    return res.json();
+  } catch {
+    return null;
+  }
+}
+
+export async function revokeDeviceWithPin(pin: string, deviceId: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${getApiUrl()}/auth/revoke-device`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pin, device_id: deviceId }),
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return data.revoked === true;
+  } catch {
+    return false;
+  }
+}
+
+export async function revokeAllWithPin(pin: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${getApiUrl()}/auth/revoke-all`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pin }),
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return data.revoked_all === true;
+  } catch {
+    return false;
+  }
+}
+
+// === Devices ===
+
+export async function fetchDevices(
+  token: string | null
+): Promise<{ devices: DeviceInfo[]; max_devices: number }> {
+  const res = await fetchWithRetry(`${getApiUrl()}/devices`, {
+    headers: authHeaders(token),
+  });
+  if (!res.ok) throw new Error(`Fetch devices failed: ${res.status}`);
+  return res.json();
+}
+
+export async function revokeDevice(
+  deviceId: string,
+  token: string | null
+): Promise<{ revoked: boolean }> {
+  const res = await fetch(
+    `${getApiUrl()}/devices/${encodeURIComponent(deviceId)}`,
+    { method: "DELETE", headers: authHeaders(token) }
+  );
+  if (!res.ok) throw new Error(`Revoke device failed: ${res.status}`);
+  return res.json();
+}
+
+export async function renameDevice(
+  deviceId: string,
+  name: string,
+  token: string | null
+): Promise<{ renamed: boolean }> {
+  const res = await fetch(
+    `${getApiUrl()}/devices/${encodeURIComponent(deviceId)}`,
+    {
+      method: "PATCH",
+      headers: { ...authHeaders(token), "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    }
+  );
+  if (!res.ok) throw new Error(`Rename device failed: ${res.status}`);
   return res.json();
 }
 

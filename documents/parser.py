@@ -11,6 +11,9 @@ logger = logging.getLogger(__name__)
 
 SUPPORTED_EXTENSIONS = {".txt", ".md", ".pdf"}
 
+MAX_FILE_SIZE_MB = 50
+MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
+
 
 def parse_file(file_path: str) -> str:
     """Parse a file and return its text content.
@@ -22,12 +25,21 @@ def parse_file(file_path: str) -> str:
 
     Raises:
         FileNotFoundError: if the file does not exist.
-        ValueError: if the file format is not supported.
+        ValueError: if the file format is not supported or file exceeds size limit.
     """
     path = Path(file_path)
 
     if not path.exists():
         raise FileNotFoundError(f"File not found: {file_path}")
+
+    # Check file size before reading
+    file_size = path.stat().st_size
+    if file_size > MAX_FILE_SIZE_BYTES:
+        size_mb = file_size / (1024 * 1024)
+        raise ValueError(
+            f"File too large: {size_mb:.1f} MB. "
+            f"Maximum allowed size is {MAX_FILE_SIZE_MB} MB."
+        )
 
     ext = path.suffix.lower()
     if ext not in SUPPORTED_EXTENSIONS:
@@ -49,8 +61,12 @@ def _parse_text(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
 
 
+MAX_PDF_PAGES = 500
+MAX_EXTRACTED_TEXT_BYTES = 10 * 1024 * 1024  # 10MB of extracted text
+
+
 def _parse_pdf(path: Path) -> str:
-    """Extract text from a PDF using pypdf."""
+    """Parse PDF file with safety limits."""
     try:
         from pypdf import PdfReader
     except ImportError:
@@ -59,10 +75,30 @@ def _parse_pdf(path: Path) -> str:
             "Install with: pip install rain-assistant[memory]"
         )
 
-    reader = PdfReader(str(path))
+    try:
+        reader = PdfReader(str(path))
+    except Exception as e:
+        raise ValueError(f"Failed to parse PDF: {type(e).__name__}")
+
     pages = []
-    for page in reader.pages:
-        text = page.extract_text()
+    total_size = 0
+    for i, page in enumerate(reader.pages):
+        if i >= MAX_PDF_PAGES:
+            logger.warning(
+                "PDF '%s' has more than %d pages; truncating.", path.name, MAX_PDF_PAGES
+            )
+            pages.append(
+                f"\n[WARNING: PDF truncated at {MAX_PDF_PAGES} pages out of {len(reader.pages)} total]"
+            )
+            break
+        try:
+            text = page.extract_text()
+        except Exception:
+            continue  # Skip malformed pages
         if text:
+            total_size += len(text.encode("utf-8", errors="replace"))
+            if total_size > MAX_EXTRACTED_TEXT_BYTES:
+                pages.append("[... truncated: extracted text exceeds 10MB limit]")
+                break
             pages.append(text)
     return "\n\n".join(pages)

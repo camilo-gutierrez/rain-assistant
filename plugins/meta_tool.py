@@ -101,9 +101,43 @@ async def handle_manage_plugins(args: dict, cwd: str) -> dict:
 
 
 def _action_create(args: dict) -> dict:
+    import yaml
+
     yaml_content = args.get("yaml_content", "")
     if not yaml_content:
         return {"content": "Error: 'yaml_content' is required for create action", "is_error": True}
+
+    try:
+        parsed = yaml.safe_load(yaml_content)
+
+        # Block Python plugins via chat — must be installed manually
+        exec_type = None
+        if isinstance(parsed, dict):
+            exec_data = parsed.get("execution", {})
+            if isinstance(exec_data, dict):
+                exec_type = exec_data.get("type", "")
+
+        if exec_type == "python":
+            return {
+                "content": "⚠️ Python plugins cannot be created via chat for security reasons. "
+                           "Install them manually as files in ~/.rain-assistant/plugins/",
+                "is_error": True,
+            }
+
+        perm = parsed.get("permission_level", "yellow") if isinstance(parsed, dict) else "yellow"
+        if perm == "red":
+            return {
+                "content": "Cannot create plugins with 'red' permission level via chat. "
+                           "Install them manually in ~/.rain-assistant/plugins/",
+                "is_error": True,
+            }
+        if perm not in ("green", "yellow"):
+            return {
+                "content": f"Invalid permission_level '{perm}'. Must be 'green' or 'yellow'.",
+                "is_error": True,
+            }
+    except yaml.YAMLError as e:
+        return {"content": f"Invalid YAML: {e}", "is_error": True}
 
     try:
         file_path = save_plugin_yaml("", yaml_content)
@@ -188,6 +222,22 @@ def _action_show(args: dict) -> dict:
     return {"content": f"Plugin '{name}' definition:\n```yaml\n{content}\n```", "is_error": False}
 
 
+_BLOCKED_ENV_VARS = {
+    # System critical
+    "PATH", "HOME", "USER", "SHELL", "LOGNAME",
+    # Code injection vectors
+    "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP",
+    "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES",
+    # Git credential theft
+    "GIT_SSH_COMMAND", "GIT_ASKPASS", "GIT_PROXY_COMMAND",
+    # Misc dangerous
+    "HISTFILE", "HISTCONTROL", "EDITOR", "VISUAL",
+    "COMSPEC", "SYSTEMROOT", "PATHEXT",
+    # Rain internal
+    "RAIN_PLUGIN_ARGS",
+}
+
+
 def _action_set_env(args: dict) -> dict:
     key = args.get("key", "")
     value = args.get("value", "")
@@ -195,6 +245,16 @@ def _action_set_env(args: dict) -> dict:
         return {"content": "Error: 'key' is required for set_env", "is_error": True}
     if not value:
         return {"content": "Error: 'value' is required for set_env", "is_error": True}
+
+    if key.upper() in _BLOCKED_ENV_VARS:
+        return {
+            "content": f"⚠️ Environment variable '{key}' is blocked for security reasons.",
+            "is_error": True,
+        }
+    if len(key) > 64:
+        return {"content": "Error: key name too long (max 64 chars)", "is_error": True}
+    if len(value) > 10000:
+        return {"content": "Error: value too large (max 10000 chars)", "is_error": True}
 
     set_plugin_env(key, value)
     return {

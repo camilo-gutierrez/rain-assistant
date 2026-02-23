@@ -15,7 +15,7 @@ from claude_agent_sdk import (
 )
 from claude_agent_sdk.types import StreamEvent
 
-from .base import BaseProvider, NormalizedEvent
+from .base import BaseProvider, NormalizedEvent, _sanitize_api_error
 
 
 class ClaudeProvider(BaseProvider):
@@ -36,6 +36,7 @@ class ClaudeProvider(BaseProvider):
         resume_session_id: str | None = None,
         mcp_servers: dict | str | None = None,
         agent_id: str = "default",
+        user_id: str = "default",
     ) -> None:
         env = {"ANTHROPIC_API_KEY": api_key} if api_key else {}
         resolved_mcp = mcp_servers or {}
@@ -168,7 +169,7 @@ class ClaudeProvider(BaseProvider):
                     continue
 
         except Exception as e:
-            yield NormalizedEvent("error", {"text": f"Claude SDK error: {e}"})
+            yield NormalizedEvent("error", {"text": _sanitize_api_error("Claude", e)})
 
     async def interrupt(self) -> None:
         if self._client:

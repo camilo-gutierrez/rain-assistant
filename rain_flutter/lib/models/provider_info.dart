@@ -1,4 +1,4 @@
-enum AIProvider { claude, openai, gemini }
+enum AIProvider { claude, openai, gemini, ollama }
 
 class ProviderModelInfo {
   final String id;
@@ -29,6 +29,15 @@ const providerModels = <AIProvider, List<ProviderModelInfo>>{
     ProviderModelInfo('gemini-2.0-flash', 'Gemini 2.0 Flash'),
     ProviderModelInfo('gemini-2.0-flash-lite', 'Gemini 2.0 Flash Lite'),
   ],
+  AIProvider.ollama: [
+    ProviderModelInfo('llama3.3', 'Llama 3.3'),
+    ProviderModelInfo('llama3.1', 'Llama 3.1'),
+    ProviderModelInfo('qwen2.5-coder', 'Qwen 2.5 Coder'),
+    ProviderModelInfo('deepseek-r1', 'DeepSeek R1'),
+    ProviderModelInfo('mistral', 'Mistral'),
+    ProviderModelInfo('gemma2', 'Gemma 2'),
+    ProviderModelInfo('phi4', 'Phi 4'),
+  ],
 };
 
 const providerInfo = <AIProvider, ProviderDisplay>{
@@ -46,6 +55,11 @@ const providerInfo = <AIProvider, ProviderDisplay>{
     name: 'Gemini',
     keyPlaceholder: 'AIza...',
     consoleUrl: 'https://aistudio.google.com/apikey',
+  ),
+  AIProvider.ollama: ProviderDisplay(
+    name: 'Ollama',
+    keyPlaceholder: 'not-needed',
+    consoleUrl: 'https://ollama.com',
   ),
 };
 

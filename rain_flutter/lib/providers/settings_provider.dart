@@ -15,6 +15,7 @@ class SettingsState {
   final String voiceMode; // "push-to-talk" | "vad" | "talk-mode" | "wake-word"
   final double vadSensitivity;
   final int silenceTimeout; // ms
+  final String voiceLang; // "auto" | "es" | "en" | "pt" | "fr" | "de" | "it" | "ja" | "zh" | "ko"
 
   const SettingsState({
     this.darkMode = true,
@@ -27,6 +28,7 @@ class SettingsState {
     this.voiceMode = 'push-to-talk',
     this.vadSensitivity = 0.5,
     this.silenceTimeout = 800,
+    this.voiceLang = 'auto',
   });
 
   SettingsState copyWith({
@@ -40,6 +42,7 @@ class SettingsState {
     String? voiceMode,
     double? vadSensitivity,
     int? silenceTimeout,
+    String? voiceLang,
   }) =>
       SettingsState(
         darkMode: darkMode ?? this.darkMode,
@@ -52,6 +55,7 @@ class SettingsState {
         voiceMode: voiceMode ?? this.voiceMode,
         vadSensitivity: vadSensitivity ?? this.vadSensitivity,
         silenceTimeout: silenceTimeout ?? this.silenceTimeout,
+        voiceLang: voiceLang ?? this.voiceLang,
       );
 }
 
@@ -74,6 +78,7 @@ class SettingsNotifier extends StateNotifier<SettingsState> {
       voiceMode: prefs.getString('voiceMode') ?? 'push-to-talk',
       vadSensitivity: prefs.getDouble('vadSensitivity') ?? 0.5,
       silenceTimeout: prefs.getInt('silenceTimeout') ?? 800,
+      voiceLang: prefs.getString('voiceLang') ?? 'auto',
     );
   }
 
@@ -148,6 +153,11 @@ class SettingsNotifier extends StateNotifier<SettingsState> {
   void setSilenceTimeout(int v) {
     state = state.copyWith(silenceTimeout: v);
     unawaited(_save('silenceTimeout', v));
+  }
+
+  void setVoiceLang(String v) {
+    state = state.copyWith(voiceLang: v);
+    unawaited(_save('voiceLang', v));
   }
 }
 

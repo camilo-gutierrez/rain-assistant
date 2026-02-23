@@ -3,12 +3,33 @@
 import React, { useState, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import { Copy, Check, AlertTriangle } from "lucide-react";
 import { useTTS, useTTSStore } from "@/hooks/useTTS";
 import { useSettingsStore } from "@/stores/useSettingsStore";
 import { useToastStore } from "@/stores/useToastStore";
 import { useTranslation } from "@/hooks/useTranslation";
 import type { UserMessage, AssistantMessage, SystemMessage } from "@/lib/types";
+
+const sanitizeSchema = {
+  ...defaultSchema,
+  attributes: {
+    ...defaultSchema.attributes,
+    // Allow class for syntax highlighting
+    code: [...(defaultSchema.attributes?.code || []), 'className'],
+    span: [...(defaultSchema.attributes?.span || []), 'className', 'style'],
+  },
+  // Block dangerous protocols
+  protocols: {
+    ...defaultSchema.protocols,
+    href: ['http', 'https', 'mailto'],
+    src: ['http', 'https'],
+  },
+  // Explicitly block script, iframe, object, embed, form
+  tagNames: (defaultSchema.tagNames || []).filter(
+    (tag: string) => !['script', 'iframe', 'object', 'embed', 'form', 'input', 'textarea', 'select', 'button'].includes(tag)
+  ),
+}
 
 interface Props {
   message: UserMessage | AssistantMessage | SystemMessage;
@@ -109,7 +130,10 @@ const MessageBubble = React.memo(function MessageBubble({ message }: Props) {
       ) : (
         <>
           <div className="text-sm text-text prose prose-sm max-w-none break-words overflow-hidden [&_pre]:bg-surface2 [&_pre]:rounded-lg [&_pre]:p-3 [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:font-[family-name:var(--font-jetbrains)] [&_code]:text-primary [&_pre_code]:text-text [&_a]:text-primary [&_a]:no-underline hover:[&_a]:underline [&_table]:border-overlay [&_th]:border-overlay [&_td]:border-overlay [&_table]:block [&_table]:overflow-x-auto [&_table]:max-w-full [&_blockquote]:border-l-primary/30 [&_blockquote]:text-text2 [&_img]:max-w-full [&_img]:h-auto">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              rehypePlugins={[[rehypeSanitize, sanitizeSchema]]}
+            >
               {assistantMsg.text}
             </ReactMarkdown>
           </div>

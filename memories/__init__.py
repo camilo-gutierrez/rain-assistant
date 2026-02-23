@@ -8,6 +8,7 @@ from .storage import (
     search_memories,
     reindex_memories,
     embeddings_available,
+    migrate_shared_to_user_isolated,
 )
 from .meta_tool import (
     MANAGE_MEMORIES_DEFINITION,
@@ -22,6 +23,7 @@ __all__ = [
     "search_memories",
     "reindex_memories",
     "embeddings_available",
+    "migrate_shared_to_user_isolated",
     "MANAGE_MEMORIES_DEFINITION",
     "handle_manage_memories",
 ]

@@ -15,9 +15,13 @@ Thanks for your interest in contributing! Here's how to get started.
 ```bash
 git clone https://github.com/camilo-gutierrez/rain-assistant.git
 cd rain-assistant
-pip install -r requirements.txt
+pip install -r requirements-lock.txt   # Reproducible pinned versions
 python server.py
 ```
+
+> **Note:** `requirements-lock.txt` contains exact pinned versions for reproducible
+> dev environments. If you prefer the latest compatible versions instead, use
+> `pip install -r requirements.txt` or `pip install -e ".[dev]"`.
 
 ### Frontend
 
@@ -159,6 +163,64 @@ rl.reset("specific-token")  # Clear only one token's state
 ```
 
 Never access `rl._windows` directly — use the public `reset()` API.
+
+## Publishing a New Release
+
+When you're ready to publish a new version of Rain:
+
+### 1. Create a PyPI account (one-time setup)
+
+1. Go to [pypi.org/account/register](https://pypi.org/account/register/) and create an account
+2. Go to **Account Settings → API Tokens → Add API Token**
+   - Name: `github-actions`
+   - Scope: `Entire account` (first time) or `rain-assistant` (after first publish)
+3. Copy the token (starts with `pypi-...`)
+4. Go to your GitHub repo → **Settings → Secrets and variables → Actions**
+5. Add a new secret: Name = `PYPI_API_TOKEN`, Value = the token you copied
+
+### 2. Bump version
+
+Update the version in `pyproject.toml`:
+
+```toml
+[project]
+version = "1.1.0"  # bump this
+```
+
+### 3. Create a release
+
+```bash
+git add pyproject.toml
+git commit -m "Bump version to 1.1.0"
+git tag v1.1.0
+git push origin main --tags
+```
+
+The GitHub Actions workflow (`.github/workflows/release.yml`) will automatically:
+1. Build the frontend and copy to `static/`
+2. Build the Python package (`.whl` + `.tar.gz`)
+3. Create a GitHub Release with the artifacts
+4. Publish to PyPI (if `PYPI_API_TOKEN` is configured)
+
+### 4. Verify
+
+```bash
+# From PyPI (if configured)
+pip install rain-assistant
+
+# From GitHub Release (always works)
+pip install https://github.com/camilo-gutierrez/rain-assistant/releases/latest/download/rain_assistant-1.1.0-py3-none-any.whl
+```
+
+### Manual build (without CI)
+
+```bash
+pip install build
+python -m build
+# Upload manually:
+pip install twine
+twine upload dist/*
+```
 
 ## License
 

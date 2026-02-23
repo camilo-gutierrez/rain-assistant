@@ -2,6 +2,49 @@ import { create } from "zustand";
 import type { WSSendMessage, AIProvider } from "@/lib/types";
 import { getWsUrl } from "@/lib/constants";
 
+// Simple token obfuscation for sessionStorage (not encryption, but prevents casual inspection)
+const TOKEN_STORAGE_KEY = 'rain_session_token';
+
+function obfuscateToken(token: string): string {
+  const key = 'rain_obfuscation_key_2026';
+  let result = '';
+  for (let i = 0; i < token.length; i++) {
+    result += String.fromCharCode(token.charCodeAt(i) ^ key.charCodeAt(i % key.length));
+  }
+  return btoa(result);
+}
+
+function deobfuscateToken(obfuscated: string): string {
+  const key = 'rain_obfuscation_key_2026';
+  const decoded = atob(obfuscated);
+  let result = '';
+  for (let i = 0; i < decoded.length; i++) {
+    result += String.fromCharCode(decoded.charCodeAt(i) ^ key.charCodeAt(i % key.length));
+  }
+  return result;
+}
+
+function readStoredToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  // Try new obfuscated key first
+  const obfuscated = sessionStorage.getItem(TOKEN_STORAGE_KEY);
+  if (obfuscated) {
+    try {
+      return deobfuscateToken(obfuscated);
+    } catch {
+      return obfuscated; // backward compat: old plain token
+    }
+  }
+  // Backward compat: check old key and migrate
+  const old = sessionStorage.getItem('rain-token');
+  if (old) {
+    sessionStorage.removeItem('rain-token');
+    sessionStorage.setItem(TOKEN_STORAGE_KEY, obfuscateToken(old));
+    return old;
+  }
+  return null;
+}
+
 type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
 
 interface ConnectionState {
@@ -28,10 +71,7 @@ interface ConnectionState {
 export const useConnectionStore = create<ConnectionState>()((set, get) => ({
   ws: null,
   reconnectTimerId: null,
-  authToken:
-    typeof window !== "undefined"
-      ? sessionStorage.getItem("rain-token")
-      : null,
+  authToken: readStoredToken(),
   connectionStatus: "disconnected",
   statusText: "",
   consecutiveFails: 0,
@@ -40,10 +80,12 @@ export const useConnectionStore = create<ConnectionState>()((set, get) => ({
 
   setAuthToken: (token) => {
     if (token) {
-      sessionStorage.setItem("rain-token", token);
+      sessionStorage.setItem(TOKEN_STORAGE_KEY, obfuscateToken(token));
     } else {
-      sessionStorage.removeItem("rain-token");
+      sessionStorage.removeItem(TOKEN_STORAGE_KEY);
     }
+    // Clean up old key if present
+    sessionStorage.removeItem("rain-token");
     set({ authToken: token });
   },
 
@@ -60,13 +102,12 @@ export const useConnectionStore = create<ConnectionState>()((set, get) => ({
       set({ reconnectTimerId: null });
     }
 
-    const wsUrl = authToken
-      ? `${getWsUrl()}?token=${encodeURIComponent(authToken)}`
-      : getWsUrl();
+    const wsUrl = getWsUrl();
+    const protocols = authToken ? [`rain-token.${authToken}`] : undefined;
 
     set({ connectionStatus: "connecting" });
 
-    const ws = new WebSocket(wsUrl);
+    const ws = new WebSocket(wsUrl, protocols);
 
     ws.onopen = () => {
       set({ connectionStatus: "connected", consecutiveFails: 0, statusText: "Connected" });
@@ -77,8 +118,8 @@ export const useConnectionStore = create<ConnectionState>()((set, get) => ({
     ws.onclose = (e) => {
       set({ connectionStatus: "disconnected", statusText: "Disconnected" });
 
-      // Server explicitly rejected the token
-      if (e.code === 4001) {
+      // Server explicitly rejected the token or device was revoked
+      if (e.code === 4001 || e.code === 4003) {
         set({ consecutiveFails: 0 });
         get().resetToPin();
         return;
@@ -132,7 +173,8 @@ export const useConnectionStore = create<ConnectionState>()((set, get) => ({
 
   resetToPin: () => {
     set({ authToken: null, ws: null });
-    sessionStorage.removeItem("rain-token");
+    sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+    sessionStorage.removeItem("rain-token"); // clean up old key
     // UI store will handle panel switching via the useWebSocket hook
   },
 }));

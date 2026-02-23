@@ -20,6 +20,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
   bool _loading = true;
   String? _error;
   String? _confirmDeleteId;
+  String? _loadingConvId;
   bool _saving = false;
 
   @override
@@ -131,6 +132,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
   }
 
   Future<void> _loadConversation(ConversationMeta conv) async {
+    setState(() => _loadingConvId = conv.id);
     try {
       final auth = ref.read(authServiceProvider);
       final dio = auth.authenticatedDio;
@@ -165,7 +167,14 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
       }
 
       if (mounted) Navigator.of(context).pop();
-    } catch (_) {}
+    } catch (_) {
+      if (mounted) {
+        setState(() => _loadingConvId = null);
+        final lang = ref.read(settingsProvider).language;
+        showToast(context, L10n.t('history.loadFailed', lang),
+            type: ToastType.error);
+      }
+    }
   }
 
   @override
@@ -232,7 +241,10 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                           conversation: conv,
                           lang: lang,
                           confirmDelete: _confirmDeleteId == conv.id,
-                          onTap: () => _loadConversation(conv),
+                          isLoading: _loadingConvId == conv.id,
+                          onTap: _loadingConvId != null
+                              ? null
+                              : () => _loadConversation(conv),
                           onDelete: () {
                             if (_confirmDeleteId == conv.id) {
                               _deleteConversation(conv.id);
@@ -252,13 +264,15 @@ class _ConversationTile extends StatelessWidget {
   final ConversationMeta conversation;
   final String lang;
   final bool confirmDelete;
-  final VoidCallback onTap;
+  final bool isLoading;
+  final VoidCallback? onTap;
   final VoidCallback onDelete;
 
   const _ConversationTile({
     required this.conversation,
     required this.lang,
     required this.confirmDelete,
+    this.isLoading = false,
     required this.onTap,
     required this.onDelete,
   });
@@ -291,8 +305,21 @@ class _ConversationTile extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
+                  if (isLoading)
+                    const Padding(
+                      padding: EdgeInsets.only(right: 8),
+                      child: SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    )
+                  else
+                    Icon(Icons.open_in_new,
+                        size: 16, color: cs.onSurfaceVariant.withValues(alpha: 0.5)),
+                  const SizedBox(width: 8),
                   TextButton(
-                    onPressed: onDelete,
+                    onPressed: isLoading ? null : onDelete,
                     style: TextButton.styleFrom(
                       foregroundColor: confirmDelete ? cs.error : cs.onSurfaceVariant,
                       padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -314,6 +341,15 @@ class _ConversationTile extends StatelessWidget {
                 style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                L10n.t('history.tapToLoad', lang),
+                style: TextStyle(
+                  fontSize: 11,
+                  color: cs.primary.withValues(alpha: 0.7),
+                  fontStyle: FontStyle.italic,
+                ),
               ),
               const SizedBox(height: 8),
               Row(

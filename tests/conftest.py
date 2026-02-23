@@ -194,6 +194,8 @@ def test_app(tmp_path):
     old_mem_file = mem_storage.MEMORIES_FILE
     mem_storage.CONFIG_DIR = config_dir
     mem_storage.MEMORIES_FILE = config_dir / "memories.json"
+    # Ensure per-user directory exists for default user
+    (config_dir / "users" / "default").mkdir(parents=True, exist_ok=True)
 
     from httpx import AsyncClient, ASGITransport
     import asyncio

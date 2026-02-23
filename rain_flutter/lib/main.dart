@@ -108,11 +108,30 @@ class _AppShellState extends ConsumerState<_AppShell> {
     final auth = ref.read(authServiceProvider);
     final ws = ref.read(webSocketServiceProvider);
 
+    // Show loading while WebSocket connects
+    setState(() => _screen = _AppScreen.loading);
+
     ws.connect(auth.wsUrl, auth.token!);
     _listenToMessages();
 
-    // Start on apiKey screen — will auto-skip if api_key_loaded arrives
-    setState(() => _screen = _AppScreen.apiKey);
+    // Wait for actual connection before advancing to apiKey screen
+    late StreamSubscription<ConnectionStatus> sub;
+    sub = ws.statusStream.listen((status) {
+      if (!mounted) {
+        sub.cancel();
+        return;
+      }
+      if (status == ConnectionStatus.connected) {
+        sub.cancel();
+        // api_key_loaded may have arrived during loading — check before
+        if (ref.read(apiKeyLoadedProvider)) {
+          setState(() => _screen = _AppScreen.fileBrowser);
+        } else {
+          setState(() => _screen = _AppScreen.apiKey);
+        }
+      }
+      // _unauthorized / error handled by _handleConnectionStatus + _handleMessage
+    });
   }
 
   void _listenToMessages() {
@@ -137,6 +156,23 @@ class _AppShellState extends ConsumerState<_AppShell> {
         final lang = ref.read(settingsProvider).language;
         showToast(context, L10n.t('toast.connectionRestored', lang),
             type: ToastType.success);
+      }
+
+      // Resume sessions for all agents
+      final agents = ref.read(agentProvider).agents;
+      final ws = ref.read(webSocketServiceProvider);
+      final settings = ref.read(settingsProvider);
+      for (final agent in agents.values) {
+        if (agent.cwd != null && agent.sessionId != null && agent.sessionId!.isNotEmpty) {
+          ws.send({
+            'type': 'set_cwd',
+            'path': agent.cwd,
+            'agent_id': agent.id,
+            'session_id': agent.sessionId,
+            'model': settings.aiModel,
+            'provider': settings.aiProvider.name,
+          });
+        }
       }
     } else if ((status == ConnectionStatus.disconnected ||
                 status == ConnectionStatus.error) &&
@@ -173,6 +209,12 @@ class _AppShellState extends ConsumerState<_AppShell> {
       case '_unauthorized':
         ref.read(authServiceProvider).clearToken();
         ref.read(isAuthenticatedProvider.notifier).state = false;
+        final lang = ref.read(settingsProvider).language;
+        if (mounted) {
+          showToast(context, L10n.t('toast.sessionExpired', lang),
+              type: ToastType.warning,
+              duration: const Duration(seconds: 4));
+        }
         setState(() => _screen = _AppScreen.pin);
 
       case 'api_key_loaded':
@@ -266,6 +308,9 @@ class _AppShellState extends ConsumerState<_AppShell> {
         }
         _dispatchNotification('result', agentId, msg);
 
+        // Auto-save conversation
+        _autoSaveConversation(agentId);
+
       case 'error':
         if (agentId.isEmpty) break;
         agentNotifier.finalizeStreaming(agentId);
@@ -347,9 +392,30 @@ class _AppShellState extends ConsumerState<_AppShell> {
         );
         agentNotifier.incrementComputerIteration(agentId);
 
+      case 'sub_agent':
+        if (agentId.isEmpty) break;
+        agentNotifier.appendMessage(
+          agentId,
+          SubAgentMessage(
+            id: UniqueKey().toString(),
+            subAgentId: msg['sub_agent_id'] ?? '',
+            task: msg['task'] ?? '',
+            status: msg['status'] ?? 'spawned',
+            preview: msg['preview'] ?? '',
+            timestamp: DateTime.now().millisecondsSinceEpoch,
+          ),
+        );
+
       case 'model_info':
         if (msg['model'] != null) {
           ref.read(currentModelProvider.notifier).state = msg['model'];
+        }
+
+      case '_reconnecting':
+        if (mounted) {
+          final lang = ref.read(settingsProvider).language;
+          showToast(context, L10n.t('toast.connectionFailed', lang),
+              type: ToastType.warning);
         }
 
       case 'rate_limits':
@@ -357,6 +423,56 @@ class _AppShellState extends ConsumerState<_AppShell> {
           ref.read(rateLimitsProvider.notifier).state =
               RateLimits.fromJson(Map<String, dynamic>.from(msg['limits']));
         }
+    }
+  }
+
+  Future<void> _autoSaveConversation(String agentId) async {
+    try {
+      final agent = ref.read(agentProvider).agents[agentId];
+      if (agent == null || agent.messages.isEmpty) return;
+
+      final auth = ref.read(authServiceProvider);
+      final dio = auth.authenticatedDio;
+      final now = DateTime.now().millisecondsSinceEpoch;
+
+      // Use first user message as label
+      final firstUserMsg = agent.messages
+          .whereType<UserMessage>()
+          .firstOrNull;
+      final preview = firstUserMsg?.text ?? '';
+      final label = preview.length > 50
+          ? '${preview.substring(0, 50)}...'
+          : preview.isEmpty
+              ? 'Conversation'
+              : preview;
+
+      // Calculate total cost from SystemMessage metrics
+      double totalCost = 0;
+      for (final m in agent.messages) {
+        if (m is SystemMessage) {
+          final match = RegExp(r'\$(\d+\.\d+)').firstMatch(m.text);
+          if (match != null) {
+            totalCost += double.tryParse(match.group(1)!) ?? 0;
+          }
+        }
+      }
+
+      await dio.post('/history', data: {
+        'id': 'conv_${agent.id}_$now',
+        'createdAt': now,
+        'updatedAt': now,
+        'label': label,
+        'cwd': agent.cwd ?? '',
+        'messageCount': agent.messages.length,
+        'preview': preview,
+        'totalCost': totalCost,
+        'version': 1,
+        'agentId': agent.id,
+        'sessionId': agent.sessionId ?? '',
+        'messages': agent.messages.map((m) => m.toJson()).toList(),
+      });
+    } catch (_) {
+      // Silent fail for auto-save — non-critical
     }
   }
 

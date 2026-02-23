@@ -34,6 +34,10 @@ class WebSocketService {
 
   /// Connect to the WebSocket server.
   void connect(String wsUrl, String token) {
+    // Cancel any pending reconnect from a previous connection
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    _consecutiveFailures = 0;
     _wsUrl = wsUrl;
     _token = token;
     _doConnect();
@@ -62,6 +66,7 @@ class WebSocketService {
       _setStatus(ConnectionStatus.connected);
       _consecutiveFailures = 0;
     } catch (e) {
+      print('[WS] Connection failed: $e');
       _setStatus(ConnectionStatus.error);
       _scheduleReconnect();
     }
@@ -97,8 +102,8 @@ class WebSocketService {
   void _onDone() {
     final closeCode = _channel?.closeCode;
 
-    if (closeCode == 4001) {
-      // Unauthorized — don't reconnect, emit special status
+    if (closeCode == 4001 || closeCode == 4003) {
+      // Unauthorized or device revoked — don't reconnect, emit special status
       _setStatus(ConnectionStatus.disconnected);
       _messageController.add({'type': '_unauthorized'});
       return;
@@ -116,13 +121,22 @@ class WebSocketService {
 
   void _scheduleReconnect() {
     _consecutiveFailures++;
-    if (_consecutiveFailures > 3) {
+    if (_consecutiveFailures > 8) {
       // Too many failures — signal unauthorized to force re-auth
       _messageController.add({'type': '_unauthorized'});
       return;
     }
+    // Exponential backoff: 2s, 4s, 6s, 8s, 10s... capped at 15s
+    final delay = (_consecutiveFailures * 2).clamp(2, 15);
     _reconnectTimer?.cancel();
-    _reconnectTimer = Timer(const Duration(seconds: 3), _doConnect);
+    _reconnectTimer = Timer(Duration(seconds: delay), _doConnect);
+    // Notify UI about reconnect attempts
+    if (_consecutiveFailures >= 3) {
+      _messageController.add({
+        'type': '_reconnecting',
+        'attempt': _consecutiveFailures,
+      });
+    }
   }
 
   /// Send a JSON message to the server.
@@ -142,12 +156,14 @@ class WebSocketService {
   }
 
   void _cleanup() {
-    _subscription?.cancel();
+    final sub = _subscription;
+    final ch = _channel;
     _subscription = null;
-    try {
-      _channel?.sink.close();
-    } catch (_) {}
     _channel = null;
+    sub?.cancel();
+    try {
+      ch?.sink.close();
+    } catch (_) {}
   }
 
   void _setStatus(ConnectionStatus s) {

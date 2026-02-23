@@ -6,6 +6,7 @@ from .storage import (
     remove_document,
     search_documents,
     get_document_chunks,
+    migrate_legacy_documents,
 )
 
 MANAGE_DOCUMENTS_DEFINITION = {
@@ -55,20 +56,25 @@ MANAGE_DOCUMENTS_DEFINITION = {
 
 
 async def handle_manage_documents(args: dict, cwd: str) -> dict:
-    """Handle manage_documents tool calls from Rain."""
+    """Handle manage_documents tool calls from Rain.
+
+    The caller may inject ``_user_id`` into *args* for per-user isolation.
+    If absent, falls back to ``"default"`` for backward compatibility.
+    """
     action = args.get("action", "")
+    user_id = args.get("_user_id", "default")
 
     try:
         if action == "ingest":
-            return _action_ingest(args, cwd)
+            return _action_ingest(args, cwd, user_id)
         elif action == "search":
-            return _action_search(args)
+            return _action_search(args, user_id)
         elif action == "list":
-            return _action_list()
+            return _action_list(user_id)
         elif action == "remove":
-            return _action_remove(args)
+            return _action_remove(args, user_id)
         elif action == "show":
-            return _action_show(args)
+            return _action_show(args, user_id)
         else:
             return {"content": f"Unknown action: {action}", "is_error": True}
     except FileNotFoundError as e:
@@ -81,7 +87,7 @@ async def handle_manage_documents(args: dict, cwd: str) -> dict:
         return {"content": f"Error: {e}", "is_error": True}
 
 
-def _action_ingest(args: dict, cwd: str) -> dict:
+def _action_ingest(args: dict, cwd: str, user_id: str) -> dict:
     file_path = args.get("file_path", "").strip()
     if not file_path:
         return {"content": "Error: 'file_path' is required for ingest action", "is_error": True}
@@ -91,7 +97,24 @@ def _action_ingest(args: dict, cwd: str) -> dict:
     if not path.is_absolute():
         path = Path(cwd) / path
 
-    result = ingest_document(str(path))
+    # Resolve to canonical path to prevent path traversal (e.g. ../../etc/passwd)
+    path = path.resolve()
+
+    # Validate the resolved path is under the user's home directory or cwd
+    home_dir = Path.home().resolve()
+    cwd_dir = Path(cwd).resolve()
+    if not (str(path).startswith(str(home_dir)) or str(path).startswith(str(cwd_dir))):
+        return {"content": "Access denied: path is outside allowed directory", "is_error": True}
+
+    # Validate file extension before proceeding
+    allowed_extensions = {".txt", ".md", ".pdf"}
+    if path.suffix.lower() not in allowed_extensions:
+        return {
+            "content": f"Unsupported file type: '{path.suffix}'. Allowed: {', '.join(sorted(allowed_extensions))}",
+            "is_error": True,
+        }
+
+    result = ingest_document(str(path), user_id=user_id)
 
     if result["status"] == "empty":
         return {"content": f"Document '{result['doc_name']}' is empty or has no extractable text.", "is_error": True}
@@ -107,13 +130,13 @@ def _action_ingest(args: dict, cwd: str) -> dict:
     }
 
 
-def _action_search(args: dict) -> dict:
+def _action_search(args: dict, user_id: str) -> dict:
     query = args.get("query", "").strip()
     if not query:
         return {"content": "Error: 'query' is required for search action", "is_error": True}
 
     top_k = min(args.get("top_k", 5), 20)
-    results = search_documents(query, top_k=top_k)
+    results = search_documents(query, user_id=user_id, top_k=top_k)
 
     if not results:
         return {"content": f"No document chunks matching '{query}'.", "is_error": False}
@@ -134,8 +157,8 @@ def _action_search(args: dict) -> dict:
     return {"content": "\n".join(lines), "is_error": False}
 
 
-def _action_list() -> dict:
-    docs = list_documents()
+def _action_list(user_id: str) -> dict:
+    docs = list_documents(user_id=user_id)
     if not docs:
         return {"content": "No documents ingested yet.", "is_error": False}
 
@@ -149,22 +172,22 @@ def _action_list() -> dict:
     return {"content": "\n".join(lines), "is_error": False}
 
 
-def _action_remove(args: dict) -> dict:
+def _action_remove(args: dict, user_id: str) -> dict:
     doc_id = args.get("doc_id", "").strip()
     if not doc_id:
         return {"content": "Error: 'doc_id' is required for remove action", "is_error": True}
 
-    if remove_document(doc_id):
+    if remove_document(doc_id, user_id=user_id):
         return {"content": f"Document '{doc_id}' removed.", "is_error": False}
     return {"content": f"Document '{doc_id}' not found.", "is_error": True}
 
 
-def _action_show(args: dict) -> dict:
+def _action_show(args: dict, user_id: str) -> dict:
     doc_id = args.get("doc_id", "").strip()
     if not doc_id:
         return {"content": "Error: 'doc_id' is required for show action", "is_error": True}
 
-    chunks = get_document_chunks(doc_id)
+    chunks = get_document_chunks(doc_id, user_id=user_id)
     if not chunks:
         return {"content": f"Document '{doc_id}' not found.", "is_error": True}
 

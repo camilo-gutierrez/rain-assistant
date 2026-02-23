@@ -15,10 +15,6 @@ import { Eye, EyeOff, Key } from "lucide-react";
 
 const PROVIDERS: AIProvider[] = ["claude", "openai", "gemini", "ollama"];
 
-function getStorageKey(provider: AIProvider) {
-  return `rain-api-key-${provider}`;
-}
-
 export default function ApiKeyPanel() {
   const { t } = useTranslation();
 
@@ -32,6 +28,9 @@ export default function ApiKeyPanel() {
   const aiModel = useSettingsStore((s) => s.aiModel);
   const setAIProvider = useSettingsStore((s) => s.setAIProvider);
   const setAIModel = useSettingsStore((s) => s.setAIModel);
+  const providerKeys = useSettingsStore((s) => s.providerKeys);
+  const setProviderKey = useSettingsStore((s) => s.setProviderKey);
+  const clearProviderKey = useSettingsStore((s) => s.clearProviderKey);
 
   const [apiKey, setApiKey] = useState("");
   const [showKey, setShowKey] = useState(false);
@@ -40,21 +39,9 @@ export default function ApiKeyPanel() {
   const info = PROVIDER_INFO[aiProvider];
   const models = PROVIDER_MODELS[aiProvider];
 
-  // One-time migration: move old single key to provider-specific key
-  useEffect(() => {
-    const legacyKey =
-      localStorage.getItem("rain-api-key") ||
-      sessionStorage.getItem("rain-api-key");
-    if (legacyKey) {
-      sessionStorage.setItem(getStorageKey("claude"), legacyKey);
-      localStorage.removeItem("rain-api-key");
-      sessionStorage.removeItem("rain-api-key");
-    }
-  }, []);
-
   // Load saved key when provider changes
   useEffect(() => {
-    const stored = sessionStorage.getItem(getStorageKey(aiProvider));
+    const stored = providerKeys[aiProvider] || null;
     if (stored) {
       setSavedKey(stored);
       setApiKey(stored);
@@ -63,7 +50,7 @@ export default function ApiKeyPanel() {
       setApiKey("");
     }
     setShowKey(false);
-  }, [aiProvider]);
+  }, [aiProvider, providerKeys]);
 
   // Ensure model is valid for current provider
   useEffect(() => {
@@ -87,7 +74,7 @@ export default function ApiKeyPanel() {
     if (!key && !isOllama) return;
     const effectiveKey = key || (isOllama ? "http://localhost:11434" : "");
     if (!effectiveKey) return;
-    sessionStorage.setItem(getStorageKey(aiProvider), effectiveKey);
+    setProviderKey(aiProvider, effectiveKey);
     send({ type: "set_api_key", key: effectiveKey, provider: aiProvider, model: aiModel });
     setUsingApiKey(true);
     setCurrentProvider(aiProvider);
@@ -100,7 +87,7 @@ export default function ApiKeyPanel() {
   };
 
   const handleClearKey = () => {
-    sessionStorage.removeItem(getStorageKey(aiProvider));
+    clearProviderKey(aiProvider);
     setSavedKey(null);
     setApiKey("");
   };

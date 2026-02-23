@@ -1,8 +1,10 @@
 import asyncio
 import hashlib
 import json
+import logging
 import bcrypt
 import os
+import re
 import secrets
 import sys
 import tempfile
@@ -79,6 +81,57 @@ CONFIG_DIR = Path.home() / ".rain-assistant"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 OLD_CONFIG_DIR = Path.home() / ".voice-claude"
 
+# Compiled pattern for validating agent IDs (alphanumeric, hyphens, underscores)
+_AGENT_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,100}$")
+
+# Module-level logger for server errors
+_logger = logging.getLogger("rain.server")
+
+
+def _secure_chmod(path: Path, mode: int) -> None:
+    """Best-effort chmod. Windows has limited support, so errors are ignored."""
+    try:
+        os.chmod(str(path), mode)
+    except OSError:
+        pass  # Windows has limited chmod support
+
+
+def _json_loads_safe(raw: str, max_depth: int = 10, max_size: int = 1_048_576) -> dict:
+    """Parse JSON with depth and size limits to prevent DoS."""
+    if len(raw) > max_size:
+        raise ValueError(f"JSON payload too large ({len(raw)} bytes, max {max_size})")
+    depth = 0
+    for char in raw:
+        if char in '{[':
+            depth += 1
+            if depth > max_depth:
+                raise ValueError("JSON nesting too deep")
+        elif char in '}]':
+            depth -= 1
+    return json.loads(raw)
+
+
+# ---------------------------------------------------------------------------
+# Trusted proxy detection — prevent IP spoofing via X-Forwarded-For
+# ---------------------------------------------------------------------------
+
+_TRUSTED_PROXIES: set[str] = {"127.0.0.1", "::1"}
+
+
+def _get_real_ip(request) -> str:
+    """Extract real client IP, validating proxy headers."""
+    client_ip = request.client.host if request.client else "unknown"
+    # Only trust X-Forwarded-For from trusted proxies
+    if client_ip in _TRUSTED_PROXIES:
+        forwarded = request.headers.get("x-forwarded-for", "")
+        if forwarded:
+            # Take the leftmost (client) IP
+            real_ip = forwarded.split(",")[0].strip()
+            if real_ip:
+                return real_ip
+    return client_ip
+
+
 # ---------------------------------------------------------------------------
 # MCP config loader (graceful degradation)
 # ---------------------------------------------------------------------------
@@ -118,6 +171,12 @@ from alter_egos.storage import (
 from memories.storage import (
     load_memories, add_memory, remove_memory, clear_memories,
 )
+
+# Per-user data isolation migrations
+from memories import migrate_shared_to_user_isolated as _migrate_memories
+from documents import migrate_legacy_documents as _migrate_documents
+from alter_egos import migrate_shared_ego_to_user_isolated as _migrate_egos
+from scheduled_tasks import migrate_legacy_scheduled_tasks as _migrate_tasks
 
 # Ensure built-in alter egos exist on startup
 ensure_builtin_egos()
@@ -206,6 +265,7 @@ active_tokens: dict[str, float] = {}
 DAILY_TTS_CHAR_LIMIT = 100_000       # 100K chars/day
 DAILY_AUDIO_SECONDS_LIMIT = 3_600    # 60 minutes/day
 MAX_AUDIO_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB
+AUDIO_READ_CHUNK_SIZE = 64 * 1024          # 64 KB chunks
 
 # ---------------------------------------------------------------------------
 # Input validation models (Pydantic)
@@ -213,6 +273,9 @@ MAX_AUDIO_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB
 
 class AuthRequest(BaseModel):
     pin: str = Field(..., min_length=1, max_length=20)
+    device_id: str = Field(default="", max_length=64)
+    device_name: str = Field(default="", max_length=100)
+    replace_device_id: str = Field(default="", max_length=64)
 
 class SynthesizeRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=5000)
@@ -235,7 +298,7 @@ WS_MAX_CONCURRENT_AGENTS = 5            # max agents per connection
 
 # Rate limiting: track failed PIN attempts per IP
 # { ip: { "attempts": int, "locked_until": float } }
-MAX_PIN_ATTEMPTS = 3
+MAX_PIN_ATTEMPTS = 5
 LOCKOUT_SECONDS = 5 * 60  # 5 minutes
 _auth_attempts: dict[str, dict] = {}
 
@@ -253,6 +316,7 @@ def load_or_create_config() -> dict:
         import shutil
         shutil.copytree(str(OLD_CONFIG_DIR), str(CONFIG_DIR))
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    _secure_chmod(CONFIG_DIR, 0o700)
 
     if CONFIG_FILE.exists():
         try:
@@ -273,6 +337,7 @@ def load_or_create_config() -> dict:
                 CONFIG_FILE.write_text(
                     json.dumps(cfg, indent=2), encoding="utf-8"
                 )
+                _secure_chmod(CONFIG_FILE, 0o600)
                 print(f"\n  [SECURITY] PIN migrated to bcrypt hash.", flush=True)
                 print(f"  [SECURITY] Your existing PIN is: {plain_pin}", flush=True)
                 print(f"  [SECURITY] This is the LAST TIME it will be shown.\n", flush=True)
@@ -282,10 +347,11 @@ def load_or_create_config() -> dict:
             pass
 
     # Generate new PIN
-    pin = f"{secrets.randbelow(900000) + 100000}"
+    pin = f"{secrets.randbelow(90000000) + 10000000}"
     hashed = bcrypt.hashpw(pin.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
     cfg = {"pin_hash": hashed}
     CONFIG_FILE.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    _secure_chmod(CONFIG_FILE, 0o600)
 
     # Store pin temporarily for display at startup only (NOT persisted)
     cfg["_display_pin"] = pin
@@ -293,6 +359,7 @@ def load_or_create_config() -> dict:
 
 
 config = load_or_create_config()
+MAX_DEVICES = int(config.get("max_devices", 2))
 
 
 def verify_token(token: str | None) -> bool:
@@ -307,8 +374,14 @@ def verify_token(token: str | None) -> bool:
     return True
 
 
+# Map device_id → WebSocket for active connections (for remote revocation)
+_active_ws_by_device: dict[str, "WebSocket"] = {}
+# Map token_hash → device_id for WS connection lookup
+_token_device_map: dict[str, str] = {}
+
+
 async def _cleanup_expired_tokens():
-    """Periodically remove expired tokens from memory."""
+    """Periodically remove expired tokens from memory + DB."""
     while True:
         await asyncio.sleep(3600)  # Run every hour
         now = time.time()
@@ -317,6 +390,10 @@ async def _cleanup_expired_tokens():
             active_tokens.pop(t, None)
         if expired:
             print(f"  [AUTH] Cleaned up {len(expired)} expired token(s)", flush=True)
+        # Also clean expired sessions from DB
+        db_cleaned = database.cleanup_expired_sessions(TOKEN_TTL_SECONDS)
+        if db_cleaned:
+            print(f"  [AUTH] Cleaned up {db_cleaned} expired session(s) from DB", flush=True)
 
 
 async def _scheduler_execute_ai_prompt(task_name: str, prompt: str) -> tuple[str | None, str | None]:
@@ -412,6 +489,18 @@ async def _scheduler_execute_ai_prompt(task_name: str, prompt: str) -> tuple[str
                 pass
 
 
+_DANGEROUS_SCHEDULED_PATTERNS = [
+    "rm -rf", "mkfs", "dd if=", "> /dev/", "chmod -R 777",
+    "curl | sh", "wget | sh", "eval ", "exec ",
+]
+
+
+def _is_safe_scheduled_command(cmd: str) -> bool:
+    """Check if a scheduled bash command is safe to execute."""
+    cmd_lower = cmd.lower().strip()
+    return not any(p in cmd_lower for p in _DANGEROUS_SCHEDULED_PATTERNS)
+
+
 async def _scheduler_loop():
     """Background loop for executing scheduled tasks (cron).
 
@@ -445,7 +534,13 @@ async def _scheduler_loop():
 
                 elif task_type == "bash":
                     cmd = task_data.get("command", "")
-                    if cmd:
+                    if cmd and not _is_safe_scheduled_command(cmd):
+                        _sched_logger.warning(
+                            "[SCHEDULER] Blocked dangerous command: %s",
+                            cmd[:100],
+                        )
+                        error_text = "Command blocked: contains dangerous pattern"
+                    elif cmd:
                         try:
                             proc = await asyncio.create_subprocess_shell(
                                 cmd,
@@ -519,11 +614,43 @@ async def _scheduler_loop():
             _sched_logger.error("[SCHEDULER] Unexpected error: %s", e)
 
 
+def _restore_tokens_from_db():
+    """Restore active_tokens from persisted encrypted tokens in the database."""
+    database.cleanup_expired_sessions(TOKEN_TTL_SECONDS)
+    rows = database.load_persisted_tokens(TOKEN_TTL_SECONDS)
+    restored = 0
+    for row in rows:
+        try:
+            token = database.decrypt_field(row["encrypted_token"])
+            if not token:
+                continue
+            # Recompute expiry from last_activity
+            remaining = TOKEN_TTL_SECONDS - (time.time() - row["last_activity"])
+            if remaining <= 0:
+                continue
+            active_tokens[token] = time.time() + remaining
+            # Restore device mapping
+            if row.get("device_id"):
+                _token_device_map[row["token_hash"]] = row["device_id"]
+            restored += 1
+        except Exception:
+            continue  # Skip corrupt entries
+    if restored:
+        print(f"  [AUTH] Restored {restored} session(s) from database", flush=True)
+
+
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     # Ensure the encryption key is in the OS keyring (auto-migrates from config.json)
     ensure_encryption_key(CONFIG_FILE)
     database._ensure_db()
+    # Per-user data isolation migrations
+    _migrate_memories()
+    _migrate_documents()
+    _migrate_egos()
+    _migrate_tasks()
+    # Restore tokens from DB so sessions survive server restarts
+    _restore_tokens_from_db()
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, transcriber.load_model)
     cleanup_task = asyncio.create_task(_cleanup_expired_tokens())
@@ -553,10 +680,40 @@ from starlette.requests import Request as StarletteRequest
 from starlette.responses import Response as StarletteResponse
 
 
+def _check_csrf(request: StarletteRequest) -> bool:
+    """Basic CSRF check: verify Origin/Referer matches host."""
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return True
+    origin = request.headers.get("origin", "")
+    referer = request.headers.get("referer", "")
+    host = request.headers.get("host", "")
+    if not host:
+        return True  # Can't verify without host
+    # Check origin matches
+    if origin:
+        from urllib.parse import urlparse
+        parsed = urlparse(origin)
+        return parsed.netloc == host or parsed.hostname in ("localhost", "127.0.0.1")
+    # Fallback to referer
+    if referer:
+        from urllib.parse import urlparse
+        parsed = urlparse(referer)
+        return parsed.netloc == host or parsed.hostname in ("localhost", "127.0.0.1")
+    # No origin/referer — could be same-origin (browsers always send for cross-origin)
+    return True
+
+
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    """Add security headers to all HTTP responses."""
+    """Add security headers to all HTTP responses and enforce CSRF checks."""
 
     async def dispatch(self, request: StarletteRequest, call_next):
+        # CSRF check on state-changing requests
+        if not _check_csrf(request):
+            return JSONResponse(
+                {"error": "CSRF validation failed"},
+                status_code=403,
+            )
+
         response: StarletteResponse = await call_next(request)
 
         # Detect if request came through HTTPS (Cloudflare tunnel sets these)
@@ -579,6 +736,19 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-XSS-Protection"] = "1; mode=block"
         # Referrer policy
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        # Content Security Policy
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline'; "  # unsafe-inline required by Next.js static export (RSC flight data)
+            "style-src 'self' 'unsafe-inline'; "  # Required by Tailwind CSS / Next.js
+            "img-src 'self' data:; "
+            "connect-src 'self'; "
+            "font-src 'self'; "
+            "object-src 'none'; "
+            "base-uri 'self'; "
+            "form-action 'self'; "
+            "frame-ancestors 'none'"
+        )
         # Permissions policy: restrict sensitive browser APIs
         response.headers["Permissions-Policy"] = (
             "camera=(), geolocation=(), payment=()"
@@ -614,7 +784,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             # For auth endpoint, rate-limit by client IP
             category = categorize_endpoint(path)
             if category == EndpointCategory.AUTH:
-                client_ip = request.client.host if request.client else "unknown"
+                client_ip = _get_real_ip(request)
                 token = f"ip:{client_ip}"
             else:
                 return await call_next(request)
@@ -623,7 +793,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         result = rate_limiter.check(token, category)
 
         if not result.allowed:
-            client_ip = request.client.host if request.client else ""
+            client_ip = _get_real_ip(request)
             database.log_security_event(
                 "rate_limited", "warning",
                 client_ip=client_ip, token_prefix=token[:8],
@@ -680,7 +850,7 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
             method=request.method, path=path,
             status_code=response.status_code,
             response_ms=round(elapsed_ms, 2),
-            client_ip=request.client.host if request.client else "",
+            client_ip=_get_real_ip(request),
             token_prefix=token_prefix,
             user_agent=request.headers.get("user-agent", "")[:200],
         )
@@ -712,7 +882,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
     max_age=3600,
 )
@@ -739,7 +909,7 @@ async def service_worker():
 
 @app.post("/api/auth")
 async def authenticate(request: Request):
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = _get_real_ip(request)
 
     # Check if this IP is currently locked out
     record = _auth_attempts.get(client_ip)
@@ -810,13 +980,84 @@ async def authenticate(request: Request):
 
     # Successful auth — clear any attempt tracking for this IP
     _auth_attempts.pop(client_ip, None)
+
+    device_id = auth_req.device_id.strip()
+    device_name = auth_req.device_name.strip()
+    user_agent = request.headers.get("user-agent", "")[:200]
+
+    # Clean expired sessions before checking device limit
+    database.cleanup_expired_sessions(TOKEN_TTL_SECONDS)
+
+    # If this device already has a session, revoke old token and reuse slot
+    if device_id:
+        existing = database.get_session_by_device_id(device_id)
+        if existing:
+            # Revoke old token for this device
+            old_hash = existing["token_hash"]
+            old_tokens = [t for t, _ in active_tokens.items()
+                          if hashlib.sha256(t.encode()).hexdigest() == old_hash]
+            for t in old_tokens:
+                active_tokens.pop(t, None)
+            database.revoke_session(old_hash)
+            _token_device_map.pop(old_hash, None)
+            print(f"  [AUTH] Device {device_id[:8]}… re-authenticated, old token revoked", flush=True)
+        else:
+            # New device — check limit
+            device_count = database.count_active_devices(TOKEN_TTL_SECONDS)
+            if device_count >= MAX_DEVICES:
+                # If replace_device_id provided, revoke that device to free a slot
+                replace_id = auth_req.replace_device_id.strip()
+                if replace_id:
+                    target_session = database.get_session_by_device_id(replace_id)
+                    if target_session:
+                        # Close WebSocket first
+                        ws = _active_ws_by_device.pop(replace_id, None)
+                        if ws:
+                            try:
+                                await ws.close(code=4003, reason="Replaced by new device")
+                            except Exception:
+                                pass
+                        revoked_hash = database.revoke_session_by_device_id(replace_id)
+                        if revoked_hash:
+                            to_remove = [t for t, _ in active_tokens.items()
+                                         if hashlib.sha256(t.encode()).hexdigest() == revoked_hash]
+                            for t in to_remove:
+                                active_tokens.pop(t, None)
+                            _token_device_map.pop(revoked_hash, None)
+                        database.log_security_event(
+                            "device_replaced", "warning",
+                            client_ip=client_ip, endpoint="/api/auth",
+                            details=f"replaced={replace_id[:8]}… by={device_id[:8]}…",
+                        )
+                        print(f"  [AUTH] Device {replace_id[:8]}… replaced by {device_id[:8]}…", flush=True)
+                    else:
+                        return JSONResponse({
+                            "error": "device_limit_reached",
+                            "max_devices": MAX_DEVICES,
+                        }, status_code=409)
+                else:
+                    database.log_security_event(
+                        "device_limit_reached", "warning",
+                        client_ip=client_ip, endpoint="/api/auth",
+                        details=f"device_id={device_id[:8]}… count={device_count}/{MAX_DEVICES}",
+                    )
+                    return JSONResponse({
+                        "error": "device_limit_reached",
+                        "max_devices": MAX_DEVICES,
+                    }, status_code=409)
+
     token = secrets.token_urlsafe(32)
     active_tokens[token] = time.time() + TOKEN_TTL_SECONDS
 
-    # Track session in database
+    # Track session in database (with encrypted token for persistence across restarts)
     token_hash = hashlib.sha256(token.encode()).hexdigest()
-    user_agent = request.headers.get("user-agent", "")[:200]
-    database.create_session(token_hash, client_ip, user_agent)
+    encrypted_token = database.encrypt_field(token)
+    database.create_session(
+        token_hash, client_ip, user_agent, device_id, device_name,
+        user_id="default", encrypted_token=encrypted_token,
+    )
+    if device_id:
+        _token_device_map[token_hash] = device_id
 
     return {"token": token}
 
@@ -830,6 +1071,256 @@ def get_token(request: Request) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# REST: List devices with PIN (pre-auth, for device replacement flow)
+# ---------------------------------------------------------------------------
+
+@app.post("/api/auth/devices")
+async def list_devices_with_pin(request: Request):
+    """List active devices using PIN authentication (no token required).
+
+    Used when a new device hits the device limit and needs to choose
+    which existing device to replace.
+    """
+    client_ip = _get_real_ip(request)
+
+    # Check lockout (same as /api/auth)
+    record = _auth_attempts.get(client_ip)
+    if record:
+        remaining = record["locked_until"] - time.time()
+        if remaining > 0:
+            return JSONResponse({
+                "error": "Too many failed attempts. Try again later.",
+                "locked": True,
+                "remaining_seconds": int(remaining),
+            }, status_code=429)
+        else:
+            del _auth_attempts[client_ip]
+
+    try:
+        body = await request.json()
+        pin = str(body.get("pin", "")).strip()
+    except Exception:
+        return JSONResponse({"error": "Invalid request body"}, status_code=400)
+
+    if not pin or len(pin) > 20:
+        return JSONResponse({"error": "Invalid PIN"}, status_code=400)
+
+    pin_hash = config.get("pin_hash", "")
+    try:
+        pin_valid = bool(pin) and bcrypt.checkpw(
+            pin.encode("utf-8"), pin_hash.encode("utf-8")
+        )
+    except Exception:
+        pin_valid = False
+
+    if not pin_valid:
+        # Track failed attempt (same counter as /api/auth)
+        if client_ip not in _auth_attempts:
+            _auth_attempts[client_ip] = {"attempts": 0, "locked_until": 0}
+        _auth_attempts[client_ip]["attempts"] += 1
+        attempts = _auth_attempts[client_ip]["attempts"]
+        remaining_attempts = MAX_PIN_ATTEMPTS - attempts
+
+        if attempts >= MAX_PIN_ATTEMPTS:
+            _auth_attempts[client_ip]["locked_until"] = time.time() + LOCKOUT_SECONDS
+            return JSONResponse({
+                "error": "Too many failed attempts. Try again later.",
+                "locked": True,
+                "remaining_seconds": LOCKOUT_SECONDS,
+            }, status_code=429)
+
+        return JSONResponse({
+            "error": "Invalid PIN",
+            "remaining_attempts": remaining_attempts,
+        }, status_code=401)
+
+    # PIN valid — return device list (no token created)
+    database.cleanup_expired_sessions(TOKEN_TTL_SECONDS)
+    devices = database.get_active_devices()
+    result = []
+    for d in devices:
+        result.append({
+            "device_id": d["device_id"],
+            "device_name": d["device_name"],
+            "client_ip": d["client_ip"],
+            "created_at": d["created_at"],
+            "last_activity": d["last_activity"],
+        })
+    return {"devices": result, "max_devices": MAX_DEVICES}
+
+
+@app.post("/api/auth/revoke-device")
+async def revoke_device_with_pin(request: Request):
+    """Revoke a single device session using PIN authentication (no token required).
+
+    Used from the device replacement flow to free a slot without logging in.
+    """
+    client_ip = _get_real_ip(request)
+
+    # Check lockout
+    record = _auth_attempts.get(client_ip)
+    if record:
+        remaining = record["locked_until"] - time.time()
+        if remaining > 0:
+            return JSONResponse({
+                "error": "Too many failed attempts. Try again later.",
+                "locked": True,
+                "remaining_seconds": int(remaining),
+            }, status_code=429)
+        else:
+            del _auth_attempts[client_ip]
+
+    try:
+        body = await request.json()
+        pin = str(body.get("pin", "")).strip()
+        device_id = str(body.get("device_id", "")).strip()
+    except Exception:
+        return JSONResponse({"error": "Invalid request body"}, status_code=400)
+
+    if not pin or len(pin) > 20:
+        return JSONResponse({"error": "Invalid PIN"}, status_code=400)
+    if not device_id:
+        return JSONResponse({"error": "device_id required"}, status_code=400)
+
+    pin_hash = config.get("pin_hash", "")
+    try:
+        pin_valid = bool(pin) and bcrypt.checkpw(
+            pin.encode("utf-8"), pin_hash.encode("utf-8")
+        )
+    except Exception:
+        pin_valid = False
+
+    if not pin_valid:
+        if client_ip not in _auth_attempts:
+            _auth_attempts[client_ip] = {"attempts": 0, "locked_until": 0}
+        _auth_attempts[client_ip]["attempts"] += 1
+        attempts = _auth_attempts[client_ip]["attempts"]
+        remaining_attempts = MAX_PIN_ATTEMPTS - attempts
+
+        if attempts >= MAX_PIN_ATTEMPTS:
+            _auth_attempts[client_ip]["locked_until"] = time.time() + LOCKOUT_SECONDS
+            return JSONResponse({
+                "error": "Too many failed attempts. Try again later.",
+                "locked": True,
+                "remaining_seconds": LOCKOUT_SECONDS,
+            }, status_code=429)
+
+        return JSONResponse({
+            "error": "Invalid PIN",
+            "remaining_attempts": remaining_attempts,
+        }, status_code=401)
+
+    # PIN valid — revoke the target device
+    session = database.get_session_by_device_id(device_id)
+    if not session:
+        return JSONResponse({"error": "Device not found"}, status_code=404)
+
+    # Close WebSocket first
+    ws = _active_ws_by_device.pop(device_id, None)
+    if ws:
+        try:
+            await ws.close(code=4003, reason="Device revoked via PIN")
+        except Exception:
+            pass
+
+    revoked_hash = database.revoke_session_by_device_id(device_id)
+    if revoked_hash:
+        to_remove = [t for t, _ in active_tokens.items()
+                     if hashlib.sha256(t.encode()).hexdigest() == revoked_hash]
+        for t in to_remove:
+            active_tokens.pop(t, None)
+        _token_device_map.pop(revoked_hash, None)
+
+    database.log_security_event(
+        "device_revoked_via_pin", "warning",
+        client_ip=client_ip, endpoint="/api/auth/revoke-device",
+        details=f"revoked device_id={device_id[:8]}…",
+    )
+    print(f"  [AUTH] Device {device_id[:8]}… revoked via PIN from {client_ip}", flush=True)
+    return {"revoked": True, "device_id": device_id}
+
+
+@app.post("/api/auth/revoke-all")
+async def revoke_all_devices_with_pin(request: Request):
+    """Revoke ALL active sessions using PIN authentication (no token required).
+
+    Used when a new device hits the device limit and wants to clear all
+    existing sessions before logging in.
+    """
+    client_ip = _get_real_ip(request)
+
+    # Check lockout
+    record = _auth_attempts.get(client_ip)
+    if record:
+        remaining = record["locked_until"] - time.time()
+        if remaining > 0:
+            return JSONResponse({
+                "error": "Too many failed attempts. Try again later.",
+                "locked": True,
+                "remaining_seconds": int(remaining),
+            }, status_code=429)
+        else:
+            del _auth_attempts[client_ip]
+
+    try:
+        body = await request.json()
+        pin = str(body.get("pin", "")).strip()
+    except Exception:
+        return JSONResponse({"error": "Invalid request body"}, status_code=400)
+
+    if not pin or len(pin) > 20:
+        return JSONResponse({"error": "Invalid PIN"}, status_code=400)
+
+    pin_hash = config.get("pin_hash", "")
+    try:
+        pin_valid = bool(pin) and bcrypt.checkpw(
+            pin.encode("utf-8"), pin_hash.encode("utf-8")
+        )
+    except Exception:
+        pin_valid = False
+
+    if not pin_valid:
+        if client_ip not in _auth_attempts:
+            _auth_attempts[client_ip] = {"attempts": 0, "locked_until": 0}
+        _auth_attempts[client_ip]["attempts"] += 1
+        attempts = _auth_attempts[client_ip]["attempts"]
+        remaining_attempts = MAX_PIN_ATTEMPTS - attempts
+
+        if attempts >= MAX_PIN_ATTEMPTS:
+            _auth_attempts[client_ip]["locked_until"] = time.time() + LOCKOUT_SECONDS
+            return JSONResponse({
+                "error": "Too many failed attempts. Try again later.",
+                "locked": True,
+                "remaining_seconds": LOCKOUT_SECONDS,
+            }, status_code=429)
+
+        return JSONResponse({
+            "error": "Invalid PIN",
+            "remaining_attempts": remaining_attempts,
+        }, status_code=401)
+
+    # PIN valid — close all WebSockets and revoke all sessions
+    for dev_id, ws in list(_active_ws_by_device.items()):
+        try:
+            await ws.close(code=4003, reason="All devices revoked")
+        except Exception:
+            pass
+    _active_ws_by_device.clear()
+
+    active_tokens.clear()
+    _token_device_map.clear()
+    sessions_cleared = database.revoke_all_sessions()
+
+    database.log_security_event(
+        "all_devices_revoked", "critical",
+        client_ip=client_ip, endpoint="/api/auth/revoke-all",
+        details=f"sessions_cleared={sessions_cleared}",
+    )
+    print(f"  [AUTH] All {sessions_cleared} sessions revoked via PIN from {client_ip}", flush=True)
+    return {"revoked_all": True, "count": sessions_cleared}
+
+
+# ---------------------------------------------------------------------------
 # REST: Logout
 # ---------------------------------------------------------------------------
 
@@ -840,7 +1331,7 @@ async def logout(request: Request):
     if not token or not verify_token(token):
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = _get_real_ip(request)
     active_tokens.pop(token, None)
     token_hash = hashlib.sha256(token.encode()).hexdigest()
     database.revoke_session(token_hash)
@@ -858,7 +1349,7 @@ async def logout_all(request: Request):
     if not token or not verify_token(token):
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = _get_real_ip(request)
 
     try:
         body = await request.json()
@@ -895,6 +1386,100 @@ async def logout_all(request: Request):
 
 
 # ---------------------------------------------------------------------------
+# REST: Device management
+# ---------------------------------------------------------------------------
+
+@app.get("/api/devices")
+async def list_devices(request: Request):
+    """List all active devices."""
+    token = get_token(request)
+    if not token or not verify_token(token):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    # Clean expired before listing
+    database.cleanup_expired_sessions(TOKEN_TTL_SECONDS)
+
+    current_hash = hashlib.sha256(token.encode()).hexdigest()
+    devices = database.get_active_devices()
+    result = []
+    for d in devices:
+        result.append({
+            "device_id": d["device_id"],
+            "device_name": d["device_name"],
+            "client_ip": d["client_ip"],
+            "created_at": d["created_at"],
+            "last_activity": d["last_activity"],
+            "is_current": d["token_hash"] == current_hash,
+        })
+    return {"devices": result, "max_devices": MAX_DEVICES}
+
+
+@app.delete("/api/devices/{device_id:path}")
+async def revoke_device(request: Request, device_id: str):
+    """Revoke a specific device by its device_id."""
+    token = get_token(request)
+    if not token or not verify_token(token):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    client_ip = _get_real_ip(request)
+
+    # Prevent revoking self
+    current_hash = hashlib.sha256(token.encode()).hexdigest()
+    session = database.get_session_by_device_id(device_id)
+    if not session:
+        return JSONResponse({"error": "Device not found"}, status_code=404)
+    if session["token_hash"] == current_hash:
+        return JSONResponse({"error": "Cannot revoke current device"}, status_code=400)
+
+    # Close WebSocket FIRST to prevent race condition: any in-flight
+    # request on this connection must be terminated before we revoke
+    # the token in the DB / memory, otherwise a pending request could
+    # still be processed between DB revocation and WS close.
+    ws = _active_ws_by_device.pop(device_id, None)
+    if ws:
+        try:
+            await ws.close(code=4003, reason="Device revoked")
+        except Exception:
+            pass
+
+    # Then remove from in-memory tokens
+    revoked_hash = database.revoke_session_by_device_id(device_id)
+    if revoked_hash:
+        to_remove = [t for t, _ in active_tokens.items()
+                     if hashlib.sha256(t.encode()).hexdigest() == revoked_hash]
+        for t in to_remove:
+            active_tokens.pop(t, None)
+        _token_device_map.pop(revoked_hash, None)
+
+    database.log_security_event(
+        "device_revoked", "warning", client_ip=client_ip,
+        endpoint="/api/devices", details=f"revoked device_id={device_id[:8]}…",
+    )
+    return {"revoked": True, "device_id": device_id}
+
+
+@app.patch("/api/devices/{device_id:path}")
+async def rename_device_endpoint(request: Request, device_id: str):
+    """Rename a device."""
+    token = get_token(request)
+    if not token or not verify_token(token):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid request body"}, status_code=400)
+
+    new_name = str(body.get("name", "")).strip()
+    if not new_name or len(new_name) > 100:
+        return JSONResponse({"error": "Invalid device name"}, status_code=400)
+
+    if database.rename_device(device_id, new_name):
+        return {"renamed": True, "device_id": device_id, "name": new_name}
+    return JSONResponse({"error": "Device not found"}, status_code=404)
+
+
+# ---------------------------------------------------------------------------
 # REST: Check Claude OAuth credentials
 # ---------------------------------------------------------------------------
 
@@ -903,29 +1488,179 @@ async def check_oauth(request: Request):
     if not verify_token(get_token(request)):
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
+    # Method 1: Check credentials file (Windows, some Linux)
     creds_path = Path.home() / ".claude" / ".credentials.json"
-    if not creds_path.exists():
-        return JSONResponse({"available": False})
+    if creds_path.exists():
+        try:
+            creds = json.loads(creds_path.read_text(encoding="utf-8"))
+            oauth = creds.get("claudeAiOauth", {})
+            if oauth.get("accessToken"):
+                expires_at = oauth.get("expiresAt", 0)
+                is_expired = expires_at < (time.time() * 1000)
+                return JSONResponse({
+                    "available": True,
+                    "subscriptionType": oauth.get("subscriptionType", "unknown"),
+                    "rateLimitTier": oauth.get("rateLimitTier", ""),
+                    "expired": is_expired,
+                })
+        except Exception:
+            pass
 
-    try:
-        creds = json.loads(creds_path.read_text(encoding="utf-8"))
-        oauth = creds.get("claudeAiOauth", {})
+    # Method 2: Check via 'claude auth status' (macOS Keychain, etc.)
+    cli = _find_claude_cli()
+    if cli:
+        try:
+            import subprocess
+            env = {**os.environ}
+            env.pop("CLAUDE_CODE_ENTRYPOINT", None)
+            env.pop("CLAUDECODE", None)
+            result = subprocess.run(
+                [cli, "auth", "status"],
+                env=env, capture_output=True, text=True, timeout=10,
+            )
+            status_out = (result.stdout + result.stderr).lower()
+            if result.returncode == 0 and "logged in" in status_out:
+                return JSONResponse({
+                    "available": True,
+                    "subscriptionType": "unknown",
+                    "rateLimitTier": "",
+                    "expired": False,
+                })
+        except Exception:
+            pass
 
-        if not oauth.get("accessToken"):
-            return JSONResponse({"available": False})
-
-        # Check if token is expired
-        expires_at = oauth.get("expiresAt", 0)
-        is_expired = expires_at < (time.time() * 1000)  # expiresAt is in ms
-
+    # Method 3: Check if config says oauth mode (trust the setup)
+    if config.get("auth_mode") == "oauth":
         return JSONResponse({
             "available": True,
-            "subscriptionType": oauth.get("subscriptionType", "unknown"),
-            "rateLimitTier": oauth.get("rateLimitTier", ""),
-            "expired": is_expired,
+            "subscriptionType": "configured",
+            "rateLimitTier": "",
+            "expired": False,
         })
-    except Exception:
-        return JSONResponse({"available": False})
+
+    return JSONResponse({"available": False})
+
+
+# Active OAuth login process tracker (only one at a time)
+_oauth_login_process: dict | None = None
+
+
+@app.post("/api/trigger-oauth-login")
+async def trigger_oauth_login(request: Request):
+    """Trigger Claude OAuth login flow (opens browser on the server machine)."""
+    if not verify_token(get_token(request)):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    global _oauth_login_process
+
+    # Check if already logged in
+    creds_path = Path.home() / ".claude" / ".credentials.json"
+    if creds_path.exists():
+        try:
+            creds = json.loads(creds_path.read_text(encoding="utf-8"))
+            oauth = creds.get("claudeAiOauth", {})
+            if oauth.get("accessToken"):
+                expires_at = oauth.get("expiresAt", 0)
+                if expires_at > (time.time() * 1000):
+                    return JSONResponse({
+                        "status": "already_logged_in",
+                        "subscriptionType": oauth.get("subscriptionType", "unknown"),
+                    })
+        except Exception:
+            pass
+
+    cli = _find_claude_cli()
+    if not cli:
+        return JSONResponse(
+            {"error": "Claude CLI not found. Install claude-agent-sdk."},
+            status_code=500,
+        )
+
+    # Check if a login is already in progress
+    if _oauth_login_process and _oauth_login_process.get("process"):
+        proc = _oauth_login_process["process"]
+        if proc.poll() is None:  # still running
+            return JSONResponse({"status": "login_in_progress"})
+
+    import subprocess
+
+    env = {**os.environ}
+    env.pop("CLAUDE_CODE_ENTRYPOINT", None)
+    env.pop("CLAUDECODE", None)
+
+    try:
+        proc = subprocess.Popen(
+            [cli, "auth", "login"],
+            env=env,
+        )
+        _oauth_login_process = {"process": proc, "started": time.time()}
+        return JSONResponse({"status": "login_started"})
+    except Exception as e:
+        _logger.exception("OAuth login failed")
+        return JSONResponse({"error": "Failed to start OAuth login"}, status_code=500)
+
+
+@app.get("/api/oauth-login-status")
+async def oauth_login_status(request: Request):
+    """Check if the OAuth login process completed and credentials exist."""
+    if not verify_token(get_token(request)):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    global _oauth_login_process
+
+    # Check if credentials now exist
+    creds_path = Path.home() / ".claude" / ".credentials.json"
+    logged_in = False
+    sub_type = "unknown"
+
+    if creds_path.exists():
+        try:
+            creds = json.loads(creds_path.read_text(encoding="utf-8"))
+            oauth = creds.get("claudeAiOauth", {})
+            if oauth.get("accessToken"):
+                logged_in = True
+                sub_type = oauth.get("subscriptionType", "unknown")
+        except Exception:
+            pass
+
+    # Check process status
+    proc_running = False
+    if _oauth_login_process and _oauth_login_process.get("process"):
+        proc = _oauth_login_process["process"]
+        if proc.poll() is None:
+            proc_running = True
+            # Timeout after 5 minutes
+            if time.time() - _oauth_login_process.get("started", 0) > 300:
+                proc.kill()
+                _oauth_login_process = None
+                proc_running = False
+
+    if logged_in:
+        # Auto-save oauth mode to config
+        try:
+            cfg = {}
+            if CONFIG_FILE.exists():
+                cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+            cfg["default_provider"] = "claude"
+            cfg["auth_mode"] = "oauth"
+            cfg.pop("default_api_key", None)
+            cfg["_setup_complete"] = True
+            CONFIG_FILE.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+            _secure_chmod(CONFIG_FILE, 0o600)
+            config.update(cfg)
+        except Exception:
+            pass
+
+        _oauth_login_process = None
+        return JSONResponse({
+            "status": "logged_in",
+            "subscriptionType": sub_type,
+        })
+
+    if proc_running:
+        return JSONResponse({"status": "waiting"})
+
+    return JSONResponse({"status": "not_started"})
 
 
 # ---------------------------------------------------------------------------
@@ -943,7 +1678,7 @@ async def browse_filesystem(request: Request, path: str = "~"):
     if len(path) > MAX_BROWSE_PATH_LENGTH:
         database.log_security_event(
             "invalid_input", "info",
-            client_ip=request.client.host if request.client else "",
+            client_ip=_get_real_ip(request),
             endpoint="/api/browse", details=f"path_len={len(path)}",
         )
         return JSONResponse({"error": "Path too long"}, status_code=400)
@@ -963,6 +1698,16 @@ async def browse_filesystem(request: Request, path: str = "~"):
         target.relative_to(ALLOWED_ROOT)
     except ValueError:
         return JSONResponse({"error": "Access denied"}, status_code=403)
+
+    # Verify the fully resolved path (following ALL symlinks) is within ALLOWED_ROOT
+    final_resolved = target.resolve(strict=True)
+    try:
+        final_resolved.relative_to(ALLOWED_ROOT)
+    except ValueError:
+        return JSONResponse(
+            {"error": "Access denied: symlink target outside allowed area"},
+            status_code=403,
+        )
 
     if not target.is_dir():
         return JSONResponse({"error": "Not a directory"}, status_code=400)
@@ -1022,22 +1767,28 @@ async def upload_audio(request: Request, audio: UploadFile = File(...)):
 
     tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
     try:
-        content = await audio.read()
-
-        # Enforce upload size limit
-        if len(content) > MAX_AUDIO_UPLOAD_BYTES:
-            tmp.close()
-            os.unlink(tmp.name)
-            database.log_security_event(
-                "invalid_input", "warning",
-                client_ip=request.client.host if request.client else "",
-                endpoint="/api/upload-audio",
-                details=f"size={len(content)}, limit={MAX_AUDIO_UPLOAD_BYTES}",
-            )
-            return JSONResponse(
-                {"error": f"File too large (max {MAX_AUDIO_UPLOAD_BYTES // (1024*1024)}MB)"},
-                status_code=413,
-            )
+        # Read in chunks so we can reject oversized uploads early
+        # instead of loading the entire file into RAM first.
+        content = bytearray()
+        while True:
+            chunk = await audio.read(AUDIO_READ_CHUNK_SIZE)
+            if not chunk:
+                break
+            content.extend(chunk)
+            if len(content) > MAX_AUDIO_UPLOAD_BYTES:
+                tmp.close()
+                os.unlink(tmp.name)
+                database.log_security_event(
+                    "invalid_input", "warning",
+                    client_ip=_get_real_ip(request),
+                    endpoint="/api/upload-audio",
+                    details=f"size>{MAX_AUDIO_UPLOAD_BYTES}, limit={MAX_AUDIO_UPLOAD_BYTES}",
+                )
+                return JSONResponse(
+                    {"error": f"File too large (max {MAX_AUDIO_UPLOAD_BYTES // (1024*1024)}MB)"},
+                    status_code=413,
+                )
+        content = bytes(content)
 
         # ── Quota check: audio seconds per day ──
         estimated_seconds = len(content) / 4000  # ~32kbps webm estimate
@@ -1050,7 +1801,7 @@ async def upload_audio(request: Request, audio: UploadFile = File(...)):
             os.unlink(tmp.name)
             database.log_security_event(
                 "quota_exceeded", "warning",
-                client_ip=request.client.host if request.client else "",
+                client_ip=_get_real_ip(request),
                 token_prefix=token_prefix,
                 details=f"audio_seconds: current={quota['audio_seconds']:.0f}, estimated={estimated_seconds:.0f}, limit={DAILY_AUDIO_SECONDS_LIMIT}",
                 endpoint="/api/upload-audio",
@@ -1071,7 +1822,8 @@ async def upload_audio(request: Request, audio: UploadFile = File(...)):
 
         return {"text": text}
     except Exception as e:
-        return JSONResponse({"text": "", "error": str(e)}, status_code=500)
+        _logger.exception("Transcription failed")
+        return JSONResponse({"text": "", "error": "Transcription failed"}, status_code=500)
     finally:
         try:
             os.unlink(tmp.name)
@@ -1094,7 +1846,7 @@ async def synthesize_text(request: Request):
     except Exception:
         database.log_security_event(
             "invalid_input", "info",
-            client_ip=request.client.host if request.client else "",
+            client_ip=_get_real_ip(request),
             endpoint="/api/synthesize",
         )
         return JSONResponse({"error": "Invalid JSON or text too long (max 5000 chars)"}, status_code=400)
@@ -1114,7 +1866,7 @@ async def synthesize_text(request: Request):
     if quota["tts_chars"] + len(text) > DAILY_TTS_CHAR_LIMIT:
         database.log_security_event(
             "quota_exceeded", "warning",
-            client_ip=request.client.host if request.client else "",
+            client_ip=_get_real_ip(request),
             token_prefix=token_prefix,
             details=f"tts_chars: current={quota['tts_chars']}, requested={len(text)}, limit={DAILY_TTS_CHAR_LIMIT}",
             endpoint="/api/synthesize",
@@ -1148,7 +1900,8 @@ async def synthesize_text(request: Request):
                 os.unlink(audio_path)
             except OSError:
                 pass
-        return JSONResponse({"error": str(e)}, status_code=500)
+        _logger.exception("Text-to-speech synthesis failed")
+        return JSONResponse({"error": "Speech synthesis failed"}, status_code=500)
 
 
 # ---------------------------------------------------------------------------
@@ -1201,6 +1954,7 @@ async def list_conversations(request: Request):
     if not verify_token(get_token(request)):
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
     HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+    _secure_chmod(HISTORY_DIR, 0o700)
     conversations = []
     for f in sorted(HISTORY_DIR.glob(HISTORY_GLOB), key=lambda p: p.stat().st_mtime, reverse=True):
         try:
@@ -1225,6 +1979,7 @@ async def save_conversation(request: Request):
     if not verify_token(get_token(request)):
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
     HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+    _secure_chmod(HISTORY_DIR, 0o700)
     try:
         body = await request.json()
     except Exception:
@@ -1249,6 +2004,7 @@ async def save_conversation(request: Request):
         target = HISTORY_DIR / f"{int(time.time() * 1000)}_{safe_agent}.json"
 
     target.write_text(json.dumps(body, ensure_ascii=False, indent=2), encoding="utf-8")
+    _secure_chmod(target, 0o600)
 
     # Enforce max conversations — delete oldest beyond limit
     deleted = []
@@ -1269,6 +2025,7 @@ async def load_conversation(request: Request, conversation_id: str):
     if not verify_token(get_token(request)):
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
     HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+    _secure_chmod(HISTORY_DIR, 0o700)
     for f in HISTORY_DIR.glob(HISTORY_GLOB):
         try:
             data = json.loads(f.read_text(encoding="utf-8"))
@@ -1284,6 +2041,7 @@ async def delete_conversation(request: Request, conversation_id: str):
     if not verify_token(get_token(request)):
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
     HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+    _secure_chmod(HISTORY_DIR, 0o700)
     for f in HISTORY_DIR.glob(HISTORY_GLOB):
         try:
             data = json.loads(f.read_text(encoding="utf-8"))
@@ -1477,19 +2235,65 @@ async def api_marketplace_update(request: Request, skill_name: str):
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
-    token = ws.query_params.get("token")
+    # Validate Origin header for WebSocket connections
+    origin = ws.headers.get("origin", "")
+    if origin:
+        from urllib.parse import urlparse
+        parsed_origin = urlparse(origin)
+        # Allow same-host connections and localhost variants
+        allowed_hosts = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+        server_host = ws.headers.get("host", "").split(":")[0]
+        if server_host:
+            allowed_hosts.add(server_host)
+        if parsed_origin.hostname and parsed_origin.hostname not in allowed_hosts:
+            await ws.close(code=4003, reason="Origin not allowed")
+            return
+
+    # Try subprotocol-based auth first (frontend sends "rain-token.XXXX")
+    token = None
+    _token_via_subprotocol = False
+    protocols = ws.headers.get("sec-websocket-protocol", "")
+    for proto in protocols.split(","):
+        proto = proto.strip()
+        if proto.startswith("rain-token."):
+            token = proto[len("rain-token."):]
+            _token_via_subprotocol = True
+            break
+    # Fall back to query param for backwards compatibility (Flutter, etc.)
+    if not token:
+        token = ws.query_params.get("token")
     if not verify_token(token):
         # Must accept before sending close code so the browser sees 4001
+        _tok_preview = (token[:8] + "…") if token else "None"
+        print(f"[WS] Token rejected: {_tok_preview} (known={token in active_tokens if token else False})")
         await ws.accept()
         await ws.close(code=4001, reason="Unauthorized")
         return
 
-    await ws.accept()
+    _tok_preview = (token[:8] + "…") if token else "?"
+    print(f"[WS] Token accepted: {_tok_preview} (subproto={_token_via_subprotocol})")
+    # Only echo subprotocol if the client sent it; otherwise Flutter rejects per RFC 6455
+    await ws.accept(subprotocol=f"rain-token.{token}" if _token_via_subprotocol else None)
+
+    # Register device for this WS connection (for remote revocation)
+    _ws_token_hash = hashlib.sha256(token.encode()).hexdigest()
+    _ws_device_id = _token_device_map.get(_ws_token_hash, "")
+    if _ws_device_id:
+        _active_ws_by_device[_ws_device_id] = ws
+
+    # Per-user data isolation: resolve user_id from session token
+    user_id = database.get_user_id_from_token(_ws_token_hash)
 
     # Agent registry: agent_id → { provider, cwd, streaming_task, ... }
     agents: dict[str, dict] = {}
-    api_key: str | None = config.get("default_api_key")
-    current_provider_name: str = config.get("default_provider", "claude")
+    # Determine auth mode: "oauth" uses ~/.claude/.credentials.json, "api_key" uses stored key
+    _cfg_auth_mode = config.get("auth_mode", "api_key")
+    if _cfg_auth_mode == "oauth":
+        api_key = ""  # empty string signals OAuth mode to the SDK
+        current_provider_name = "claude"
+    else:
+        api_key = config.get("default_api_key")
+        current_provider_name = config.get("default_provider", "claude")
     current_model: str = "auto"
     current_ego_id: str = get_active_ego_id()
     last_activity: float = time.time()
@@ -1554,11 +2358,12 @@ async def websocket_endpoint(ws: WebSocket):
 
     heartbeat_task = asyncio.create_task(heartbeat_loop())
 
-    # Notify frontend if API key was pre-loaded from config (setup wizard)
-    if api_key:
+    # Notify frontend if API key or OAuth was pre-loaded from config
+    if api_key is not None and (_cfg_auth_mode == "oauth" or api_key):
         await send({
             "type": "api_key_loaded",
             "provider": current_provider_name,
+            "auth_mode": _cfg_auth_mode,
         })
 
     # ── Sub-agent manager ──
@@ -1570,7 +2375,7 @@ async def websocket_endpoint(ws: WebSocket):
             "api_key": api_key or "",
             "provider_name": current_provider_name,
             "model": current_model,
-            "compose_system_prompt": lambda: compose_system_prompt(current_ego_id),
+            "compose_system_prompt": lambda: compose_system_prompt(current_ego_id, user_id=user_id),
             "mcp_servers": None,  # Sub-agents don't get MCP by default
             # Permission infrastructure (connection-scoped)
             "pending_permissions": pending_permissions,
@@ -1579,6 +2384,7 @@ async def websocket_endpoint(ws: WebSocket):
             "classify_fn": classify,
             "get_danger_reason_fn": get_danger_reason,
             "config": config,
+            "user_id": user_id,
         }
 
     subagent_manager = SubAgentManager(
@@ -1758,9 +2564,10 @@ async def websocket_endpoint(ws: WebSocket):
                             api_key=provider_keys[fb_name],
                             model="auto",
                             cwd=cwd,
-                            system_prompt=compose_system_prompt(current_ego_id),
+                            system_prompt=compose_system_prompt(current_ego_id, user_id=user_id),
                             can_use_tool=can_use_tool_callback if fb_name == "claude" else tool_permission_callback,
                             mcp_servers=mcp_servers if fb_name == "claude" else None,
+                            user_id=user_id,
                         )
                         # Update agent with new provider
                         agents[agent_id]["provider"] = fb_provider
@@ -1803,9 +2610,11 @@ async def websocket_endpoint(ws: WebSocket):
                     except Exception:
                         continue
                 # All failovers failed
-                await send({"type": "error", "agent_id": agent_id, "text": f"All providers failed. Original error: {e}"})
+                _logger.exception("All providers failed during streaming")
+                await send({"type": "error", "agent_id": agent_id, "text": "All providers failed. Please try again."})
             else:
-                await send({"type": "error", "agent_id": agent_id, "text": str(e)})
+                _logger.exception("Streaming error")
+                await send({"type": "error", "agent_id": agent_id, "text": "An unexpected error occurred. Please try again."})
 
     async def cancel_agent_streaming(agent_id: str):
         """Cancel the streaming task for a specific agent."""
@@ -2132,12 +2941,11 @@ async def websocket_endpoint(ws: WebSocket):
                 "is_error": False,
             })
         except Exception as e:
-            import traceback
-            traceback.print_exc()
+            _logger.exception("Computer use error")
             await send_ws({
                 "type": "error",
                 "agent_id": agent_id,
-                "text": f"Computer use error: {str(e)}",
+                "text": "Computer use encountered an unexpected error.",
             })
 
     # ── End of computer use loop ─────────────────────────────────────
@@ -2146,7 +2954,11 @@ async def websocket_endpoint(ws: WebSocket):
         await send({"type": "status", "agent_id": None, "text": "Connected. Select a project directory."})
 
         while True:
-            raw = await ws.receive_text()
+            try:
+                raw = await asyncio.wait_for(ws.receive_text(), timeout=300.0)  # 5 min idle timeout
+            except asyncio.TimeoutError:
+                await ws.close(code=1000, reason="Idle timeout")
+                break
             last_activity = time.time()
 
             # ── 6a. Message size limit (16 KB) ──
@@ -2160,8 +2972,8 @@ async def websocket_endpoint(ws: WebSocket):
                 continue
 
             try:
-                data = json.loads(raw)
-            except json.JSONDecodeError:
+                data = _json_loads_safe(raw)
+            except ValueError:
                 database.log_security_event(
                     "invalid_json", "warning",
                     token_prefix=token[:8] if token else "",
@@ -2170,6 +2982,11 @@ async def websocket_endpoint(ws: WebSocket):
                 continue
             msg_type = data.get("type", "")
             agent_id = data.get("agent_id", "default")
+
+            # ── 6a. Validate agent_id format ──
+            if not _AGENT_ID_RE.match(str(agent_id)):
+                _logger.warning("Invalid agent_id rejected: %r", agent_id)
+                continue
 
             # ── Pong response — skip processing ──
             if msg_type == "pong":
@@ -2208,7 +3025,18 @@ async def websocket_endpoint(ws: WebSocket):
                     api_key = ""
                     current_provider_name = "claude"
                     current_model = data.get("model", "auto")
-                    await send({"type": "api_key_loaded", "provider": "claude"})
+                    # Persist oauth mode to config
+                    try:
+                        _cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8")) if CONFIG_FILE.exists() else {}
+                        _cfg["default_provider"] = "claude"
+                        _cfg["auth_mode"] = "oauth"
+                        _cfg.pop("default_api_key", None)
+                        CONFIG_FILE.write_text(json.dumps(_cfg, indent=2), encoding="utf-8")
+                        _secure_chmod(CONFIG_FILE, 0o600)
+                        config.update(_cfg)
+                    except Exception:
+                        pass
+                    await send({"type": "api_key_loaded", "provider": "claude", "auth_mode": "oauth"})
                     await send({"type": "status", "agent_id": agent_id, "text": "Using personal Claude account (Max/Pro)."})
                 else:
                     key = data.get("key", "").strip()
@@ -2251,6 +3079,15 @@ async def websocket_endpoint(ws: WebSocket):
 
                 if not cwd_path.is_dir():
                     await send({"type": "error", "agent_id": agent_id, "text": f"Not a directory: {new_cwd}"})
+                    continue
+
+                # Security: validate CWD is within ALLOWED_ROOT (sandbox check)
+                try:
+                    resolved_cwd_check = cwd_path.resolve(strict=True)
+                    resolved_cwd_check.relative_to(ALLOWED_ROOT)
+                except (ValueError, OSError):
+                    await send({"type": "error", "agent_id": agent_id,
+                                "text": "Access denied: directory outside allowed root."})
                     continue
 
                 # ── 6d. Max concurrent agents (exclude sub-agents) ──
@@ -2344,11 +3181,12 @@ async def websocket_endpoint(ws: WebSocket):
                         api_key=prov_key,
                         model=current_model if prov_name == current_provider_name else "auto",
                         cwd=resolved_cwd,
-                        system_prompt=compose_system_prompt(current_ego_id),
+                        system_prompt=compose_system_prompt(current_ego_id, user_id=user_id),
                         can_use_tool=can_use_tool_callback if prov_name == "claude" else tool_permission_callback,
                         resume_session_id=resume_session_id if prov.supports_session_resumption() else None,
                         mcp_servers=mcp_servers if prov_name == "claude" else None,
                         agent_id=agent_id,
+                        user_id=user_id,
                     )
                     return prov, prov_name
 
@@ -2464,7 +3302,8 @@ async def websocket_endpoint(ws: WebSocket):
                     )
                     agents[agent_id]["streaming_task"] = task
                 except Exception as e:
-                    await send({"type": "error", "agent_id": agent_id, "text": str(e)})
+                    _logger.exception("Failed to send message to provider")
+                    await send({"type": "error", "agent_id": agent_id, "text": "An unexpected error occurred. Please try again."})
 
             # ---- Interrupt a specific agent ----
             elif msg_type == "interrupt":
@@ -2562,7 +3401,7 @@ async def websocket_endpoint(ws: WebSocket):
 
                 current_ego_id = new_ego_id
                 set_active_ego_id(new_ego_id)
-                new_prompt = compose_system_prompt(current_ego_id)
+                new_prompt = compose_system_prompt(current_ego_id, user_id=user_id)
 
                 # Load MCP config for re-init (graceful degradation)
                 _mcp_servers = _load_mcp_config()
@@ -2594,6 +3433,7 @@ async def websocket_endpoint(ws: WebSocket):
                             system_prompt=new_prompt,
                             can_use_tool=can_use_tool_callback,
                             mcp_servers=_mcp_servers if current_provider_name == "claude" else None,
+                            user_id=user_id,
                         )
                     except Exception as e:
                         await send({"type": "error", "agent_id": aid, "text": f"Failed to re-init with new ego: {e}"})
@@ -2915,6 +3755,10 @@ async def websocket_endpoint(ws: WebSocket):
                         pass
         agents.clear()
 
+        # Unregister device from WS registry
+        if _ws_device_id:
+            _active_ws_by_device.pop(_ws_device_id, None)
+
 
 # ---------------------------------------------------------------------------
 # Static files (CSS/JS modules)
@@ -2933,6 +3777,82 @@ def _get_version() -> str:
         return pkg_version("rain-assistant")
     except Exception:
         return "dev"
+
+
+def _find_claude_cli() -> str | None:
+    """Find the Claude Code CLI binary (bundled in claude-agent-sdk or system)."""
+    import shutil as _shutil
+
+    try:
+        import claude_agent_sdk
+        import platform as _plat
+
+        cli_name = "claude.exe" if _plat.system() == "Windows" else "claude"
+        bundled = Path(claude_agent_sdk.__file__).parent / "_bundled" / cli_name
+        if bundled.exists():
+            return str(bundled)
+    except ImportError:
+        pass
+
+    found = _shutil.which("claude")
+    if found:
+        return found
+
+    return None
+
+
+def _run_claude_oauth_login() -> bool:
+    """Run 'claude auth login' to trigger the browser OAuth flow.
+
+    Returns True if credentials were created successfully.
+    """
+    cli = _find_claude_cli()
+    if not cli:
+        print("  ERROR: Claude CLI no encontrado.", flush=True)
+        print("  Instala claude-agent-sdk: pip install claude-agent-sdk", flush=True)
+        return False
+
+    print("  Abriendo navegador para login con Claude...", flush=True)
+    print("  (Completa el login en el navegador y vuelve aqui)", flush=True)
+    print(flush=True)
+
+    import subprocess
+
+    env = {**os.environ}
+    # Clear CLAUDE_CODE_ENTRYPOINT to avoid "cannot run inside another session" error
+    env.pop("CLAUDE_CODE_ENTRYPOINT", None)
+    env.pop("CLAUDECODE", None)
+
+    try:
+        result = subprocess.run(
+            [cli, "auth", "login"],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=300,  # 5 min max
+        )
+        login_out = result.stdout + result.stderr
+        # Show the CLI output to the user
+        for line in login_out.strip().splitlines():
+            print(f"  {line}", flush=True)
+
+        if result.returncode == 0 and "login successful" in login_out.lower():
+            print("  Configurado!", flush=True)
+            return True
+
+        if result.returncode != 0:
+            print("  Login cancelado o fallido.", flush=True)
+            return False
+    except subprocess.TimeoutExpired:
+        print("  Timeout: login no completado en 5 minutos.", flush=True)
+        return False
+    except Exception as e:
+        print(f"  Error ejecutando claude auth login: {e}", flush=True)
+        return False
+
+    # returncode was 0 but didn't see "login successful" — trust the exit code
+    print("  Login completado.", flush=True)
+    return True
 
 
 def _check_dependencies_inline():
@@ -2989,59 +3909,86 @@ def _run_setup_wizard(force: bool = False):
     print(flush=True)
 
     print("  Proveedor de IA:", flush=True)
-    print("    1 = Claude (Anthropic)", flush=True)
-    print("    2 = OpenAI", flush=True)
-    print("    3 = Gemini (Google)", flush=True)
-    print("    4 = Ollama (Local)", flush=True)
+    print("    1 = Claude (API Key)", flush=True)
+    print("    2 = Claude Max/Pro (cuenta personal)", flush=True)
+    print("    3 = OpenAI", flush=True)
+    print("    4 = Gemini (Google)", flush=True)
+    print("    5 = Ollama (Local)", flush=True)
     print("    Enter = Saltar (configura en la web despues)", flush=True)
     print(flush=True)
 
     try:
-        choice = input("  Elige [1/2/3/4/Enter]: ").strip()
+        choice = input("  Elige [1/2/3/4/5/Enter]: ").strip()
     except (EOFError, KeyboardInterrupt):
         choice = ""
 
-    provider_map = {"1": "claude", "2": "openai", "3": "gemini", "4": "ollama"}
-    provider = provider_map.get(choice)
-
-    if provider:
-        key_labels = {
-            "claude": "API Key de Claude (sk-ant-...)",
-            "openai": "API Key de OpenAI (sk-...)",
-            "gemini": "API Key de Gemini",
-            "ollama": "URL de Ollama (Enter = http://localhost:11434)",
-        }
-        try:
-            api_key_input = input(f"  {key_labels[provider]}: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            api_key_input = ""
-
-        # For Ollama, empty input means use default localhost URL
-        if not api_key_input and provider == "ollama":
-            api_key_input = "http://localhost:11434"
-
-        if api_key_input:
+    if choice == "2":
+        # Claude Max/Pro OAuth login
+        if _run_claude_oauth_login():
             CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            _secure_chmod(CONFIG_DIR, 0o700)
             cfg = {}
             if CONFIG_FILE.exists():
                 try:
                     cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
                 except Exception:
                     pass
-            cfg["default_provider"] = provider
-            cfg["default_api_key"] = api_key_input
+            cfg["default_provider"] = "claude"
+            cfg["auth_mode"] = "oauth"
+            cfg.pop("default_api_key", None)  # OAuth doesn't need API key
             cfg["_setup_complete"] = True
             CONFIG_FILE.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
-            print("  Guardado!", flush=True)
-            # Reload config so server picks it up
+            _secure_chmod(CONFIG_FILE, 0o600)
+            print("  Configurado con cuenta personal!", flush=True)
             config.update(cfg)
         else:
-            print("  Puedes configurar la API key en la web.", flush=True)
+            print("  Puedes intentar de nuevo con: rain setup", flush=True)
     else:
-        print("  OK, configura el proveedor desde la web.", flush=True)
+        provider_map = {"1": "claude", "3": "openai", "4": "gemini", "5": "ollama"}
+        provider = provider_map.get(choice)
+
+        if provider:
+            key_labels = {
+                "claude": "API Key de Claude (sk-ant-...)",
+                "openai": "API Key de OpenAI (sk-...)",
+                "gemini": "API Key de Gemini",
+                "ollama": "URL de Ollama (Enter = http://localhost:11434)",
+            }
+            try:
+                api_key_input = input(f"  {key_labels[provider]}: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                api_key_input = ""
+
+            # For Ollama, empty input means use default localhost URL
+            if not api_key_input and provider == "ollama":
+                api_key_input = "http://localhost:11434"
+
+            if api_key_input:
+                CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+                _secure_chmod(CONFIG_DIR, 0o700)
+                cfg = {}
+                if CONFIG_FILE.exists():
+                    try:
+                        cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+                    except Exception:
+                        pass
+                cfg["default_provider"] = provider
+                cfg["default_api_key"] = api_key_input
+                cfg["auth_mode"] = "api_key"
+                cfg["_setup_complete"] = True
+                CONFIG_FILE.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+                _secure_chmod(CONFIG_FILE, 0o600)
+                print("  Guardado!", flush=True)
+                # Reload config so server picks it up
+                config.update(cfg)
+            else:
+                print("  Puedes configurar la API key en la web.", flush=True)
+        else:
+            print("  OK, configura el proveedor desde la web.", flush=True)
 
     # Mark setup as complete
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    _secure_chmod(CONFIG_DIR, 0o700)
     cfg = {}
     if CONFIG_FILE.exists():
         try:
@@ -3050,6 +3997,7 @@ def _run_setup_wizard(force: bool = False):
             pass
     cfg["_setup_complete"] = True
     CONFIG_FILE.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    _secure_chmod(CONFIG_FILE, 0o600)
     config.update(cfg)
     print(flush=True)
 
@@ -3179,6 +4127,8 @@ def _start_server(cmd_args):
     print("  Rain Assistant Server", flush=True)
     print(f"  Local:   http://localhost:{PORT}", flush=True)
     print(f"  Network: http://{local_ip}:{PORT}", flush=True)
+    if HOST == "0.0.0.0":
+        print(f"  WARNING: Binding to 0.0.0.0 exposes the server to your entire network!", flush=True)
     display_pin = config.pop("_display_pin", None)
     if display_pin:
         print(f"  PIN:     {display_pin}  (new — shown only once)", flush=True)
@@ -3239,7 +4189,7 @@ def main():
     parser.add_argument("--telegram", action="store_true", help="Start Telegram bot alongside web server")
     parser.add_argument("--telegram-only", action="store_true", help="Start only the Telegram bot (no web server)")
     parser.add_argument("--port", type=int, default=8000, help="Server port (default: 8000)")
-    parser.add_argument("--host", default="0.0.0.0", help="Bind address (default: 0.0.0.0)")
+    parser.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)")
     parser.add_argument("--no-browser", action="store_true", help="Don't auto-open browser")
 
     subparsers = parser.add_subparsers(dest="command")

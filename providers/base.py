@@ -1,7 +1,29 @@
 """Abstract base class for AI providers."""
 
+import logging
+import re
 from abc import ABC, abstractmethod
 from typing import AsyncIterator, Callable, Awaitable, Any
+
+_logger = logging.getLogger(__name__)
+
+
+def _sanitize_api_error(provider_name: str, error: Exception) -> str:
+    """Log full error server-side, return safe message for client.
+
+    Strips API keys, bearer tokens, and other secrets from the error
+    message so they are never leaked over the WebSocket to the frontend.
+    """
+    _logger.error("%s API error: %s", provider_name, error, exc_info=True)
+    error_type = type(error).__name__
+    # Extract only the first line, truncate, and strip potential secrets
+    msg = str(error).split('\n')[0][:200]
+    # Remove anything that looks like an API key (sk-..., AIza..., etc.)
+    msg = re.sub(r'(sk-[a-zA-Z0-9]{6})[a-zA-Z0-9]+', r'\1...', msg)
+    msg = re.sub(r'(AIza[a-zA-Z0-9]{6})[a-zA-Z0-9]+', r'\1...', msg)
+    msg = re.sub(r'(Bearer\s+)[^\s"]+', r'\1[REDACTED]', msg)
+    msg = re.sub(r'(key[=:]\s*)[^\s&"]+', r'\1[REDACTED]', msg, flags=re.IGNORECASE)
+    return f"{provider_name} error ({error_type}): {msg}"
 
 
 class NormalizedEvent:
@@ -44,6 +66,7 @@ class BaseProvider(ABC):
         resume_session_id: str | None = None,
         mcp_servers: dict | str | None = None,
         agent_id: str = "default",
+        user_id: str = "default",
     ) -> None:
         """Initialize the provider. Called when the user sets a working directory."""
         ...

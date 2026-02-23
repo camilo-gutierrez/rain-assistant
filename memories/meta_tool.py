@@ -54,33 +54,38 @@ MANAGE_MEMORIES_DEFINITION = {
 
 
 async def handle_manage_memories(args: dict, cwd: str) -> dict:
-    """Handle manage_memories tool calls from Rain."""
+    """Handle manage_memories tool calls from Rain.
+
+    The caller may inject ``_user_id`` into *args* for per-user isolation.
+    If absent, falls back to ``"default"`` for backward compatibility.
+    """
     action = args.get("action", "")
+    user_id = args.pop("_user_id", "default")
 
     try:
         if action == "add":
-            return _action_add(args)
+            return _action_add(args, user_id)
         elif action == "list":
-            return _action_list()
+            return _action_list(user_id)
         elif action == "remove":
-            return _action_remove(args)
+            return _action_remove(args, user_id)
         elif action == "clear":
-            return _action_clear()
+            return _action_clear(user_id)
         elif action == "search":
-            return _action_search(args)
+            return _action_search(args, user_id)
         else:
             return {"content": f"Unknown action: {action}", "is_error": True}
     except Exception as e:
         return {"content": f"Error: {e}", "is_error": True}
 
 
-def _action_add(args: dict) -> dict:
+def _action_add(args: dict, user_id: str = "default") -> dict:
     content = args.get("content", "").strip()
     if not content:
         return {"content": "Error: 'content' is required for add action", "is_error": True}
 
     category = args.get("category", "fact")
-    memory = add_memory(content, category)
+    memory = add_memory(content, category, user_id=user_id)
     return {
         "content": (
             f"Memory saved [{memory['category']}]: \"{memory['content']}\" "
@@ -90,8 +95,8 @@ def _action_add(args: dict) -> dict:
     }
 
 
-def _action_list() -> dict:
-    memories = load_memories()
+def _action_list(user_id: str = "default") -> dict:
+    memories = load_memories(user_id=user_id)
     if not memories:
         return {"content": "No memories stored yet.", "is_error": False}
 
@@ -110,29 +115,29 @@ def _action_list() -> dict:
     return {"content": "\n".join(lines), "is_error": False}
 
 
-def _action_remove(args: dict) -> dict:
+def _action_remove(args: dict, user_id: str = "default") -> dict:
     memory_id = args.get("id", "")
     if not memory_id:
         return {"content": "Error: 'id' is required for remove action", "is_error": True}
 
-    if remove_memory(memory_id):
+    if remove_memory(memory_id, user_id=user_id):
         return {"content": f"Memory '{memory_id}' removed.", "is_error": False}
     return {"content": f"Memory '{memory_id}' not found.", "is_error": True}
 
 
-def _action_clear() -> dict:
-    count = clear_memories()
+def _action_clear(user_id: str = "default") -> dict:
+    count = clear_memories(user_id=user_id)
     if count == 0:
         return {"content": "No memories to clear.", "is_error": False}
     return {"content": f"Cleared {count} memories.", "is_error": False}
 
 
-def _action_search(args: dict) -> dict:
+def _action_search(args: dict, user_id: str = "default") -> dict:
     query = args.get("query", "")
     if not query:
         return {"content": "Error: 'query' is required for search action", "is_error": True}
 
-    results = search_memories(query)
+    results = search_memories(query, user_id=user_id)
     if not results:
         return {"content": f"No memories matching '{query}'.", "is_error": False}
 

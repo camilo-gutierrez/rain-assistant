@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import os
+import secrets
 import tempfile
 import time
 from pathlib import Path
@@ -27,6 +28,9 @@ from aiogram.types import (
     InlineKeyboardButton,
 )
 
+import hashlib
+
+import database
 from providers import get_provider, NormalizedEvent
 from permission_classifier import PermissionLevel, classify, get_danger_reason
 from telegram_config import (
@@ -37,6 +41,7 @@ from telegram_config import (
     get_default_cwd,
 )
 from prompt_composer import compose_system_prompt
+from rate_limiter import rate_limiter, EndpointCategory
 from alter_egos.storage import (
     load_all_egos, load_ego, get_active_ego_id, set_active_ego_id,
 )
@@ -68,7 +73,12 @@ class TelegramSession:
         self.processing = False
         self.pending_permission: dict | None = None
         self._bot: Bot | None = None
-        self.ego_id: str = get_active_ego_id()
+        self.ego_id: str = get_active_ego_id(user_id=self.user_id_str)
+
+    @property
+    def user_id_str(self) -> str:
+        """String version of user_id for use with storage functions."""
+        return str(self.user_id)
 
     async def initialize_provider(self) -> str | None:
         """Initialize the AI provider. Returns error message or None."""
@@ -81,7 +91,7 @@ class TelegramSession:
                 api_key=self.api_key,
                 model=self.model,
                 cwd=self.cwd,
-                system_prompt=compose_system_prompt(self.ego_id),
+                system_prompt=compose_system_prompt(self.ego_id, user_id=self.user_id_str),
                 can_use_tool=self._permission_callback,
             )
             return None
@@ -124,13 +134,16 @@ class TelegramSession:
             reason = get_danger_reason(classifier_name, tool_input)
             text += f"\n\n⚠️ {reason}\nReply with your PIN to approve, or tap Deny."
 
+        nonce = secrets.token_hex(16)  # 128 bits of entropy
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="✅ Approve", callback_data=f"perm_yes_{self.user_id}"
+                    text="✅ Approve",
+                    callback_data=f"perm_yes_{self.user_id}_{nonce}",
                 ),
                 InlineKeyboardButton(
-                    text="❌ Deny", callback_data=f"perm_no_{self.user_id}"
+                    text="❌ Deny",
+                    callback_data=f"perm_no_{self.user_id}_{nonce}",
                 ),
             ]
         ])
@@ -152,6 +165,8 @@ class TelegramSession:
             "approved": False,
             "level": level,
             "message_id": msg.message_id,
+            "nonce": nonce,
+            "created_at": time.time(),
         }
 
         try:
@@ -194,6 +209,76 @@ def _is_authorized(user_id: int) -> bool:
     return not allowed or user_id in allowed
 
 
+def _get_max_devices() -> int:
+    """Read max_devices from main config."""
+    try:
+        cfg_path = Path.home() / ".rain-assistant" / "config.json"
+        if cfg_path.exists():
+            cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+            return int(cfg.get("max_devices", 2))
+    except Exception:
+        pass
+    return 2
+
+
+# Token TTL must match server.py
+_TELEGRAM_TOKEN_TTL = 24 * 60 * 60
+
+
+def _register_telegram_device(user_id: int, username: str | None, first_name: str | None) -> str | None:
+    """Register Telegram user as a device. Returns error message or None on success."""
+    device_id = f"telegram:{user_id}"
+    device_name = f"Telegram (@{username})" if username else f"Telegram ({first_name or user_id})"
+
+    # Clean expired sessions first
+    database.cleanup_expired_sessions(_TELEGRAM_TOKEN_TTL)
+
+    # Check if this device already has a session
+    existing = database.get_session_by_device_id(device_id)
+    if existing:
+        # Already registered — refresh activity
+        database.update_session_activity(existing["token_hash"])
+        return None
+
+    # New device — check limit
+    device_count = database.count_active_devices()
+    max_devices = _get_max_devices()
+    if device_count >= max_devices:
+        return (
+            f"⛔ Maximum devices reached ({device_count}/{max_devices}).\n"
+            f"Remove a device from Settings on an active device first."
+        )
+
+    # Create a synthetic session
+    synthetic_token = f"telegram_session_{user_id}_{secrets.token_urlsafe(32)}"
+    token_hash = hashlib.sha256(synthetic_token.encode()).hexdigest()
+    database.create_session(token_hash, "telegram", "Telegram Bot", device_id, device_name)
+    return None
+
+
+def _unregister_telegram_device(user_id: int) -> None:
+    """Remove Telegram device session."""
+    device_id = f"telegram:{user_id}"
+    database.revoke_session_by_device_id(device_id)
+
+
+def _ensure_session(message: Message) -> tuple[TelegramSession | None, str | None]:
+    """Get or create session with device limit check. Returns (session, error)."""
+    user_id = message.from_user.id
+    if user_id in sessions:
+        return sessions[user_id], None
+
+    # New session — register device
+    err = _register_telegram_device(
+        user_id, message.from_user.username, message.from_user.first_name
+    )
+    if err:
+        return None, err
+
+    sessions[user_id] = TelegramSession(user_id)
+    return sessions[user_id], None
+
+
 # ---------------------------------------------------------------------------
 # Command handlers
 # ---------------------------------------------------------------------------
@@ -205,6 +290,15 @@ async def cmd_start(message: Message) -> None:
         return
 
     user_id = message.from_user.id
+
+    # Register as device (check limit)
+    err = _register_telegram_device(
+        user_id, message.from_user.username, message.from_user.first_name
+    )
+    if err:
+        await message.reply(err)
+        return
+
     sessions[user_id] = TelegramSession(user_id)
 
     await message.reply(
@@ -232,8 +326,10 @@ async def cmd_key(message: Message) -> None:
         return
 
     user_id = message.from_user.id
-    if user_id not in sessions:
-        sessions[user_id] = TelegramSession(user_id)
+    session, err = _ensure_session(message)
+    if err:
+        await message.reply(err)
+        return
 
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
@@ -265,8 +361,10 @@ async def cmd_model(message: Message) -> None:
         return
 
     user_id = message.from_user.id
-    if user_id not in sessions:
-        sessions[user_id] = TelegramSession(user_id)
+    session, err = _ensure_session(message)
+    if err:
+        await message.reply(err)
+        return
 
     parts = message.text.split()
     if len(parts) < 2:
@@ -302,8 +400,16 @@ async def cmd_cwd(message: Message) -> None:
         return
 
     user_id = message.from_user.id
-    if user_id not in sessions:
-        sessions[user_id] = TelegramSession(user_id)
+
+    result = rate_limiter.check(f"tg:{user_id}", EndpointCategory.GENERIC_API)
+    if not result.allowed:
+        await message.reply(f"⏱️ Rate limited. Try again in {result.retry_after:.0f}s")
+        return
+
+    session, err = _ensure_session(message)
+    if err:
+        await message.reply(err)
+        return
 
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
@@ -395,7 +501,7 @@ async def cmd_status(message: Message) -> None:
         await message.reply("No active session. Use /start first.")
         return
 
-    ego = load_ego(session.ego_id)
+    ego = load_ego(session.ego_id, user_id=session.user_id_str)
     ego_name = ego["name"] if ego else session.ego_id
     ego_emoji = ego.get("emoji", "🤖") if ego else "🤖"
 
@@ -407,7 +513,7 @@ async def cmd_status(message: Message) -> None:
         f"• API Key: {'✅ Set' if session.api_key else '❌ Not set'}\n"
         f"• Provider Ready: {'✅' if session.provider else '❌'}\n"
         f"• Alter Ego: {ego_emoji} {ego_name}\n"
-        f"• Memories: {len(load_memories())} stored",
+        f"• Memories: {len(load_memories(user_id=session.user_id_str))} stored",
         parse_mode="Markdown",
     )
 
@@ -419,15 +525,15 @@ async def cmd_ego(message: Message) -> None:
         return
 
     user_id = message.from_user.id
-    if user_id not in sessions:
-        sessions[user_id] = TelegramSession(user_id)
-
-    session = sessions[user_id]
+    session, err = _ensure_session(message)
+    if err:
+        await message.reply(err)
+        return
     parts = message.text.split(maxsplit=1)
 
     if len(parts) < 2:
         # List all egos
-        egos = load_all_egos()
+        egos = load_all_egos(user_id=session.user_id_str)
         lines = ["**Available Alter Egos:**\n"]
         for ego in egos:
             active = " ← active" if ego["id"] == session.ego_id else ""
@@ -437,13 +543,13 @@ async def cmd_ego(message: Message) -> None:
         return
 
     new_ego_id = parts[1].strip().lower()
-    ego = load_ego(new_ego_id)
+    ego = load_ego(new_ego_id, user_id=session.user_id_str)
     if not ego:
         await message.reply(f"⚠️ Ego `{new_ego_id}` not found. Use `/ego` to see available egos.", parse_mode="Markdown")
         return
 
     session.ego_id = new_ego_id
-    set_active_ego_id(new_ego_id)
+    set_active_ego_id(new_ego_id, user_id=session.user_id_str)
 
     # Re-initialize provider with new prompt
     if session.provider and session.api_key:
@@ -462,7 +568,10 @@ async def cmd_memories(message: Message) -> None:
     if not _is_authorized(message.from_user.id):
         return
 
-    memories = load_memories()
+    user_id = message.from_user.id
+    session = sessions.get(user_id)
+    uid = session.user_id_str if session else str(user_id)
+    memories = load_memories(user_id=uid)
     if not memories:
         await message.reply("🧠 No memories stored yet.\nTell Rain to remember something!")
         return
@@ -483,16 +592,39 @@ async def cmd_memories(message: Message) -> None:
 async def handle_permission_callback(callback: CallbackQuery) -> None:
     """Handle permission approval/denial via inline keyboard."""
     data = callback.data
+    # Format: perm_{yes|no}_{user_id}_{nonce}
     parts = data.split("_")
-    if len(parts) < 3:
+    if len(parts) < 4:
         return
 
     action = parts[1]  # "yes" or "no"
-    user_id = int(parts[2])
+    try:
+        user_id = int(parts[2])
+    except ValueError:
+        return
+    nonce = parts[3]
+
+    # Verify the callback sender owns this permission request
+    if callback.from_user.id != user_id:
+        await callback.answer("You can only approve your own permission requests.")
+        return
 
     session = sessions.get(user_id)
     if not session or not session.pending_permission:
         await callback.answer("Permission request expired.")
+        return
+
+    # Verify nonce matches
+    if session.pending_permission.get("nonce") != nonce:
+        await callback.answer("Permission request expired.")
+        return
+
+    # Verify 5-minute expiry
+    created_at = session.pending_permission.get("created_at", 0)
+    if time.time() - created_at > 300:
+        session.pending_permission["approved"] = False
+        session.pending_permission["event"].set()
+        await callback.answer("Permission request expired (timeout).")
         return
 
     if action == "yes":
@@ -530,6 +662,12 @@ async def handle_text(message: Message, bot: Bot) -> None:
         return
 
     user_id = message.from_user.id
+
+    result = rate_limiter.check(f"tg:{user_id}", EndpointCategory.WEBSOCKET_MSG)
+    if not result.allowed:
+        await message.reply(f"⏱️ Rate limited. Try again in {result.retry_after:.0f}s")
+        return
+
     session = sessions.get(user_id)
 
     if not session:
@@ -630,6 +768,12 @@ async def handle_voice(message: Message, bot: Bot) -> None:
         return
 
     user_id = message.from_user.id
+
+    result = rate_limiter.check(f"tg:{user_id}", EndpointCategory.WEBSOCKET_MSG)
+    if not result.allowed:
+        await message.reply(f"⏱️ Rate limited. Try again in {result.retry_after:.0f}s")
+        return
+
     session = sessions.get(user_id)
 
     if not session:
@@ -684,6 +828,17 @@ async def run_telegram_bot_async() -> None:
             '{"telegram": {"bot_token": "YOUR_TOKEN"}}'
         )
         return
+
+    # Run data migrations for per-user isolation
+    from memories.storage import migrate_shared_to_user_isolated
+    from documents.storage import migrate_legacy_documents
+    from alter_egos.storage import migrate_shared_ego_to_user_isolated
+    from scheduled_tasks.storage import migrate_legacy_scheduled_tasks
+
+    migrate_shared_to_user_isolated()
+    migrate_legacy_documents()
+    migrate_shared_ego_to_user_isolated()
+    migrate_legacy_scheduled_tasks()
 
     bot = Bot(token=token)
     dp = Dispatcher()

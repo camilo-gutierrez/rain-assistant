@@ -21,7 +21,10 @@ import '../widgets/mode_switcher.dart';
 import '../widgets/model_switcher.dart';
 import '../widgets/rate_limit_badge.dart';
 import '../widgets/talk_mode_overlay.dart';
+import 'alter_egos_screen.dart';
 import 'history_screen.dart';
+import 'marketplace_screen.dart';
+import 'memories_screen.dart';
 import 'metrics_screen.dart';
 import 'settings_screen.dart';
 
@@ -412,6 +415,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   Navigator.of(context).push(
                     MaterialPageRoute(builder: (_) => const HistoryScreen()),
                   );
+                case 'memories':
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const MemoriesScreen()),
+                  );
+                case 'egos':
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const AlterEgosScreen()),
+                  );
+                case 'marketplace':
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const MarketplaceScreen()),
+                  );
                 case 'metrics':
                   Navigator.of(context).push(
                     MaterialPageRoute(builder: (_) => const MetricsScreen()),
@@ -424,6 +439,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             },
             itemBuilder: (_) => [
               PopupMenuItem(value: 'history', child: _menuItem(Icons.history, 'history.title', lang)),
+              PopupMenuItem(value: 'memories', child: _menuItem(Icons.psychology_outlined, 'memories.title', lang)),
+              PopupMenuItem(value: 'egos', child: _menuItem(Icons.person_outline, 'egos.title', lang)),
+              PopupMenuItem(value: 'marketplace', child: _menuItem(Icons.store_outlined, 'market.title', lang)),
+              const PopupMenuDivider(),
               PopupMenuItem(value: 'metrics', child: _menuItem(Icons.bar_chart, 'metrics.title', lang)),
               PopupMenuItem(value: 'settings', child: _menuItem(Icons.settings, 'settings.title', lang)),
             ],
@@ -436,6 +455,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             children: [
               // Connection banner
               _ConnectionBanner(wsStatus: wsStatus, lang: lang),
+
+              // HTTP security warning
+              _HttpSecurityBanner(lang: lang),
 
           // Agent tab bar
           if (agentState.agents.isNotEmpty)
@@ -512,6 +534,45 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             )
           else if (agent != null && agent.mode == AgentMode.coding && agent.messages.isNotEmpty)
             const SizedBox.shrink(), // placeholder for mode toggle if needed
+
+          // Live transcription preview
+          ValueListenableBuilder<String>(
+            valueListenable: _voiceService.partialTranscription,
+            builder: (context, partial, _) {
+              if (!_talkModeActive || partial.isEmpty) {
+                return const SizedBox.shrink();
+              }
+              return Container(
+                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: cs.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: cs.primary.withValues(alpha: 0.3),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.mic, size: 16, color: cs.primary.withValues(alpha: 0.7)),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        partial,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontStyle: FontStyle.italic,
+                          color: cs.onSurfaceVariant,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
 
           // Input bar
           ChatInputBar(
@@ -810,6 +871,54 @@ class _ConnectionBanner extends StatelessWidget {
   }
 }
 
+// ── HTTP security banner (warn when using HTTP on non-local servers) ──
+
+class _HttpSecurityBanner extends ConsumerWidget {
+  final String lang;
+  const _HttpSecurityBanner({required this.lang});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final auth = ref.watch(authServiceProvider);
+    final serverUrl = auth.serverUrl;
+    if (serverUrl == null) return const SizedBox.shrink();
+
+    final uri = Uri.tryParse(serverUrl);
+    if (uri == null) return const SizedBox.shrink();
+
+    // Only show for HTTP (not HTTPS), and skip localhost/127.0.0.1
+    final isHttp = uri.scheme == 'http';
+    final isLocal = uri.host == 'localhost' ||
+        uri.host == '127.0.0.1' ||
+        uri.host == '::1';
+    if (!isHttp || isLocal) return const SizedBox.shrink();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      color: Colors.orange.withValues(alpha: 0.15),
+      child: Row(
+        children: [
+          const Icon(Icons.warning_amber_rounded,
+              size: 16, color: Colors.orange),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              lang == 'es'
+                  ? 'Conexión no segura (HTTP). Usa HTTPS para proteger tus datos.'
+                  : 'Insecure connection (HTTP). Use HTTPS to protect your data.',
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: Colors.orange,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
 // ── Typing indicator (3 animated dots) ──
 

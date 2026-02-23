@@ -1,11 +1,21 @@
-"""Storage layer for Rain Alter Egos — JSON-based personality profiles."""
+"""Storage layer for Rain Alter Egos — JSON-based personality profiles.
+
+Supports per-user isolation: each user_id gets their own alter egos directory
+and active ego file under ~/.rain-assistant/users/{user_id}/.
+"""
 
 import json
+import logging
 import re
+import shutil
 from pathlib import Path
 from typing import Optional
 
+logger = logging.getLogger(__name__)
+
 CONFIG_DIR = Path.home() / ".rain-assistant"
+
+# Legacy paths (pre-isolation) — kept for migration
 EGOS_DIR = CONFIG_DIR / "alter_egos"
 ACTIVE_EGO_FILE = CONFIG_DIR / "active_ego.txt"
 
@@ -103,31 +113,59 @@ BUILTIN_EGOS: list[dict] = [
     },
 ]
 
-
-def _ensure_dir() -> None:
-    EGOS_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def _ego_path(ego_id: str) -> Path:
-    return EGOS_DIR / f"{ego_id}.json"
+# ---------------------------------------------------------------------------
+# Per-user path helpers
+# ---------------------------------------------------------------------------
 
 
-def ensure_builtin_egos() -> None:
-    """Create built-in ego files if they don't exist yet."""
-    _ensure_dir()
+def _user_egos_dir(user_id: str = "default") -> Path:
+    """Get the alter egos directory for a specific user."""
+    user_dir = CONFIG_DIR / "users" / user_id / "alter_egos"
+    user_dir.mkdir(parents=True, exist_ok=True)
+    return user_dir
+
+
+def _user_active_file(user_id: str = "default") -> Path:
+    """Get the active ego file path for a user."""
+    user_dir = CONFIG_DIR / "users" / user_id
+    user_dir.mkdir(parents=True, exist_ok=True)
+    return user_dir / "active_ego.txt"
+
+
+def _ensure_dir(user_id: str = "default") -> None:
+    _user_egos_dir(user_id)
+
+
+def _ego_path(ego_id: str, user_id: str = "default") -> Path:
+    return _user_egos_dir(user_id) / f"{ego_id}.json"
+
+
+# ---------------------------------------------------------------------------
+# Built-in ego provisioning
+# ---------------------------------------------------------------------------
+
+
+def ensure_builtin_egos(user_id: str = "default") -> None:
+    """Create built-in ego files in the user's directory if they don't exist yet."""
+    egos_dir = _user_egos_dir(user_id)
     for ego in BUILTIN_EGOS:
-        path = _ego_path(ego["id"])
+        path = egos_dir / f"{ego['id']}.json"
         if not path.exists():
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(ego, f, indent=2, ensure_ascii=False)
 
 
-def load_all_egos() -> list[dict]:
-    """Load all ego definitions from disk."""
-    ensure_builtin_egos()
+# ---------------------------------------------------------------------------
+# CRUD operations (all per-user)
+# ---------------------------------------------------------------------------
+
+
+def load_all_egos(user_id: str = "default") -> list[dict]:
+    """Load all ego definitions from the user's directory."""
+    ensure_builtin_egos(user_id)
 
     egos = []
-    for path in sorted(EGOS_DIR.glob("*.json")):
+    for path in sorted(_user_egos_dir(user_id).glob("*.json")):
         try:
             with open(path, "r", encoding="utf-8") as f:
                 ego = json.load(f)
@@ -139,10 +177,10 @@ def load_all_egos() -> list[dict]:
     return egos
 
 
-def load_ego(ego_id: str) -> Optional[dict]:
-    """Load a single ego by ID."""
-    ensure_builtin_egos()
-    path = _ego_path(ego_id)
+def load_ego(ego_id: str, user_id: str = "default") -> Optional[dict]:
+    """Load a single ego by ID from the user's directory."""
+    ensure_builtin_egos(user_id)
+    path = _ego_path(ego_id, user_id)
     if not path.exists():
         return None
     try:
@@ -152,8 +190,8 @@ def load_ego(ego_id: str) -> Optional[dict]:
         return None
 
 
-def save_ego(ego_dict: dict) -> Path:
-    """Save an ego definition to disk. Returns the file path."""
+def save_ego(ego_dict: dict, user_id: str = "default") -> Path:
+    """Save an ego definition to the user's directory. Returns the file path."""
     ego_id = ego_dict.get("id", "")
     if not ego_id or not _ID_PATTERN.match(ego_id):
         raise ValueError(
@@ -171,8 +209,8 @@ def save_ego(ego_dict: dict) -> Path:
     ego_dict.setdefault("color", "#6b7280")
     ego_dict.setdefault("is_builtin", False)
 
-    _ensure_dir()
-    path = _ego_path(ego_id)
+    _ensure_dir(user_id)
+    path = _ego_path(ego_id, user_id)
 
     # Don't overwrite builtin flag if file already exists
     if path.exists():
@@ -191,9 +229,9 @@ def save_ego(ego_dict: dict) -> Path:
     return path
 
 
-def delete_ego(ego_id: str) -> bool:
-    """Delete an ego by ID. Returns True if deleted."""
-    path = _ego_path(ego_id)
+def delete_ego(ego_id: str, user_id: str = "default") -> bool:
+    """Delete an ego by ID from the user's directory. Returns True if deleted."""
+    path = _ego_path(ego_id, user_id)
     if not path.exists():
         return False
 
@@ -204,25 +242,91 @@ def delete_ego(ego_id: str) -> bool:
     path.unlink()
 
     # If this was the active ego, reset to rain
-    if get_active_ego_id() == ego_id:
-        set_active_ego_id("rain")
+    if get_active_ego_id(user_id) == ego_id:
+        set_active_ego_id("rain", user_id)
 
     return True
 
 
-def get_active_ego_id() -> str:
-    """Get the currently active ego ID."""
-    if ACTIVE_EGO_FILE.exists():
+def get_active_ego_id(user_id: str = "default") -> str:
+    """Get the currently active ego ID for a user."""
+    active_file = _user_active_file(user_id)
+    if active_file.exists():
         try:
-            ego_id = ACTIVE_EGO_FILE.read_text(encoding="utf-8").strip()
-            if ego_id and _ego_path(ego_id).exists():
+            ego_id = active_file.read_text(encoding="utf-8").strip()
+            if ego_id and _ego_path(ego_id, user_id).exists():
                 return ego_id
         except OSError:
             pass
     return "rain"
 
 
-def set_active_ego_id(ego_id: str) -> None:
-    """Set the active ego ID."""
-    _ensure_dir()
-    ACTIVE_EGO_FILE.write_text(ego_id, encoding="utf-8")
+def set_active_ego_id(ego_id: str, user_id: str = "default") -> None:
+    """Set the active ego ID for a user."""
+    _ensure_dir(user_id)
+    _user_active_file(user_id).write_text(ego_id, encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Migration from legacy global layout
+# ---------------------------------------------------------------------------
+
+
+def migrate_shared_ego_to_user_isolated() -> dict:
+    """Move legacy global active_ego.txt and ego files to per-user structure.
+
+    Migrates:
+      1. ~/.rain-assistant/active_ego.txt  ->  users/default/active_ego.txt
+      2. ~/.rain-assistant/alter_egos/*.json  ->  users/default/alter_egos/*.json
+
+    Safe to call multiple times; skips if nothing to migrate.
+    """
+    results: dict = {"active_ego": "skipped", "ego_files": "skipped"}
+
+    # --- Migrate active_ego.txt ---
+    legacy_active = CONFIG_DIR / "active_ego.txt"
+    if legacy_active.exists():
+        try:
+            ego_id = legacy_active.read_text(encoding="utf-8").strip()
+            set_active_ego_id(ego_id or "rain", "default")
+            legacy_active.unlink()
+            results["active_ego"] = "migrated"
+            results["active_ego_id"] = ego_id or "rain"
+            logger.info("Migrated legacy active_ego.txt (ego_id=%s)", ego_id)
+        except Exception as e:
+            results["active_ego"] = "error"
+            results["active_ego_error"] = str(e)
+            logger.warning("Failed to migrate active_ego.txt: %s", e)
+
+    # --- Migrate ego JSON files ---
+    legacy_dir = CONFIG_DIR / "alter_egos"
+    if legacy_dir.is_dir():
+        user_dir = _user_egos_dir("default")
+        migrated_files = []
+        for legacy_file in legacy_dir.glob("*.json"):
+            dest = user_dir / legacy_file.name
+            try:
+                if not dest.exists():
+                    # Copy to user dir (don't move yet, in case of error)
+                    shutil.copy2(str(legacy_file), str(dest))
+                migrated_files.append(legacy_file.name)
+            except Exception as e:
+                logger.warning("Failed to migrate ego file %s: %s", legacy_file.name, e)
+
+        # Remove legacy files only after all copies succeeded
+        if migrated_files:
+            for legacy_file in legacy_dir.glob("*.json"):
+                try:
+                    legacy_file.unlink()
+                except OSError:
+                    pass
+            # Remove legacy dir if empty
+            try:
+                legacy_dir.rmdir()
+            except OSError:
+                pass  # Not empty (maybe .tmp files remain)
+            results["ego_files"] = "migrated"
+            results["migrated_files"] = migrated_files
+            logger.info("Migrated %d ego files to per-user dir", len(migrated_files))
+
+    return results

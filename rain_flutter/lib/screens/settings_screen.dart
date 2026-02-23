@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../app/l10n.dart';
+import '../models/auth.dart';
 import '../models/provider_info.dart';
 import '../providers/connection_provider.dart';
 import '../providers/notification_provider.dart';
@@ -128,8 +129,43 @@ class SettingsScreen extends ConsumerWidget {
 
           const Divider(),
 
+          // ── Voice Recognition Language ──
+          _SectionHeader(L10n.t('settings.voiceLang', lang)),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: DropdownMenu<String>(
+              initialSelection: settings.voiceLang,
+              label: Text(L10n.t('settings.voiceLang', lang)),
+              leadingIcon: const Icon(Icons.translate),
+              expandedInsets: EdgeInsets.zero,
+              onSelected: (v) {
+                if (v != null) notifier.setVoiceLang(v);
+              },
+              dropdownMenuEntries: const [
+                DropdownMenuEntry(value: 'auto', label: 'Auto'),
+                DropdownMenuEntry(value: 'es', label: 'Español'),
+                DropdownMenuEntry(value: 'en', label: 'English'),
+                DropdownMenuEntry(value: 'pt', label: 'Português'),
+                DropdownMenuEntry(value: 'fr', label: 'Français'),
+                DropdownMenuEntry(value: 'de', label: 'Deutsch'),
+                DropdownMenuEntry(value: 'it', label: 'Italiano'),
+                DropdownMenuEntry(value: 'ja', label: '日本語'),
+                DropdownMenuEntry(value: 'zh', label: '中文'),
+                DropdownMenuEntry(value: 'ko', label: '한국어'),
+              ],
+            ),
+          ),
+
+          const Divider(),
+
           // ── Notifications ──
           _NotificationSection(lang: lang),
+
+          const Divider(),
+
+          // ── Connected Devices ──
+          _SectionHeader(L10n.t('devices.title', lang)),
+          _DevicesSection(lang: lang),
 
           const Divider(),
 
@@ -419,6 +455,207 @@ class _VoiceModeSelector extends StatelessWidget {
           onTap: () => onChanged(value),
         );
       }).toList(),
+    );
+  }
+}
+
+/// Connected devices management section.
+class _DevicesSection extends ConsumerStatefulWidget {
+  final String lang;
+  const _DevicesSection({required this.lang});
+
+  @override
+  ConsumerState<_DevicesSection> createState() => _DevicesSectionState();
+}
+
+class _DevicesSectionState extends ConsumerState<_DevicesSection> {
+  List<DeviceInfo> _devices = [];
+  int _maxDevices = 2;
+  bool _loading = true;
+  String? _confirmRevokeId;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDevices();
+  }
+
+  Future<void> _loadDevices() async {
+    final auth = ref.read(authServiceProvider);
+    final result = await auth.fetchDevices();
+    if (!mounted) return;
+    setState(() {
+      _devices = result.devices;
+      _maxDevices = result.maxDevices;
+      _loading = false;
+    });
+  }
+
+  Future<void> _revoke(String deviceId) async {
+    if (_confirmRevokeId != deviceId) {
+      setState(() => _confirmRevokeId = deviceId);
+      return;
+    }
+    final auth = ref.read(authServiceProvider);
+    final ok = await auth.revokeDevice(deviceId);
+    if (!mounted) return;
+    if (ok) {
+      setState(() {
+        _devices.removeWhere((d) => d.deviceId == deviceId);
+      });
+    }
+    setState(() => _confirmRevokeId = null);
+  }
+
+  Future<void> _rename(DeviceInfo device) async {
+    final controller = TextEditingController(text: device.deviceName);
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(L10n.t('devices.rename', widget.lang)),
+        content: TextField(
+          controller: controller,
+          maxLength: 100,
+          autofocus: true,
+          onSubmitted: (v) => Navigator.of(ctx).pop(v.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: Text(L10n.t('agent.cancel', widget.lang)),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (newName == null || newName.isEmpty) return;
+    final auth = ref.read(authServiceProvider);
+    final ok = await auth.renameDevice(device.deviceId, newName);
+    if (!mounted) return;
+    if (ok) {
+      setState(() {
+        final idx = _devices.indexWhere((d) => d.deviceId == device.deviceId);
+        if (idx >= 0) {
+          _devices[idx] = DeviceInfo(
+            deviceId: device.deviceId,
+            deviceName: newName,
+            clientIp: device.clientIp,
+            createdAt: device.createdAt,
+            lastActivity: device.lastActivity,
+            isCurrent: device.isCurrent,
+          );
+        }
+      });
+    }
+  }
+
+  String _formatTime(double ts) {
+    final d = DateTime.fromMillisecondsSinceEpoch((ts * 1000).toInt());
+    final diff = DateTime.now().difference(d);
+    if (diff.inMinutes < 1) return 'just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    return '${d.day}/${d.month}/${d.year}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final myDeviceId = ref.read(authServiceProvider).deviceId;
+
+    if (_loading) {
+      return Padding(
+        padding: const EdgeInsets.all(16),
+        child: Center(child: Text(L10n.t('devices.loading', widget.lang))),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          child: Text(
+            L10n.t('devices.count', widget.lang, {
+              'n': '${_devices.length}',
+              'max': '$_maxDevices',
+            }),
+            style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
+          ),
+        ),
+        if (_devices.isEmpty)
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Text(L10n.t('devices.noDevices', widget.lang)),
+          )
+        else
+          ..._devices.map((device) {
+            final isCurrent = device.deviceId == myDeviceId || device.isCurrent;
+            final isMobile = RegExp(r'mobile|android|iphone|telegram', caseSensitive: false)
+                .hasMatch(device.deviceName);
+            return ListTile(
+              leading: Icon(
+                isMobile ? Icons.smartphone : Icons.computer,
+                color: isCurrent ? cs.primary : cs.onSurfaceVariant,
+              ),
+              title: Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      device.deviceName.isNotEmpty ? device.deviceName : 'Unknown',
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  if (isCurrent) ...[
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: cs.primaryContainer,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        L10n.t('devices.thisDevice', widget.lang),
+                        style: TextStyle(fontSize: 10, color: cs.primary, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              subtitle: Text(
+                '${device.clientIp} · ${_formatTime(device.lastActivity)}',
+                style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
+              ),
+              trailing: isCurrent
+                  ? null
+                  : Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.edit, size: 18),
+                          tooltip: L10n.t('devices.rename', widget.lang),
+                          onPressed: () => _rename(device),
+                        ),
+                        IconButton(
+                          icon: Icon(
+                            Icons.delete_outline,
+                            size: 18,
+                            color: _confirmRevokeId == device.deviceId ? cs.error : null,
+                          ),
+                          tooltip: _confirmRevokeId == device.deviceId
+                              ? L10n.t('devices.revokeConfirm', widget.lang)
+                              : L10n.t('devices.revoke', widget.lang),
+                          onPressed: () => _revoke(device.deviceId),
+                        ),
+                      ],
+                    ),
+            );
+          }),
+      ],
     );
   }
 }

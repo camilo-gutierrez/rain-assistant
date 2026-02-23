@@ -53,6 +53,8 @@ def _get_db() -> sqlite3.Connection:
     """)
     # Migration: add last_result and last_error columns if missing
     _migrate_add_result_columns(conn)
+    # Migration: add user_id column for per-user isolation
+    _migrate_add_user_id_column(conn)
     conn.commit()
     return conn
 
@@ -72,6 +74,21 @@ def _migrate_add_result_columns(conn: sqlite3.Connection) -> None:
             logger.info("Migration: added 'last_error' column to scheduled_tasks")
     except sqlite3.OperationalError as e:
         logger.warning("Migration check failed (may already be up to date): %s", e)
+
+
+def _migrate_add_user_id_column(conn: sqlite3.Connection) -> None:
+    """Add user_id column for per-user isolation of scheduled tasks."""
+    try:
+        cursor = conn.execute("PRAGMA table_info(scheduled_tasks)")
+        columns = {row[1] for row in cursor.fetchall()}
+        if "user_id" not in columns:
+            conn.execute("ALTER TABLE scheduled_tasks ADD COLUMN user_id TEXT DEFAULT 'default'")
+            conn.execute("UPDATE scheduled_tasks SET user_id = 'default' WHERE user_id IS NULL")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON scheduled_tasks(user_id)")
+            conn.commit()
+            logger.info("Migration: added 'user_id' column to scheduled_tasks")
+    except sqlite3.OperationalError as e:
+        logger.warning("user_id migration check failed (may already be up to date): %s", e)
 
 
 def _calculate_next_run(cron_expr: str, base_time: float | None = None) -> float | None:
@@ -126,6 +143,7 @@ def add_task(
     task_type: str = "reminder",
     description: str = "",
     task_data: dict | None = None,
+    user_id: str = "default",
 ) -> dict | None:
     """Create a new scheduled task.
 
@@ -136,6 +154,7 @@ def add_task(
         description: Optional longer description.
         task_data: Type-specific data. For 'reminder': {"message": "..."}.
                   For 'bash': {"command": "..."}. For 'ai_prompt': {"prompt": "..."}.
+        user_id: Owner of this task (for per-user isolation).
 
     Returns:
         Created task dict, or None if cron expression is invalid.
@@ -152,51 +171,59 @@ def add_task(
     try:
         conn.execute(
             """INSERT INTO scheduled_tasks
-               (id, name, description, schedule, task_type, task_data, next_run, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (task_id, name, description, schedule, task_type, data_json, next_run, now, now),
+               (id, name, description, schedule, task_type, task_data, next_run, created_at, updated_at, user_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (task_id, name, description, schedule, task_type, data_json, next_run, now, now, user_id),
         )
         conn.commit()
 
-        row = conn.execute("SELECT * FROM scheduled_tasks WHERE id = ?", (task_id,)).fetchone()
+        row = conn.execute(
+            "SELECT * FROM scheduled_tasks WHERE id = ? AND user_id = ?",
+            (task_id, user_id),
+        ).fetchone()
         return _row_to_dict(row) if row else None
     finally:
         conn.close()
 
 
-def list_tasks(enabled_only: bool = False) -> list[dict]:
-    """List all scheduled tasks, optionally filtering to enabled only."""
+def list_tasks(user_id: str = "default", enabled_only: bool = False) -> list[dict]:
+    """List scheduled tasks for a specific user, optionally filtering to enabled only."""
     conn = _get_db()
     try:
         if enabled_only:
             rows = conn.execute(
-                "SELECT * FROM scheduled_tasks WHERE enabled = 1 ORDER BY next_run ASC"
+                "SELECT * FROM scheduled_tasks WHERE user_id = ? AND enabled = 1 ORDER BY next_run ASC",
+                (user_id,),
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT * FROM scheduled_tasks ORDER BY enabled DESC, next_run ASC"
+                "SELECT * FROM scheduled_tasks WHERE user_id = ? ORDER BY enabled DESC, next_run ASC",
+                (user_id,),
             ).fetchall()
         return [_row_to_dict(r) for r in rows]
     finally:
         conn.close()
 
 
-def get_task(task_id: str) -> dict | None:
-    """Get a specific task by ID."""
+def get_task(task_id: str, user_id: str = "default") -> dict | None:
+    """Get a specific task by ID, scoped to a user."""
     conn = _get_db()
     try:
-        row = conn.execute("SELECT * FROM scheduled_tasks WHERE id = ?", (task_id,)).fetchone()
+        row = conn.execute(
+            "SELECT * FROM scheduled_tasks WHERE id = ? AND user_id = ?",
+            (task_id, user_id),
+        ).fetchone()
         return _row_to_dict(row) if row else None
     finally:
         conn.close()
 
 
-def update_task(task_id: str, **kwargs) -> dict | None:
+def update_task(task_id: str, user_id: str = "default", **kwargs) -> dict | None:
     """Update task fields. Recalculates next_run if schedule changes.
 
     Supported kwargs: name, description, schedule, task_type, task_data, enabled.
     """
-    task = get_task(task_id)
+    task = get_task(task_id, user_id=user_id)
     if not task:
         return None
 
@@ -232,34 +259,41 @@ def update_task(task_id: str, **kwargs) -> dict | None:
     updates.append("updated_at = ?")
     params.append(time.time())
     params.append(task_id)
+    params.append(user_id)
 
     conn = _get_db()
     try:
         conn.execute(
-            f"UPDATE scheduled_tasks SET {', '.join(updates)} WHERE id = ?",
+            f"UPDATE scheduled_tasks SET {', '.join(updates)} WHERE id = ? AND user_id = ?",
             params,
         )
         conn.commit()
-        row = conn.execute("SELECT * FROM scheduled_tasks WHERE id = ?", (task_id,)).fetchone()
+        row = conn.execute(
+            "SELECT * FROM scheduled_tasks WHERE id = ? AND user_id = ?",
+            (task_id, user_id),
+        ).fetchone()
         return _row_to_dict(row) if row else None
     finally:
         conn.close()
 
 
-def delete_task(task_id: str) -> bool:
-    """Delete a task. Returns True if found and deleted."""
+def delete_task(task_id: str, user_id: str = "default") -> bool:
+    """Delete a task. Returns True if found and deleted. Scoped to user."""
     conn = _get_db()
     try:
-        cur = conn.execute("DELETE FROM scheduled_tasks WHERE id = ?", (task_id,))
+        cur = conn.execute(
+            "DELETE FROM scheduled_tasks WHERE id = ? AND user_id = ?",
+            (task_id, user_id),
+        )
         conn.commit()
         return cur.rowcount > 0
     finally:
         conn.close()
 
 
-def enable_task(task_id: str) -> dict | None:
-    """Enable a task and recalculate its next_run from now."""
-    task = get_task(task_id)
+def enable_task(task_id: str, user_id: str = "default") -> dict | None:
+    """Enable a task and recalculate its next_run from now. Scoped to user."""
+    task = get_task(task_id, user_id=user_id)
     if not task:
         return None
 
@@ -270,33 +304,59 @@ def enable_task(task_id: str) -> dict | None:
     conn = _get_db()
     try:
         conn.execute(
-            "UPDATE scheduled_tasks SET enabled = 1, next_run = ?, updated_at = ? WHERE id = ?",
-            (next_run, time.time(), task_id),
+            "UPDATE scheduled_tasks SET enabled = 1, next_run = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+            (next_run, time.time(), task_id, user_id),
         )
         conn.commit()
-        row = conn.execute("SELECT * FROM scheduled_tasks WHERE id = ?", (task_id,)).fetchone()
+        row = conn.execute(
+            "SELECT * FROM scheduled_tasks WHERE id = ? AND user_id = ?",
+            (task_id, user_id),
+        ).fetchone()
         return _row_to_dict(row) if row else None
     finally:
         conn.close()
 
 
-def disable_task(task_id: str) -> dict | None:
-    """Disable a task (stops it from running)."""
-    return update_task(task_id, enabled=False)
+def disable_task(task_id: str, user_id: str = "default") -> dict | None:
+    """Disable a task (stops it from running). Scoped to user."""
+    return update_task(task_id, user_id=user_id, enabled=False)
 
 
-def get_pending_tasks(now: float | None = None) -> list[dict]:
-    """Get all enabled tasks whose next_run is <= now."""
+def get_pending_tasks(now: float | None = None, user_id: str | None = None) -> list[dict]:
+    """Get all enabled tasks whose next_run is <= now.
+
+    Args:
+        now: Current timestamp (defaults to time.time()).
+        user_id: If provided, only return tasks for this user.
+                 If None, return pending tasks for ALL users (used by the scheduler loop).
+    """
     if now is None:
         now = time.time()
 
     conn = _get_db()
     try:
-        rows = conn.execute(
-            "SELECT * FROM scheduled_tasks WHERE enabled = 1 AND next_run <= ? ORDER BY next_run ASC",
-            (now,),
-        ).fetchall()
+        if user_id is not None:
+            rows = conn.execute(
+                "SELECT * FROM scheduled_tasks WHERE enabled = 1 AND next_run <= ? AND user_id = ? ORDER BY next_run ASC",
+                (now, user_id),
+            ).fetchall()
+        else:
+            # Scheduler loop: fetch pending tasks for ALL users
+            rows = conn.execute(
+                "SELECT * FROM scheduled_tasks WHERE enabled = 1 AND next_run <= ? ORDER BY next_run ASC",
+                (now,),
+            ).fetchall()
         return [_row_to_dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def _get_task_internal(task_id: str) -> dict | None:
+    """Get a task by ID without user_id filtering (for internal scheduler use)."""
+    conn = _get_db()
+    try:
+        row = conn.execute("SELECT * FROM scheduled_tasks WHERE id = ?", (task_id,)).fetchone()
+        return _row_to_dict(row) if row else None
     finally:
         conn.close()
 
@@ -308,12 +368,15 @@ def mark_task_run(
 ) -> dict | None:
     """Mark a task as having just run: update last_run, calculate next_run, and optionally store result/error.
 
+    This is called by the background scheduler loop for ALL users, so it does
+    NOT filter by user_id — it operates on the unique task ID directly.
+
     Args:
         task_id: The task ID.
         result: Optional result text from execution (e.g., AI response, bash stdout).
         error: Optional error text if execution failed.
     """
-    task = get_task(task_id)
+    task = _get_task_internal(task_id)
     if not task:
         return None
 
@@ -336,3 +399,21 @@ def mark_task_run(
         return _row_to_dict(row) if row else None
     finally:
         conn.close()
+
+
+def migrate_legacy_scheduled_tasks() -> dict:
+    """Ensure user_id column exists in the scheduled_tasks table.
+
+    This is idempotent — safe to call on every server startup.
+    The actual migration runs inside _get_db() via _migrate_add_user_id_column().
+
+    Returns:
+        Status dict with migration result.
+    """
+    try:
+        conn = _get_db()  # triggers migration in _get_db
+        conn.close()
+        return {"status": "ok", "message": "scheduled_tasks user_id migration complete"}
+    except Exception as e:
+        logger.error("Failed to migrate scheduled_tasks: %s", e)
+        return {"status": "error", "message": str(e)}

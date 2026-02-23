@@ -124,9 +124,8 @@ export function useWebSocket() {
     if (connectionStatus === "connected" && !notifiedRef.current) {
       notifiedRef.current = true;
       const send = useConnectionStore.getState().send;
-      const { aiProvider, aiModel } = useSettingsStore.getState();
-      const storedKey = typeof window !== "undefined"
-        ? sessionStorage.getItem(`rain-api-key-${aiProvider}`) : null;
+      const { aiProvider, aiModel, providerKeys } = useSettingsStore.getState();
+      const storedKey = providerKeys[aiProvider] || null;
       if (storedKey) send({ type: "set_api_key", key: storedKey, provider: aiProvider, model: aiModel });
       useAgentStore.getState().reinitAgentsOnServer(send);
     }

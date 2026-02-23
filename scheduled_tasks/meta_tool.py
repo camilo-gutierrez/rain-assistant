@@ -87,22 +87,24 @@ MANAGE_SCHEDULED_TASKS_DEFINITION = {
 async def handle_manage_scheduled_tasks(args: dict, cwd: str) -> dict:
     """Handle manage_scheduled_tasks tool calls from Rain."""
     action = args.get("action", "")
+    # Extract user_id injected by ToolExecutor (defaults to "default" for backward compat)
+    user_id = args.pop("_user_id", "default")
 
     try:
         if action == "create":
-            return _action_create(args)
+            return _action_create(args, user_id=user_id)
         elif action == "list":
-            return _action_list()
+            return _action_list(user_id=user_id)
         elif action == "show":
-            return _action_show(args)
+            return _action_show(args, user_id=user_id)
         elif action == "update":
-            return _action_update(args)
+            return _action_update(args, user_id=user_id)
         elif action == "delete":
-            return _action_delete(args)
+            return _action_delete(args, user_id=user_id)
         elif action == "enable":
-            return _action_enable(args)
+            return _action_enable(args, user_id=user_id)
         elif action == "disable":
-            return _action_disable(args)
+            return _action_disable(args, user_id=user_id)
         else:
             return {"content": f"Unknown action: {action}", "is_error": True}
     except Exception as e:
@@ -161,7 +163,7 @@ def _format_task(task: dict, include_result: bool = True) -> str:
     return "\n".join(lines)
 
 
-def _action_create(args: dict) -> dict:
+def _action_create(args: dict, user_id: str = "default") -> dict:
     name = args.get("name", "").strip()
     schedule = args.get("schedule", "").strip()
 
@@ -193,6 +195,7 @@ def _action_create(args: dict) -> dict:
         task_type=task_type,
         description=args.get("description", ""),
         task_data=task_data,
+        user_id=user_id,
     )
 
     if task is None:
@@ -214,8 +217,8 @@ def _action_create(args: dict) -> dict:
     }
 
 
-def _action_list() -> dict:
-    tasks = list_tasks()
+def _action_list(user_id: str = "default") -> dict:
+    tasks = list_tasks(user_id=user_id)
     if not tasks:
         return {"content": "No scheduled tasks.", "is_error": False}
 
@@ -238,19 +241,19 @@ def _action_list() -> dict:
     return {"content": "\n".join(lines), "is_error": False}
 
 
-def _action_show(args: dict) -> dict:
+def _action_show(args: dict, user_id: str = "default") -> dict:
     task_id = args.get("id", "")
     if not task_id:
         return {"content": "Error: 'id' is required", "is_error": True}
 
-    task = get_task(task_id)
+    task = get_task(task_id, user_id=user_id)
     if not task:
         return {"content": f"Task '{task_id}' not found.", "is_error": True}
 
     return {"content": _format_task(task), "is_error": False}
 
 
-def _action_update(args: dict) -> dict:
+def _action_update(args: dict, user_id: str = "default") -> dict:
     task_id = args.get("id", "")
     if not task_id:
         return {"content": "Error: 'id' is required", "is_error": True}
@@ -271,29 +274,29 @@ def _action_update(args: dict) -> dict:
             task_data["prompt"] = args["prompt"]
         kwargs["task_data"] = task_data
 
-    task = update_task(task_id, **kwargs)
+    task = update_task(task_id, user_id=user_id, **kwargs)
     if task is None:
         return {"content": f"Failed to update task '{task_id}'. Check cron expression.", "is_error": True}
 
     return {"content": f"Task updated:\n{_format_task(task)}", "is_error": False}
 
 
-def _action_delete(args: dict) -> dict:
+def _action_delete(args: dict, user_id: str = "default") -> dict:
     task_id = args.get("id", "")
     if not task_id:
         return {"content": "Error: 'id' is required", "is_error": True}
 
-    if delete_task(task_id):
+    if delete_task(task_id, user_id=user_id):
         return {"content": f"Task '{task_id}' deleted.", "is_error": False}
     return {"content": f"Task '{task_id}' not found.", "is_error": True}
 
 
-def _action_enable(args: dict) -> dict:
+def _action_enable(args: dict, user_id: str = "default") -> dict:
     task_id = args.get("id", "")
     if not task_id:
         return {"content": "Error: 'id' is required", "is_error": True}
 
-    task = enable_task(task_id)
+    task = enable_task(task_id, user_id=user_id)
     if task is None:
         return {"content": f"Task '{task_id}' not found.", "is_error": True}
     return {
@@ -302,12 +305,12 @@ def _action_enable(args: dict) -> dict:
     }
 
 
-def _action_disable(args: dict) -> dict:
+def _action_disable(args: dict, user_id: str = "default") -> dict:
     task_id = args.get("id", "")
     if not task_id:
         return {"content": "Error: 'id' is required", "is_error": True}
 
-    task = disable_task(task_id)
+    task = disable_task(task_id, user_id=user_id)
     if task is None:
         return {"content": f"Task '{task_id}' not found.", "is_error": True}
     return {"content": f"Task '{task_id}' disabled.", "is_error": False}

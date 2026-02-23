@@ -4,6 +4,8 @@ import json
 
 import pytest
 
+import database
+import key_manager
 import memories.storage as storage
 
 
@@ -13,13 +15,39 @@ def mem_store(tmp_path):
     old_config_dir = storage.CONFIG_DIR
     old_memories_file = storage.MEMORIES_FILE
 
+    # Set up database encryption with a temporary key
+    old_db_config_dir = database.CONFIG_DIR
+    old_db_config_file = database.CONFIG_FILE
+    old_fernet = database._fernet
+    old_keyring_available = key_manager._keyring_available
+
+    config_dir = tmp_path / ".rain-config"
+    config_dir.mkdir(exist_ok=True)
+    from cryptography.fernet import Fernet
+    enc_key = Fernet.generate_key().decode()
+    config_file = config_dir / "config.json"
+    config_file.write_text(json.dumps({"encryption_key": enc_key}), encoding="utf-8")
+
+    database.CONFIG_DIR = config_dir
+    database.CONFIG_FILE = config_file
+    database._fernet = None  # force reload with test key
+    key_manager._keyring_available = False  # disable keyring in tests
+
     storage.CONFIG_DIR = tmp_path
     storage.MEMORIES_FILE = tmp_path / "memories.json"
+
+    # The per-user path for "default" user
+    user_dir = tmp_path / "users" / "default"
+    user_dir.mkdir(parents=True, exist_ok=True)
 
     yield tmp_path
 
     storage.CONFIG_DIR = old_config_dir
     storage.MEMORIES_FILE = old_memories_file
+    database.CONFIG_DIR = old_db_config_dir
+    database.CONFIG_FILE = old_db_config_file
+    database._fernet = old_fernet
+    key_manager._keyring_available = old_keyring_available
 
 
 class TestLoadMemories:
@@ -31,18 +59,21 @@ class TestLoadMemories:
 
     def test_load_existing(self, mem_store):
         data = [{"id": "abc", "content": "test", "category": "fact"}]
-        storage.MEMORIES_FILE.write_text(json.dumps(data), encoding="utf-8")
+        user_file = storage._user_memories_file("default")
+        user_file.write_text(json.dumps(data), encoding="utf-8")
         memories = storage.load_memories()
         assert len(memories) == 1
         assert memories[0]["content"] == "test"
 
     def test_load_corrupt_json(self, mem_store):
-        storage.MEMORIES_FILE.write_text("not json!!", encoding="utf-8")
+        user_file = storage._user_memories_file("default")
+        user_file.write_text("not json!!", encoding="utf-8")
         memories = storage.load_memories()
         assert memories == []
 
     def test_load_non_list_json(self, mem_store):
-        storage.MEMORIES_FILE.write_text('{"key": "value"}', encoding="utf-8")
+        user_file = storage._user_memories_file("default")
+        user_file.write_text('{"key": "value"}', encoding="utf-8")
         memories = storage.load_memories()
         assert memories == []
 
@@ -101,8 +132,12 @@ class TestAddMemory:
 
     def test_memories_persist_to_disk(self, mem_store):
         storage.add_memory("Persistent memory")
-        # Read directly from file
-        data = json.loads(storage.MEMORIES_FILE.read_text(encoding="utf-8"))
+        # Read directly from per-user file — content is now encrypted
+        user_file = storage._user_memories_file("default")
+        raw = user_file.read_text(encoding="utf-8")
+        from database import decrypt_field
+        decrypted = decrypt_field(raw)
+        data = json.loads(decrypted)
         assert len(data) == 1
         assert data[0]["content"] == "Persistent memory"
 

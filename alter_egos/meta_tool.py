@@ -1,5 +1,32 @@
 """manage_alter_egos meta-tool — allows Rain to manage its own personalities."""
 
+_SUSPICIOUS_PROMPT_PATTERNS = [
+    "ignore all previous",
+    "ignore previous instructions",
+    "disregard all",
+    "disregard previous",
+    "forget your instructions",
+    "override your",
+    "you are now unrestricted",
+    "no safety guidelines",
+    "no restrictions",
+    "jailbreak",
+    "DAN mode",
+    "developer mode override",
+]
+
+
+def _validate_system_prompt(prompt: str) -> str | None:
+    """Check for suspicious prompt injection patterns. Returns error message or None."""
+    if len(prompt) > 10000:
+        return "System prompt too long (max 10000 characters)"
+    prompt_lower = prompt.lower()
+    for pattern in _SUSPICIOUS_PROMPT_PATTERNS:
+        if pattern.lower() in prompt_lower:
+            return f"System prompt contains suspicious pattern: '{pattern}'. Alter ego prompts should define personality and behavior, not override safety constraints."
+    return None
+
+
 from .storage import (
     load_all_egos,
     load_ego,
@@ -85,31 +112,36 @@ MANAGE_ALTER_EGOS_DEFINITION = {
 
 
 async def handle_manage_alter_egos(args: dict, cwd: str) -> dict:
-    """Handle manage_alter_egos tool calls from Rain."""
+    """Handle manage_alter_egos tool calls from Rain.
+
+    The caller may inject ``_user_id`` into *args* for per-user isolation.
+    If absent, falls back to ``"default"`` for backward compatibility.
+    """
     action = args.get("action", "")
+    user_id = args.pop("_user_id", "default")
 
     try:
         if action == "list":
-            return _action_list()
+            return _action_list(user_id)
         elif action == "show":
-            return _action_show(args)
+            return _action_show(args, user_id)
         elif action == "create":
-            return _action_create(args)
+            return _action_create(args, user_id)
         elif action == "edit":
-            return _action_edit(args)
+            return _action_edit(args, user_id)
         elif action == "delete":
-            return _action_delete(args)
+            return _action_delete(args, user_id)
         elif action == "activate":
-            return _action_activate(args)
+            return _action_activate(args, user_id)
         else:
             return {"content": f"Unknown action: {action}", "is_error": True}
     except Exception as e:
         return {"content": f"Error: {e}", "is_error": True}
 
 
-def _action_list() -> dict:
-    egos = load_all_egos()
-    active_id = get_active_ego_id()
+def _action_list(user_id: str = "default") -> dict:
+    egos = load_all_egos(user_id)
+    active_id = get_active_ego_id(user_id)
 
     if not egos:
         return {"content": "No alter egos found.", "is_error": False}
@@ -127,12 +159,12 @@ def _action_list() -> dict:
     return {"content": "\n".join(lines), "is_error": False}
 
 
-def _action_show(args: dict) -> dict:
+def _action_show(args: dict, user_id: str = "default") -> dict:
     ego_id = args.get("id", "")
     if not ego_id:
         return {"content": "Error: 'id' is required", "is_error": True}
 
-    ego = load_ego(ego_id)
+    ego = load_ego(ego_id, user_id)
     if not ego:
         return {"content": f"Ego '{ego_id}' not found.", "is_error": True}
 
@@ -141,14 +173,14 @@ def _action_show(args: dict) -> dict:
         f"Description: {ego.get('description', 'N/A')}",
         f"Color: {ego.get('color', '#6b7280')}",
         f"Built-in: {'Yes' if ego.get('is_builtin') else 'No'}",
-        f"Active: {'Yes' if ego['id'] == get_active_ego_id() else 'No'}",
+        f"Active: {'Yes' if ego['id'] == get_active_ego_id(user_id) else 'No'}",
         f"\nSystem Prompt:\n```\n{ego['system_prompt']}\n```",
     ]
 
     return {"content": "\n".join(lines), "is_error": False}
 
 
-def _action_create(args: dict) -> dict:
+def _action_create(args: dict, user_id: str = "default") -> dict:
     ego_id = args.get("id", "")
     if not ego_id:
         return {"content": "Error: 'id' is required for create action", "is_error": True}
@@ -157,10 +189,14 @@ def _action_create(args: dict) -> dict:
     if not system_prompt:
         return {"content": "Error: 'system_prompt' is required for create action", "is_error": True}
 
+    validation_error = _validate_system_prompt(system_prompt)
+    if validation_error:
+        return {"content": f"Error: {validation_error}", "is_error": True}
+
     name = args.get("name", ego_id.replace("_", " ").title())
 
     # Check if already exists
-    if load_ego(ego_id):
+    if load_ego(ego_id, user_id):
         return {"content": f"Error: Ego '{ego_id}' already exists. Use 'edit' to modify it.", "is_error": True}
 
     ego_dict = {
@@ -173,21 +209,27 @@ def _action_create(args: dict) -> dict:
         "is_builtin": False,
     }
 
-    path = save_ego(ego_dict)
+    path = save_ego(ego_dict, user_id)
     return {
         "content": f"Alter ego '{name}' created successfully at {path}.",
         "is_error": False,
     }
 
 
-def _action_edit(args: dict) -> dict:
+def _action_edit(args: dict, user_id: str = "default") -> dict:
     ego_id = args.get("id", "")
     if not ego_id:
         return {"content": "Error: 'id' is required for edit action", "is_error": True}
 
-    existing = load_ego(ego_id)
+    existing = load_ego(ego_id, user_id)
     if not existing:
         return {"content": f"Ego '{ego_id}' not found.", "is_error": True}
+
+    # Validate system_prompt if provided
+    if "system_prompt" in args and args["system_prompt"]:
+        validation_error = _validate_system_prompt(args["system_prompt"])
+        if validation_error:
+            return {"content": f"Error: {validation_error}", "is_error": True}
 
     # Update only provided fields
     updatable = ["name", "emoji", "description", "system_prompt", "color"]
@@ -200,10 +242,10 @@ def _action_edit(args: dict) -> dict:
     if not changed:
         return {"content": "No fields to update. Provide at least one of: name, emoji, description, system_prompt, color", "is_error": True}
 
-    save_ego(existing)
+    save_ego(existing, user_id)
 
     # If editing the active ego, flag for re-init
-    if ego_id == get_active_ego_id() and "system_prompt" in changed:
+    if ego_id == get_active_ego_id(user_id) and "system_prompt" in changed:
         _mark_ego_change(ego_id)
 
     return {
@@ -212,33 +254,33 @@ def _action_edit(args: dict) -> dict:
     }
 
 
-def _action_delete(args: dict) -> dict:
+def _action_delete(args: dict, user_id: str = "default") -> dict:
     ego_id = args.get("id", "")
     if not ego_id:
         return {"content": "Error: 'id' is required for delete action", "is_error": True}
 
-    if delete_ego(ego_id):
+    if delete_ego(ego_id, user_id):
         return {"content": f"Ego '{ego_id}' deleted.", "is_error": False}
     return {"content": f"Ego '{ego_id}' not found.", "is_error": True}
 
 
-def _action_activate(args: dict) -> dict:
+def _action_activate(args: dict, user_id: str = "default") -> dict:
     ego_id = args.get("id", "")
     if not ego_id:
         return {"content": "Error: 'id' is required for activate action", "is_error": True}
 
-    ego = load_ego(ego_id)
+    ego = load_ego(ego_id, user_id)
     if not ego:
         return {"content": f"Ego '{ego_id}' not found.", "is_error": True}
 
-    current = get_active_ego_id()
+    current = get_active_ego_id(user_id)
     if current == ego_id:
         return {
             "content": f"{ego.get('emoji', '🤖')} Ego '{ego['name']}' is already active.",
             "is_error": False,
         }
 
-    set_active_ego_id(ego_id)
+    set_active_ego_id(ego_id, user_id)
     _mark_ego_change(ego_id)
 
     return {

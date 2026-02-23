@@ -11,6 +11,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from database import encrypt_field, decrypt_field
+from utils.sanitize import sanitize_user_id, secure_chmod
+
 from memories.embeddings import (
     CONFIG_DIR,
     MEMORIES_DB,
@@ -48,6 +51,7 @@ def _get_db() -> sqlite3.Connection:
             content      TEXT NOT NULL,
             created_at   TEXT NOT NULL,
             embedding    BLOB,
+            user_id      TEXT NOT NULL DEFAULT 'default',
             UNIQUE(doc_id, chunk_index)
         )
     """)
@@ -55,7 +59,19 @@ def _get_db() -> sqlite3.Connection:
         CREATE INDEX IF NOT EXISTS idx_chunks_doc_id
             ON document_chunks(doc_id)
     """)
+
+    # Migration: add user_id column if missing (for pre-existing databases)
+    cursor = conn.execute("PRAGMA table_info(document_chunks)")
+    columns = {row[1] for row in cursor.fetchall()}
+    if "user_id" not in columns:
+        conn.execute("ALTER TABLE document_chunks ADD COLUMN user_id TEXT DEFAULT 'default'")
+        conn.execute("UPDATE document_chunks SET user_id = 'default' WHERE user_id IS NULL")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_chunks_user_doc ON document_chunks(user_id, doc_id)")
+        conn.commit()
+
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_chunks_user_doc ON document_chunks(user_id, doc_id)")
     conn.commit()
+    secure_chmod(MEMORIES_DB, 0o600)
     return conn
 
 
@@ -63,8 +79,12 @@ def _get_db() -> sqlite3.Connection:
 # Public API
 # ---------------------------------------------------------------------------
 
-def ingest_document(file_path: str) -> dict:
+def ingest_document(file_path: str, user_id: str = "default") -> dict:
     """Parse, chunk, embed, and store a document.
+
+    Args:
+        file_path: Path to the file to ingest.
+        user_id: Owner of this document (for per-user isolation).
 
     Returns:
         {"doc_id": str, "doc_name": str, "chunks": int, "status": "ok"}
@@ -73,6 +93,7 @@ def ingest_document(file_path: str) -> dict:
         FileNotFoundError: file does not exist.
         ValueError: unsupported format.
     """
+    user_id = sanitize_user_id(user_id)
     text = parse_file(file_path)
     if not text.strip():
         return {"doc_id": "", "doc_name": Path(file_path).name, "chunks": 0, "status": "empty"}
@@ -94,32 +115,37 @@ def ingest_document(file_path: str) -> dict:
 
             conn.execute(
                 """INSERT OR REPLACE INTO document_chunks
-                   (id, doc_id, doc_name, chunk_index, total_chunks, content, created_at, embedding)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (chunk_id, doc_id, doc_name, i, len(chunks), chunk_content, now, blob),
+                   (id, doc_id, doc_name, chunk_index, total_chunks, content, created_at, embedding, user_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (chunk_id, doc_id, doc_name, i, len(chunks), encrypt_field(chunk_content), now, blob, user_id),
             )
         conn.commit()
     finally:
         conn.close()
 
-    logger.info("Ingested '%s' → %d chunks (doc_id=%s)", doc_name, len(chunks), doc_id)
+    logger.info("Ingested '%s' → %d chunks (doc_id=%s, user=%s)", doc_name, len(chunks), doc_id, user_id)
     return {"doc_id": doc_id, "doc_name": doc_name, "chunks": len(chunks), "status": "ok"}
 
 
-def list_documents() -> list[dict]:
-    """List all ingested documents (grouped by doc_id).
+def list_documents(user_id: str = "default") -> list[dict]:
+    """List all ingested documents (grouped by doc_id) for a given user.
+
+    Args:
+        user_id: Owner whose documents to list.
 
     Returns:
         [{"doc_id": str, "doc_name": str, "chunks": int, "created_at": str}]
     """
+    user_id = sanitize_user_id(user_id)
     conn = _get_db()
     try:
         rows = conn.execute("""
             SELECT doc_id, doc_name, COUNT(*) as chunk_count, MIN(created_at) as created_at
             FROM document_chunks
+            WHERE user_id = ?
             GROUP BY doc_id
             ORDER BY created_at DESC
-        """).fetchall()
+        """, (user_id,)).fetchall()
         return [
             {"doc_id": r[0], "doc_name": r[1], "chunks": r[2], "created_at": r[3]}
             for r in rows
@@ -128,32 +154,37 @@ def list_documents() -> list[dict]:
         conn.close()
 
 
-def remove_document(doc_id: str) -> bool:
-    """Remove all chunks for a document. Returns True if found."""
+def remove_document(doc_id: str, user_id: str = "default") -> bool:
+    """Remove all chunks for a document owned by user_id. Returns True if found."""
+    user_id = sanitize_user_id(user_id)
     conn = _get_db()
     try:
-        cursor = conn.execute("DELETE FROM document_chunks WHERE doc_id = ?", (doc_id,))
+        cursor = conn.execute(
+            "DELETE FROM document_chunks WHERE doc_id = ? AND user_id = ?",
+            (doc_id, user_id),
+        )
         conn.commit()
         return cursor.rowcount > 0
     finally:
         conn.close()
 
 
-def get_document_chunks(doc_id: str) -> list[dict]:
-    """Get all chunks for a specific document, in order."""
+def get_document_chunks(doc_id: str, user_id: str = "default") -> list[dict]:
+    """Get all chunks for a specific document owned by user_id, in order."""
+    user_id = sanitize_user_id(user_id)
     conn = _get_db()
     try:
         rows = conn.execute(
             """SELECT id, doc_name, chunk_index, total_chunks, content, created_at
                FROM document_chunks
-               WHERE doc_id = ?
+               WHERE doc_id = ? AND user_id = ?
                ORDER BY chunk_index""",
-            (doc_id,),
+            (doc_id, user_id),
         ).fetchall()
         return [
             {
                 "id": r[0], "doc_name": r[1], "chunk_index": r[2],
-                "total_chunks": r[3], "content": r[4], "created_at": r[5],
+                "total_chunks": r[3], "content": decrypt_field(r[4]), "created_at": r[5],
             }
             for r in rows
         ]
@@ -161,14 +192,20 @@ def get_document_chunks(doc_id: str) -> list[dict]:
         conn.close()
 
 
-def search_documents(query: str, top_k: int = 5) -> list[dict]:
-    """Semantic search across all document chunks.
+def search_documents(query: str, user_id: str = "default", top_k: int = 5) -> list[dict]:
+    """Semantic search across document chunks belonging to a user.
 
     Uses the same cosine_similarity + temporal_decay from memories/embeddings.
     Returns chunks sorted by relevance with _score and _doc_name fields.
 
     Falls back to substring search if embeddings are unavailable.
+
+    Args:
+        query: Search query text.
+        user_id: Owner whose documents to search.
+        top_k: Maximum number of results to return.
     """
+    user_id = sanitize_user_id(user_id)
     if not query:
         return []
 
@@ -177,13 +214,21 @@ def search_documents(query: str, top_k: int = 5) -> list[dict]:
         rows = conn.execute(
             """SELECT id, doc_id, doc_name, chunk_index, total_chunks,
                       content, created_at, embedding
-               FROM document_chunks"""
+               FROM document_chunks
+               WHERE user_id = ?""",
+            (user_id,),
         ).fetchall()
     finally:
         conn.close()
 
     if not rows:
         return []
+
+    # Decrypt content in fetched rows
+    rows = [
+        (r[0], r[1], r[2], r[3], r[4], decrypt_field(r[5]), r[6], r[7])
+        for r in rows
+    ]
 
     # Try semantic search
     query_embedding = get_embedding(query)
@@ -193,6 +238,22 @@ def search_documents(query: str, top_k: int = 5) -> list[dict]:
     # Fallback: substring matching
     return _substring_search(query, rows, top_k)
 
+
+def migrate_legacy_documents() -> dict:
+    """Ensure user_id column exists with default values.
+
+    This is handled automatically by the PRAGMA check in _get_db(),
+    but this function is exposed explicitly for server.py to call
+    during startup if needed.
+    """
+    conn = _get_db()  # triggers migration in _get_db()
+    conn.close()
+    return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
 
 def _semantic_search(
     query_embedding: list[float],

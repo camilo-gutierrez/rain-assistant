@@ -40,15 +40,23 @@ class ToolExecutor:
         "browser_close",
     })
 
+    # Meta-tools that need per-user isolation via _user_id injection
+    _META_TOOLS_WITH_USER = frozenset({
+        "manage_memories", "manage_alter_egos", "manage_documents",
+        "manage_scheduled_tasks",
+    })
+
     def __init__(
         self,
         cwd: str,
         permission_callback: Callable[[str, str, dict], Awaitable[bool]] | None = None,
         agent_id: str = "default",
+        user_id: str = "default",
     ):
         self.cwd = cwd
         self.permission_callback = permission_callback
         self.agent_id = agent_id
+        self.user_id = user_id
 
         self._handlers = {
             "read_file": read_file,
@@ -139,15 +147,19 @@ class ToolExecutor:
 
         # Check permissions for non-green tools
         if tool_name not in GREEN_TOOLS and not self._is_green_plugin(tool_name):
-            if self.permission_callback:
-                approved = await self.permission_callback(tool_name, tool_name, arguments)
-                if not approved:
-                    return {"content": "Permission denied by user.", "is_error": True}
+            if not self.permission_callback:
+                return {"content": "Permission denied: no permission handler configured.", "is_error": True}
+            approved = await self.permission_callback(tool_name, tool_name, arguments)
+            if not approved:
+                return {"content": "Permission denied by user.", "is_error": True}
 
         try:
             # Inject agent_id for browser tools so each agent gets its own page
             if tool_name in self._BROWSER_TOOLS:
                 arguments = {**arguments, "_agent_id": self.agent_id}
+            # Inject user_id for meta-tools that need per-user isolation
+            if tool_name in self._META_TOOLS_WITH_USER:
+                arguments = {**arguments, "_user_id": self.user_id}
             return await handler(arguments, self.cwd)
         except Exception as e:
             return {"content": f"Tool execution error: {e}", "is_error": True}

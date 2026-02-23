@@ -1,8 +1,11 @@
 """Vector embedding and semantic search for Rain Memories.
 
 Uses sentence-transformers with the all-MiniLM-L6-v2 model (small, fast, CPU-friendly).
-Embeddings are stored in a SQLite database alongside memory metadata.
+Embeddings are stored in a per-user SQLite database alongside memory metadata.
 The model is lazy-loaded on first use to avoid slowing down import/startup.
+
+Per-user isolation: each user_id gets its own memories.db file
+under ~/.rain-assistant/users/{user_id}/memories.db.
 """
 
 import math
@@ -13,10 +16,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from database import encrypt_field, decrypt_field
+from utils.sanitize import sanitize_user_id, secure_chmod
+
 logger = logging.getLogger(__name__)
 
 CONFIG_DIR = Path.home() / ".rain-assistant"
-MEMORIES_DB = CONFIG_DIR / "memories.db"
+MEMORIES_DB = CONFIG_DIR / "memories.db"  # Legacy path (kept for backward compat)
 
 MODEL_NAME = "all-MiniLM-L6-v2"
 EMBEDDING_DIM = 384  # all-MiniLM-L6-v2 produces 384-dim embeddings
@@ -28,6 +34,15 @@ _model_load_attempted = False
 
 def _ensure_dir() -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _user_db_path(user_id: str = "default") -> Path:
+    """Get the embeddings database path for a specific user."""
+    user_id = sanitize_user_id(user_id)
+    user_dir = CONFIG_DIR / "users" / user_id
+    user_dir.mkdir(parents=True, exist_ok=True)
+    secure_chmod(user_dir, 0o700)
+    return user_dir / "memories.db"
 
 
 def _get_model():
@@ -116,13 +131,13 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
 
 
 # ---------------------------------------------------------------------------
-# SQLite storage for embeddings
+# SQLite storage for embeddings — per-user isolated
 # ---------------------------------------------------------------------------
 
-def _get_db() -> sqlite3.Connection:
-    """Open (and initialize) the embeddings database."""
-    _ensure_dir()
-    conn = sqlite3.connect(str(MEMORIES_DB))
+def _get_db(user_id: str = "default") -> sqlite3.Connection:
+    """Open (and initialize) the embeddings database for a specific user."""
+    db_path = _user_db_path(user_id)
+    conn = sqlite3.connect(str(db_path))
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS memories (
@@ -134,28 +149,30 @@ def _get_db() -> sqlite3.Connection:
         )
     """)
     conn.commit()
+    secure_chmod(db_path, 0o600)
     return conn
 
 
 def store_embedding(memory_id: str, content: str, category: str,
-                    created_at: str, embedding: Optional[list[float]] = None) -> None:
+                    created_at: str, embedding: Optional[list[float]] = None,
+                    user_id: str = "default") -> None:
     """Store or update a memory's embedding in the SQLite database."""
-    conn = _get_db()
+    conn = _get_db(user_id)
     try:
         blob = _serialize_embedding(embedding) if embedding else None
         conn.execute(
             """INSERT OR REPLACE INTO memories (id, content, category, created_at, embedding)
                VALUES (?, ?, ?, ?, ?)""",
-            (memory_id, content, category, created_at, blob),
+            (memory_id, encrypt_field(content), category, created_at, blob),
         )
         conn.commit()
     finally:
         conn.close()
 
 
-def remove_embedding(memory_id: str) -> None:
+def remove_embedding(memory_id: str, user_id: str = "default") -> None:
     """Remove a memory's embedding from the database."""
-    conn = _get_db()
+    conn = _get_db(user_id)
     try:
         conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
         conn.commit()
@@ -163,9 +180,9 @@ def remove_embedding(memory_id: str) -> None:
         conn.close()
 
 
-def clear_embeddings() -> None:
+def clear_embeddings(user_id: str = "default") -> None:
     """Remove all embeddings from the database."""
-    conn = _get_db()
+    conn = _get_db(user_id)
     try:
         conn.execute("DELETE FROM memories")
         conn.commit()
@@ -173,12 +190,12 @@ def clear_embeddings() -> None:
         conn.close()
 
 
-def get_all_embeddings() -> dict[str, list[float]]:
+def get_all_embeddings(user_id: str = "default") -> dict[str, list[float]]:
     """Load all stored embeddings as {memory_id: embedding_vector}.
 
     Only returns entries that have a non-null embedding.
     """
-    conn = _get_db()
+    conn = _get_db(user_id)
     try:
         rows = conn.execute(
             "SELECT id, embedding FROM memories WHERE embedding IS NOT NULL"
@@ -197,7 +214,7 @@ def get_all_embeddings() -> dict[str, list[float]]:
 # ---------------------------------------------------------------------------
 
 # Half-life in days: after this many days, the decay weight drops to 0.5.
-# After 2× half-life → 0.25, 3× → 0.125, etc.
+# After 2x half-life -> 0.25, 3x -> 0.125, etc.
 DECAY_HALF_LIFE_DAYS = 30.0
 
 # How much weight temporal decay has vs semantic similarity.
@@ -213,7 +230,7 @@ def _compute_decay(created_at: str) -> float:
     and approaches 0 for very old memories.
     """
     if not created_at:
-        return 0.5  # Unknown age → neutral
+        return 0.5  # Unknown age -> neutral
 
     try:
         created = datetime.fromisoformat(created_at)
@@ -231,7 +248,7 @@ def _compute_decay(created_at: str) -> float:
 # ---------------------------------------------------------------------------
 
 def semantic_search(query: str, memories: list[dict],
-                    top_k: int = 5) -> list[dict]:
+                    top_k: int = 5, user_id: str = "default") -> list[dict]:
     """Find the most relevant memories using cosine similarity + temporal decay.
 
     The final score combines semantic similarity (how relevant the content is)
@@ -244,6 +261,7 @@ def semantic_search(query: str, memories: list[dict],
         query: The search query text.
         memories: List of memory dicts (must have 'id' and 'content' keys).
         top_k: Number of top results to return.
+        user_id: User whose embeddings to search.
 
     Returns:
         List of memory dicts sorted by relevance (most relevant first),
@@ -257,8 +275,8 @@ def semantic_search(query: str, memories: list[dict],
     if query_embedding is None:
         return []
 
-    # Load stored embeddings
-    stored = get_all_embeddings()
+    # Load stored embeddings for this user
+    stored = get_all_embeddings(user_id)
 
     scored: list[tuple[float, float, float, dict]] = []  # (final, semantic, decay, mem)
     for mem in memories:
@@ -266,7 +284,7 @@ def semantic_search(query: str, memories: list[dict],
         if mem_id in stored:
             semantic = cosine_similarity(query_embedding, stored[mem_id])
         else:
-            # Memory exists in JSON but has no embedding yet — generate on the fly
+            # Memory exists in JSON but has no embedding yet -- generate on the fly
             mem_embedding = get_embedding(mem.get("content", ""))
             if mem_embedding is not None:
                 semantic = cosine_similarity(query_embedding, mem_embedding)
@@ -278,6 +296,7 @@ def semantic_search(query: str, memories: list[dict],
                         mem.get("category", "fact"),
                         mem.get("created_at", ""),
                         mem_embedding,
+                        user_id=user_id,
                     )
                 except Exception:
                     pass

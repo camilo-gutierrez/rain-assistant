@@ -5,7 +5,7 @@ import time
 import uuid
 from typing import AsyncIterator, Callable, Awaitable, Any
 
-from .base import BaseProvider, NormalizedEvent
+from .base import BaseProvider, NormalizedEvent, _sanitize_api_error
 from tools import ToolExecutor
 from tools.definitions import get_all_tool_definitions
 
@@ -13,6 +13,8 @@ from tools.definitions import get_all_tool_definitions
 DEFAULT_BASE_URL = "http://localhost:11434"
 DEFAULT_MODEL = "llama3.1"
 MAX_ITERATIONS = 50  # Safety limit for the agentic loop
+MAX_HISTORY_MESSAGES = 100  # Keep last 100 messages
+MAX_HISTORY_CHARS = 500_000  # 500KB total character limit
 
 
 def _convert_tools_for_ollama(tool_defs: list[dict]) -> list[dict]:
@@ -49,6 +51,24 @@ class OllamaProvider(BaseProvider):
         self._tools: list[dict] = []
         self._supports_tools = True  # Will be set to False if model doesn't support tools
 
+    def _trim_history(self):
+        """Trim conversation history to prevent unbounded memory growth."""
+        # First, trim by count
+        if len(self._messages) > MAX_HISTORY_MESSAGES:
+            # Always keep the system message if it's first
+            if self._messages and self._messages[0].get("role") == "system":
+                self._messages = [self._messages[0]] + self._messages[-(MAX_HISTORY_MESSAGES - 1):]
+            else:
+                self._messages = self._messages[-MAX_HISTORY_MESSAGES:]
+
+        # Then trim by total size
+        total_chars = sum(len(str(m.get("content", ""))) for m in self._messages)
+        while total_chars > MAX_HISTORY_CHARS and len(self._messages) > 2:
+            # Remove oldest non-system message
+            start = 1 if self._messages[0].get("role") == "system" else 0
+            removed = self._messages.pop(start)
+            total_chars -= len(str(removed.get("content", "")))
+
     async def initialize(
         self,
         api_key: str,
@@ -59,6 +79,7 @@ class OllamaProvider(BaseProvider):
         resume_session_id: str | None = None,
         mcp_servers: dict | str | None = None,
         agent_id: str = "default",
+        user_id: str = "default",
     ) -> None:
         import ollama
 
@@ -73,7 +94,7 @@ class OllamaProvider(BaseProvider):
         self._model = model if model and model != "auto" else DEFAULT_MODEL
         self._system_prompt = system_prompt
         self._messages = []
-        self._tool_executor = ToolExecutor(cwd=cwd, permission_callback=can_use_tool, agent_id=agent_id)
+        self._tool_executor = ToolExecutor(cwd=cwd, permission_callback=can_use_tool, agent_id=agent_id, user_id=user_id)
         self._interrupted = False
         self._supports_tools = True
 
@@ -124,10 +145,10 @@ class OllamaProvider(BaseProvider):
                     try:
                         stream = await self._client.chat(**kwargs)
                     except Exception as e2:
-                        yield NormalizedEvent("error", {"text": f"Ollama error: {e2}"})
+                        yield NormalizedEvent("error", {"text": _sanitize_api_error("Ollama", e2)})
                         return
                 else:
-                    yield NormalizedEvent("error", {"text": f"Ollama error: {e}"})
+                    yield NormalizedEvent("error", {"text": _sanitize_api_error("Ollama", e)})
                     return
 
             # Accumulate streamed response
@@ -170,7 +191,7 @@ class OllamaProvider(BaseProvider):
                     # We already have partial content, just stop trying tools
                     tool_calls = []
                 else:
-                    yield NormalizedEvent("error", {"text": f"Ollama stream error: {e}"})
+                    yield NormalizedEvent("error", {"text": _sanitize_api_error("Ollama", e)})
                     return
 
             if self._interrupted:
@@ -191,6 +212,7 @@ class OllamaProvider(BaseProvider):
                     for tc in tool_calls
                 ]
             self._messages.append(assistant_msg)
+            self._trim_history()
 
             # If no tool calls, we are done
             if not tool_calls:
@@ -219,7 +241,7 @@ class OllamaProvider(BaseProvider):
                 try:
                     result = await self._tool_executor.execute(tc["name"], args)
                 except Exception as e:
-                    result = {"content": f"Tool execution error: {e}", "is_error": True}
+                    result = {"content": _sanitize_api_error("Ollama/tool", e), "is_error": True}
 
                 yield NormalizedEvent("tool_result", {
                     "tool_use_id": tc["id"],
@@ -232,6 +254,8 @@ class OllamaProvider(BaseProvider):
                     "role": "tool",
                     "content": result["content"],
                 })
+
+            self._trim_history()
 
         # Emit final result
         elapsed_ms = int((time.time() - start_time) * 1000)

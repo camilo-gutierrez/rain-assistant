@@ -15,15 +15,30 @@ def ego_store(tmp_path):
     old_active_file = storage.ACTIVE_EGO_FILE
 
     storage.CONFIG_DIR = tmp_path
+    # Legacy paths (kept for backward compat in module)
     storage.EGOS_DIR = tmp_path / "alter_egos"
     storage.EGOS_DIR.mkdir()
     storage.ACTIVE_EGO_FILE = tmp_path / "active_ego.txt"
+    # Per-user paths (new isolation structure)
+    default_user_dir = tmp_path / "users" / "default"
+    default_user_dir.mkdir(parents=True)
+    (default_user_dir / "alter_egos").mkdir()
 
     yield tmp_path
 
     storage.CONFIG_DIR = old_config_dir
     storage.EGOS_DIR = old_egos_dir
     storage.ACTIVE_EGO_FILE = old_active_file
+
+
+def _egos_dir():
+    """Helper: get the per-user egos directory used in tests."""
+    return storage._user_egos_dir("default")
+
+
+def _active_file():
+    """Helper: get the per-user active ego file used in tests."""
+    return storage._user_active_file("default")
 
 
 # =====================================================================
@@ -35,7 +50,7 @@ class TestBuiltinEgos:
 
     def test_ensure_builtin_egos(self, ego_store):
         storage.ensure_builtin_egos()
-        egos_dir = storage.EGOS_DIR
+        egos_dir = _egos_dir()
         # All builtin egos should be created
         for ego in storage.BUILTIN_EGOS:
             path = egos_dir / f"{ego['id']}.json"
@@ -64,7 +79,7 @@ class TestBuiltinEgos:
     def test_builtin_not_overwritten(self, ego_store):
         """Calling ensure_builtin_egos twice should not overwrite existing files."""
         storage.ensure_builtin_egos()
-        rain_path = storage.EGOS_DIR / "rain.json"
+        rain_path = _egos_dir() / "rain.json"
         original_content = rain_path.read_text(encoding="utf-8")
 
         storage.ensure_builtin_egos()
@@ -100,16 +115,16 @@ class TestLoadEgos:
         assert ego is None
 
     def test_load_corrupt_ego_file(self, ego_store):
-        (storage.EGOS_DIR / "corrupt.json").write_text("not json!!", encoding="utf-8")
+        (_egos_dir() / "corrupt.json").write_text("not json!!", encoding="utf-8")
         ego = storage.load_ego("corrupt")
         assert ego is None
 
     def test_load_all_skips_invalid_files(self, ego_store):
         storage.ensure_builtin_egos()
         # Add a corrupt file
-        (storage.EGOS_DIR / "bad.json").write_text("not json!!", encoding="utf-8")
+        (_egos_dir() / "bad.json").write_text("not json!!", encoding="utf-8")
         # Add a file missing required fields
-        (storage.EGOS_DIR / "incomplete.json").write_text('{"name": "No ID"}', encoding="utf-8")
+        (_egos_dir() / "incomplete.json").write_text('{"name": "No ID"}', encoding="utf-8")
 
         egos = storage.load_all_egos()
         ids = [e["id"] for e in egos]
@@ -247,11 +262,12 @@ class TestActiveEgo:
 
     def test_corrupt_active_file_falls_back(self, ego_store):
         storage.ensure_builtin_egos()
-        storage.ACTIVE_EGO_FILE.write_text("", encoding="utf-8")
+        _active_file().write_text("", encoding="utf-8")
         assert storage.get_active_ego_id() == "rain"
 
     def test_missing_active_file(self, ego_store):
         storage.ensure_builtin_egos()
-        if storage.ACTIVE_EGO_FILE.exists():
-            storage.ACTIVE_EGO_FILE.unlink()
+        af = _active_file()
+        if af.exists():
+            af.unlink()
         assert storage.get_active_ego_id() == "rain"

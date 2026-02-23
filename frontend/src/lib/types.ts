@@ -440,6 +440,17 @@ export interface AuthResponse {
   remaining_attempts?: number;
   locked?: boolean;
   remaining_seconds?: number;
+  max_devices?: number;
+}
+
+// === Devices ===
+export interface DeviceInfo {
+  device_id: string;
+  device_name: string;
+  client_ip: string;
+  created_at: number;
+  last_activity: number;
+  is_current: boolean;
 }
 
 // === History Message (from API) ===

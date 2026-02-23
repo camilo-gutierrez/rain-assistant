@@ -1,10 +1,13 @@
 "use client";
 
+import { useState, useEffect, useCallback } from "react";
 import { useSettingsStore } from "@/stores/useSettingsStore";
 import { useTranslation } from "@/hooks/useTranslation";
 import { useConnectionStore } from "@/stores/useConnectionStore";
-import { Globe, Palette, Mic, Volume2, ChevronDown, Sun, Moon, Check, Radio } from "lucide-react";
-import type { Theme, Language, TTSVoice, VoiceMode } from "@/lib/types";
+import { fetchDevices, revokeDevice, renameDevice } from "@/lib/api";
+import { getDeviceId } from "@/lib/device";
+import { Globe, Palette, Mic, Volume2, ChevronDown, Sun, Moon, Check, Radio, Monitor, Smartphone, Trash2, Pencil } from "lucide-react";
+import type { Theme, Language, TTSVoice, VoiceMode, DeviceInfo } from "@/lib/types";
 
 /* ──────────────────────── Sub-components ──────────────────────── */
 
@@ -104,6 +107,186 @@ const themes: ThemeOption[] = [
     text: "#e0e0e0",
   },
 ];
+
+/* ──────────────────────── Devices Section ──────────────────────── */
+
+function DevicesSection() {
+  const { t } = useTranslation();
+  const authToken = useConnectionStore((s) => s.authToken);
+  const [devices, setDevices] = useState<DeviceInfo[]>([]);
+  const [maxDevices, setMaxDevices] = useState(2);
+  const [loading, setLoading] = useState(true);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [confirmRevokeId, setConfirmRevokeId] = useState<string | null>(null);
+  const myDeviceId = typeof window !== "undefined" ? getDeviceId() : "";
+
+  const loadDevices = useCallback(async () => {
+    try {
+      const res = await fetchDevices(authToken);
+      setDevices(res.devices);
+      setMaxDevices(res.max_devices);
+    } catch {
+      // ignore
+    } finally {
+      setLoading(false);
+    }
+  }, [authToken]);
+
+  useEffect(() => { loadDevices(); }, [loadDevices]);
+
+  const handleRevoke = async (deviceId: string) => {
+    if (confirmRevokeId !== deviceId) {
+      setConfirmRevokeId(deviceId);
+      return;
+    }
+    try {
+      await revokeDevice(deviceId, authToken);
+      setDevices((prev) => prev.filter((d) => d.device_id !== deviceId));
+    } catch {
+      // ignore
+    }
+    setConfirmRevokeId(null);
+  };
+
+  const handleRename = async (deviceId: string) => {
+    const sanitizedName = editName.trim().replace(/[<>&"'`]/g, '').slice(0, 100);
+    if (!sanitizedName) return;
+    try {
+      await renameDevice(deviceId, sanitizedName, authToken);
+      setDevices((prev) =>
+        prev.map((d) => (d.device_id === deviceId ? { ...d, device_name: sanitizedName } : d))
+      );
+    } catch {
+      // ignore
+    }
+    setEditingId(null);
+    setEditName("");
+  };
+
+  const formatTime = (ts: number) => {
+    const d = new Date(ts * 1000);
+    const now = Date.now();
+    const diffMin = Math.floor((now - d.getTime()) / 60000);
+    if (diffMin < 1) return "just now";
+    if (diffMin < 60) return `${diffMin}m ago`;
+    const diffH = Math.floor(diffMin / 60);
+    if (diffH < 24) return `${diffH}h ago`;
+    return d.toLocaleDateString();
+  };
+
+  if (loading) {
+    return (
+      <section className="rounded-xl bg-surface2/50 p-4">
+        <SectionHeader icon={<Monitor size={18} />} label={t("devices.title")} />
+        <p className="text-sm text-text2">{t("devices.loading")}</p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="rounded-xl bg-surface2/50 p-4">
+      <SectionHeader icon={<Monitor size={18} />} label={t("devices.title")} />
+      <p className="text-xs text-text2 mb-3">
+        {t("devices.count", { n: devices.length, max: maxDevices })}
+      </p>
+      {devices.length === 0 ? (
+        <p className="text-sm text-text2">{t("devices.noDevices")}</p>
+      ) : (
+        <div className="space-y-2">
+          {devices.map((device) => {
+            const isCurrent = device.device_id === myDeviceId || device.is_current;
+            const isMobile = /mobile|android|telegram/i.test(device.device_name);
+            return (
+              <div
+                key={device.device_id || device.created_at}
+                className={`flex items-center gap-3 p-3 rounded-lg border transition-colors ${
+                  isCurrent
+                    ? "border-primary/30 bg-primary/5"
+                    : "border-overlay bg-surface"
+                }`}
+              >
+                <span className="text-text2 shrink-0">
+                  {isMobile ? <Smartphone size={18} /> : <Monitor size={18} />}
+                </span>
+                <div className="flex-1 min-w-0">
+                  {editingId === device.device_id ? (
+                    <form
+                      className="flex gap-2"
+                      onSubmit={(e) => { e.preventDefault(); handleRename(device.device_id); }}
+                    >
+                      <input
+                        type="text"
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        maxLength={100}
+                        autoFocus
+                        className="flex-1 text-sm bg-surface2 border border-overlay rounded px-2 py-1 text-text focus-ring"
+                      />
+                      <button
+                        type="submit"
+                        className="text-xs text-primary font-medium px-2 py-1 rounded hover:bg-primary/10"
+                      >
+                        OK
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingId(null)}
+                        className="text-xs text-text2 px-2 py-1 rounded hover:bg-overlay"
+                      >
+                        &times;
+                      </button>
+                    </form>
+                  ) : (
+                    <>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-text truncate">
+                          {device.device_name || "Unknown"}
+                        </span>
+                        {isCurrent && (
+                          <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded-full bg-primary/15 text-primary">
+                            {t("devices.thisDevice")}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 text-xs text-text2 mt-0.5">
+                        <span>{device.client_ip}</span>
+                        <span>·</span>
+                        <span>{formatTime(device.last_activity)}</span>
+                      </div>
+                    </>
+                  )}
+                </div>
+                {!isCurrent && editingId !== device.device_id && (
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      onClick={() => { setEditingId(device.device_id); setEditName(device.device_name); }}
+                      className="p-1.5 rounded-lg text-text2 hover:text-text hover:bg-overlay transition-colors"
+                      title={t("devices.rename")}
+                    >
+                      <Pencil size={14} />
+                    </button>
+                    <button
+                      onClick={() => handleRevoke(device.device_id)}
+                      className={`p-1.5 rounded-lg transition-colors ${
+                        confirmRevokeId === device.device_id
+                          ? "text-red bg-red/10"
+                          : "text-text2 hover:text-red hover:bg-red/10"
+                      }`}
+                      title={confirmRevokeId === device.device_id ? t("devices.revokeConfirm") : t("devices.revoke")}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
 
 /* ──────────────────────── Main Component ──────────────────────── */
 
@@ -309,6 +492,9 @@ export default function SettingsPanel() {
           )}
         </div>
       </section>
+
+      {/* ── Devices ── */}
+      <DevicesSection />
     </div>
   );
 }

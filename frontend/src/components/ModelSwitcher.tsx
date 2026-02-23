@@ -23,9 +23,8 @@ const PROVIDER_COLORS: Record<AIProvider, string> = {
   ollama: "bg-[#ffffff]",   // Ollama white
 };
 
-function hasStoredKey(provider: AIProvider): boolean {
-  if (typeof window === "undefined") return false;
-  return !!sessionStorage.getItem(`rain-api-key-${provider}`);
+function hasStoredKey(provider: AIProvider, providerKeys: Record<string, string>): boolean {
+  return !!providerKeys[provider];
 }
 
 function getDisplayModel(
@@ -51,6 +50,7 @@ export default function ModelSwitcher() {
   const aiModel = useSettingsStore((s) => s.aiModel);
   const setAIProvider = useSettingsStore((s) => s.setAIProvider);
   const setAIModel = useSettingsStore((s) => s.setAIModel);
+  const providerKeys = useSettingsStore((s) => s.providerKeys);
 
   const send = useConnectionStore((s) => s.send);
   const setUsingApiKey = useConnectionStore((s) => s.setUsingApiKey);
@@ -90,7 +90,7 @@ export default function ModelSwitcher() {
     setAIProvider(provider);
     setAIModel(modelId);
 
-    const storedKey = sessionStorage.getItem(`rain-api-key-${provider}`);
+    const storedKey = providerKeys[provider] || null;
     if (storedKey) {
       send({ type: "set_api_key", key: storedKey, provider, model: modelId });
       setUsingApiKey(true);
@@ -162,7 +162,7 @@ export default function ModelSwitcher() {
               >
                 <span className={`w-1.5 h-1.5 rounded-full ${PROVIDER_COLORS[p]}`} />
                 {PROVIDER_INFO[p].name}
-                {hasStoredKey(p) && (
+                {hasStoredKey(p, providerKeys) && (
                   <span className="w-1.5 h-1.5 rounded-full bg-green shrink-0" />
                 )}
               </button>
@@ -198,7 +198,7 @@ export default function ModelSwitcher() {
           {/* Footer */}
           <div className="border-t border-overlay px-3 py-2 flex items-center justify-between">
             <div className="flex items-center gap-1.5 text-xs">
-              {hasStoredKey(activePopoverProvider) ? (
+              {hasStoredKey(activePopoverProvider, providerKeys) ? (
                 <>
                   <span className="w-1.5 h-1.5 rounded-full bg-green" />
                   <span className="text-text2">{t("modelSwitcher.keyConfigured")}</span>

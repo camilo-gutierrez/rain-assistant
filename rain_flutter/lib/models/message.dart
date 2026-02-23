@@ -28,6 +28,7 @@ sealed class Message {
       'permission_request' => PermissionRequestMessage.fromJson(json),
       'computer_screenshot' => ComputerScreenshotMessage.fromJson(json),
       'computer_action' => ComputerActionMessage.fromJson(json),
+      'sub_agent' => SubAgentMessage.fromJson(json),
       _ => SystemMessage(
           id: json['id'] ?? _uuid.v4(),
           text: 'Unknown message type: ${json['type']}',
@@ -389,6 +390,49 @@ class ComputerActionMessage extends Message {
         'input': input,
         'description': description,
         'iteration': iteration,
+        'timestamp': timestamp,
+        'animate': animate,
+      };
+}
+
+class SubAgentMessage extends Message {
+  final String subAgentId;
+  final String task;
+  final String status;
+  final String preview;
+
+  const SubAgentMessage({
+    required super.id,
+    required this.subAgentId,
+    required this.task,
+    required this.status,
+    this.preview = '',
+    required super.timestamp,
+    super.animate,
+  });
+
+  @override
+  String get type => 'sub_agent';
+
+  factory SubAgentMessage.fromJson(Map<String, dynamic> json) =>
+      SubAgentMessage(
+        id: json['id'] ?? _uuid.v4(),
+        subAgentId: json['subAgentId'] ?? json['sub_agent_id'] ?? '',
+        task: json['task'] ?? '',
+        status: json['status'] ?? 'spawned',
+        preview: json['preview'] ?? '',
+        timestamp: json['timestamp'] ?? DateTime.now().millisecondsSinceEpoch,
+        animate: json['animate'] ?? false,
+      );
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'type': type,
+        'subAgentId': subAgentId,
+        'task': task,
+        'status': status,
+        'preview': preview,
         'timestamp': timestamp,
         'animate': animate,
       };

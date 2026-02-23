@@ -6,6 +6,7 @@ from .storage import (
     remove_document,
     search_documents,
     get_document_chunks,
+    migrate_legacy_documents,
 )
 from .meta_tool import (
     MANAGE_DOCUMENTS_DEFINITION,
@@ -18,6 +19,7 @@ __all__ = [
     "remove_document",
     "search_documents",
     "get_document_chunks",
+    "migrate_legacy_documents",
     "MANAGE_DOCUMENTS_DEFINITION",
     "handle_manage_documents",
 ]
