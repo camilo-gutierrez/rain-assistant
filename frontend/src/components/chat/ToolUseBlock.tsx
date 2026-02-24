@@ -55,7 +55,7 @@ const ToolUseBlock = React.memo(function ToolUseBlock({ message }: Props) {
             {message.tool}
           </span>
           {!expanded && detail && (
-            <span className="text-xs text-text2 font-[family-name:var(--font-jetbrains)] truncate">
+            <span className="text-xs text-text2 font-mono truncate">
               {detail.length > 80 ? detail.slice(0, 80) + "..." : detail}
             </span>
           )}
@@ -71,7 +71,7 @@ const ToolUseBlock = React.memo(function ToolUseBlock({ message }: Props) {
         )}
       </div>
       {expanded && (
-        <pre className="mt-1.5 text-xs text-text2 font-[family-name:var(--font-jetbrains)] whitespace-pre-wrap break-words bg-surface2/40 rounded-md p-2 max-h-[300px] overflow-y-auto">
+        <pre className="mt-1.5 text-xs text-text2 font-mono whitespace-pre-wrap break-words bg-surface2/40 rounded-md p-2 max-h-[300px] overflow-y-auto">
           {JSON.stringify(message.input, null, 2)}
         </pre>
       )}

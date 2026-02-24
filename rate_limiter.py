@@ -133,7 +133,9 @@ rate_limiter = RateLimiter()
 
 def categorize_endpoint(path: str) -> EndpointCategory:
     """Map a request path to its rate limit category."""
-    if path == "/api/auth":
+    if path == "/api/auth" or path.startswith("/api/auth/"):
+        return EndpointCategory.AUTH
+    if path in ("/api/logout", "/api/logout-all"):
         return EndpointCategory.AUTH
     if path.startswith("/api/upload-audio"):
         return EndpointCategory.AUDIO_UPLOAD

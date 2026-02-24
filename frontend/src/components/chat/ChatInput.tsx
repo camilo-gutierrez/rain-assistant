@@ -108,8 +108,7 @@ export default function ChatInput() {
         disabled={isDisabled}
         enterKeyHint="send"
         autoComplete="off"
-        style={{ minHeight: "44px", maxHeight: "200px", resize: "none", overflowY: "hidden" }}
-        className={`flex-1 bg-surface2 text-text border border-overlay rounded-2xl px-4 py-2.5 text-[16px] sm:text-sm placeholder:text-subtext focus-ring transition-all disabled:opacity-50 disabled:cursor-not-allowed`}
+        className={`flex-1 bg-surface2 text-text border border-overlay rounded-2xl px-4 py-2.5 text-base sm:text-sm min-h-[44px] max-h-[200px] resize-none overflow-y-hidden placeholder:text-subtext focus-ring transition-all disabled:opacity-50 disabled:cursor-not-allowed`}
       />
       <button
         onClick={handleSend}

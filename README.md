@@ -67,12 +67,12 @@
 
 **Windows** (PowerShell):
 ```powershell
-irm https://raw.githubusercontent.com/camilo-gutierrez/rain-assistant/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/camilo-gutierrez/rain-assistant-installer/main/install.ps1 | iex
 ```
 
 **Linux/macOS**:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/camilo-gutierrez/rain-assistant/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/camilo-gutierrez/rain-assistant-installer/main/install.sh | bash
 ```
 
 These scripts automatically download Python, ffmpeg, and everything needed. Zero dependencies required on a clean machine.

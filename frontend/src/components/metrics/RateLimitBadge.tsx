@@ -58,7 +58,7 @@ export default function RateLimitBadge() {
         <div className="flex items-center gap-1.5 rate-bars-responsive">
           {bars.map((bar) => (
             <div key={bar.label} className="flex items-center gap-1">
-              <span className="text-[9px] text-subtext font-medium">
+              <span className="text-xs text-subtext font-medium">
                 {bar.label}
               </span>
               <div className="w-8 h-1.5 rounded-full bg-surface2 overflow-hidden">
@@ -67,7 +67,7 @@ export default function RateLimitBadge() {
                   style={{ width: `${bar.pct}%` }}
                 />
               </div>
-              <span className="text-[9px] text-subtext">
+              <span className="text-xs text-subtext">
                 {bar.pct}%
               </span>
             </div>

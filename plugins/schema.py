@@ -67,6 +67,13 @@ class Plugin:
             raise PluginValidationError(
                 f"Invalid execution type '{self.execution.type}'. Must be one of: {VALID_EXEC_TYPES}"
             )
+        # Bash/Python plugins MUST NOT be green — they execute arbitrary code
+        # and must always require user confirmation (yellow or red).
+        if self.execution.type in ("bash", "python") and self.permission_level == "green":
+            raise PluginValidationError(
+                f"Bash/Python plugins cannot have permission_level='green'. "
+                f"Use 'yellow' or 'red' instead — code execution requires user confirmation."
+            )
         if self.execution.type == "http" and not self.execution.url:
             raise PluginValidationError("HTTP plugins require a 'url' in execution")
         if self.execution.type == "bash" and not self.execution.command:

@@ -1,5 +1,7 @@
 import 'package:uuid/uuid.dart';
 
+import 'a2ui.dart';
+
 const _uuid = Uuid();
 
 /// Base class for all chat messages.
@@ -29,6 +31,7 @@ sealed class Message {
       'computer_screenshot' => ComputerScreenshotMessage.fromJson(json),
       'computer_action' => ComputerActionMessage.fromJson(json),
       'sub_agent' => SubAgentMessage.fromJson(json),
+      'a2ui_surface' => A2UISurfaceMessage.fromJson(json),
       _ => SystemMessage(
           id: json['id'] ?? _uuid.v4(),
           text: 'Unknown message type: ${json['type']}',
@@ -433,6 +436,46 @@ class SubAgentMessage extends Message {
         'task': task,
         'status': status,
         'preview': preview,
+        'timestamp': timestamp,
+        'animate': animate,
+      };
+}
+
+class A2UISurfaceMessage extends Message {
+  final A2UISurface surface;
+
+  const A2UISurfaceMessage({
+    required super.id,
+    required this.surface,
+    required super.timestamp,
+    super.animate,
+  });
+
+  @override
+  String get type => 'a2ui_surface';
+
+  A2UISurfaceMessage copyWith({A2UISurface? surface}) => A2UISurfaceMessage(
+        id: id,
+        surface: surface ?? this.surface,
+        timestamp: timestamp,
+        animate: animate,
+      );
+
+  factory A2UISurfaceMessage.fromJson(Map<String, dynamic> json) =>
+      A2UISurfaceMessage(
+        id: json['id'] ?? _uuid.v4(),
+        surface: A2UISurface.fromJson(
+          Map<String, dynamic>.from(json['surface'] ?? {}),
+        ),
+        timestamp: json['timestamp'] ?? DateTime.now().millisecondsSinceEpoch,
+        animate: json['animate'] ?? false,
+      );
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'type': type,
+        'surface': surface.toJson(),
         'timestamp': timestamp,
         'animate': animate,
       };

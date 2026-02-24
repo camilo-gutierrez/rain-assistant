@@ -52,7 +52,7 @@ const ToolResultBlock = React.memo(function ToolResultBlock({ message }: Props) 
           ) : (
             <CheckCircle size={13} className="text-green" />
           )}
-          <span className={`text-[11px] font-semibold ${message.isError ? "text-red" : "text-green"}`}>
+          <span className={`text-xs font-semibold ${message.isError ? "text-red" : "text-green"}`}>
             {message.isError ? "Error" : "Result"}
           </span>
         </div>
@@ -61,14 +61,14 @@ const ToolResultBlock = React.memo(function ToolResultBlock({ message }: Props) 
           <button
             onClick={handleCopy}
             className="min-w-[32px] min-h-[32px] flex items-center justify-center rounded-md border border-overlay bg-surface text-subtext hover:text-primary hover:border-primary transition-all opacity-0 group-hover:opacity-100 touch-visible"
-            aria-label="Copy"
+            aria-label={t("a11y.copy")}
           >
             {copied ? <Check size={12} /> : <Copy size={12} />}
           </button>
         )}
       </div>
 
-      <pre className="text-xs text-text2 font-[family-name:var(--font-jetbrains)] whitespace-pre-wrap break-words max-h-[120px] overflow-y-auto">
+      <pre className="text-xs text-text2 font-mono whitespace-pre-wrap break-words max-h-[120px] overflow-y-auto">
         {displayText}
         {isTruncated && !expanded && "..."}
       </pre>

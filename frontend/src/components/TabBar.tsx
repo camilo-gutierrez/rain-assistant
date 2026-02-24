@@ -109,14 +109,14 @@ export default function TabBar() {
 
               {/* Unread badge */}
               {agent.unread > 0 && !isActive && (
-                <span className="min-w-[18px] h-[18px] flex items-center justify-center px-1 rounded-full bg-primary text-on-primary text-[10px] font-bold animate-fade-in">
+                <span className="min-w-[18px] h-[18px] flex items-center justify-center px-1 rounded-full bg-primary text-on-primary text-xs font-bold animate-fade-in">
                   {agent.unread > 99 ? "99+" : agent.unread}
                 </span>
               )}
 
               {/* Sub-agent running count */}
               {(agent.subAgents?.filter((sa) => sa.status === "running").length ?? 0) > 0 && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-500/20 text-blue-400 animate-pulse">
+                <span className="text-xs px-1.5 py-0.5 rounded-full bg-blue/20 text-blue animate-pulse">
                   {agent.subAgents.filter((sa) => sa.status === "running").length} sub
                 </span>
               )}
@@ -129,7 +129,7 @@ export default function TabBar() {
                     closeAgent(agent.id, send);
                   }}
                   className="ml-0.5 min-w-[36px] min-h-[36px] flex items-center justify-center rounded-full text-subtext hover:text-red hover:bg-red/10 opacity-60 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
-                  title="Close"
+                  title={t("a11y.close")}
                 >
                   <X size={14} />
                 </button>

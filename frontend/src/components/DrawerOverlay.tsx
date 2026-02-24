@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { X } from "lucide-react";
+import { useTranslation } from "@/hooks/useTranslation";
 
 interface DrawerOverlayProps {
   open: boolean;
@@ -12,6 +13,7 @@ interface DrawerOverlayProps {
 
 export default function DrawerOverlay({ open, onClose, title, children }: DrawerOverlayProps) {
   const panelRef = useRef<HTMLDivElement>(null);
+  const { t } = useTranslation();
 
   useEffect(() => {
     if (!open) return;
@@ -79,7 +81,7 @@ export default function DrawerOverlay({ open, onClose, title, children }: Drawer
           <button
             onClick={onClose}
             className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full hover:bg-surface2 transition-colors text-text2 hover:text-text focus-ring"
-            aria-label="Close"
+            aria-label={t("a11y.close")}
           >
             <X size={18} />
           </button>

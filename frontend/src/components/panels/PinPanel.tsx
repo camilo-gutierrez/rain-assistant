@@ -463,7 +463,7 @@ export default function PinPanel() {
           onChange={(e) => setPin(e.target.value)}
           placeholder="------"
           disabled={lockoutTime > 0 || loadingDevices}
-          className="w-48 text-center text-2xl tracking-[0.5em] font-[family-name:var(--font-jetbrains)] bg-surface2 border border-overlay rounded-lg px-4 py-3 text-text placeholder:text-subtext focus-ring transition-all disabled:opacity-50"
+          className="w-48 text-center text-2xl tracking-[0.5em] font-mono bg-surface2 border border-overlay rounded-lg px-4 py-3 text-text placeholder:text-subtext focus-ring transition-all disabled:opacity-50"
         />
 
         {error && (
@@ -476,7 +476,7 @@ export default function PinPanel() {
         {lockoutTime > 0 && (
           <div className="w-full flex items-center gap-2.5 px-3.5 py-3 rounded-xl bg-yellow/10 border border-yellow/30">
             <Timer className="w-[18px] h-[18px] shrink-0 text-yellow" />
-            <p className="text-sm text-yellow font-[family-name:var(--font-jetbrains)]">
+            <p className="text-sm text-yellow font-mono">
               {lockoutTime}s
             </p>
           </div>

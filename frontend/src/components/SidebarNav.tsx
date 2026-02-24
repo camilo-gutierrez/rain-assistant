@@ -65,7 +65,7 @@ export default function SidebarNav() {
         </div>
         <div className="flex flex-col">
           <span className="text-sm font-bold text-text leading-tight">Rain</span>
-          <span className="text-[10px] text-subtext leading-tight">AI Assistant</span>
+          <span className="text-xs text-subtext leading-tight">{t("sidebar.subtitle")}</span>
         </div>
       </div>
 

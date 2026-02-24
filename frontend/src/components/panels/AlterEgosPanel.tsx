@@ -7,6 +7,7 @@ import { useTranslation } from "@/hooks/useTranslation";
 import { fetchAlterEgos, deleteAlterEgo } from "@/lib/api";
 import type { AlterEgo } from "@/lib/types";
 import { Sparkles, Trash2, Check } from "lucide-react";
+import { SkeletonList } from "@/components/Skeleton";
 
 export default function AlterEgosPanel() {
   const { t } = useTranslation();
@@ -68,11 +69,7 @@ export default function AlterEgosPanel() {
       </div>
 
       {loading ? (
-        <div className="space-y-3">
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="h-20 rounded-xl shimmer-bg" />
-          ))}
-        </div>
+        <SkeletonList count={3} height="h-20" gap="space-y-3" />
       ) : (
         <div className="space-y-2">
           {egos.map((ego) => {
@@ -98,11 +95,11 @@ export default function AlterEgosPanel() {
                         {ego.name}
                       </span>
                       {isActive && (
-                        <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-primary/15 text-primary font-semibold">
+                        <span className="text-xs px-1.5 py-0.5 rounded-full bg-primary/15 text-primary font-semibold">
                           {t("alterEgo.active")}
                         </span>
                       )}
-                      <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${
+                      <span className={`text-xs px-1.5 py-0.5 rounded-full ${
                         ego.is_builtin
                           ? "bg-overlay text-subtext"
                           : "bg-green/15 text-green"
@@ -141,7 +138,7 @@ export default function AlterEgosPanel() {
                 </div>
                 {isExpanded && (
                   <div className="px-3 pb-3 pt-0">
-                    <div className="text-xs text-text2 bg-base/50 rounded-lg p-2.5 max-h-32 overflow-y-auto font-mono leading-relaxed">
+                    <div className="text-xs text-text2 bg-surface2/50 rounded-lg p-2.5 max-h-32 overflow-y-auto font-mono leading-relaxed">
                       {ego.system_prompt}
                     </div>
                   </div>
@@ -152,8 +149,8 @@ export default function AlterEgosPanel() {
         </div>
       )}
 
-      <p className="text-[11px] text-subtext text-center">
-        Ask Rain to create custom egos via chat
+      <p className="text-xs text-subtext text-center">
+        {t("alterEgo.createHintShort")}
       </p>
     </div>
   );

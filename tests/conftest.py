@@ -162,16 +162,19 @@ def test_app(tmp_path):
 
     # Patch server module-level globals
     import server
-    old_config = server.config
+    import shared_state
+    old_config_data = dict(server.config)  # snapshot current config
     old_active_tokens = server.active_tokens.copy()
     old_auth_attempts = server._auth_attempts.copy()
-    old_history_dir = server.HISTORY_DIR
+    old_history_dir = shared_state.HISTORY_DIR
     old_static_dir = server.STATIC_DIR
 
-    server.config = config_data
+    # Update config in-place (shared_state.config is the same object as server.config)
+    server.config.clear()
+    server.config.update(config_data)
     server.active_tokens.clear()
     server._auth_attempts.clear()
-    server.HISTORY_DIR = history_dir
+    shared_state.HISTORY_DIR = history_dir
     # Ensure STATIC_DIR exists for root endpoint
     static_dir = tmp_path / "static"
     static_dir.mkdir()
@@ -213,12 +216,13 @@ def test_app(tmp_path):
     yield result
 
     # Restore everything
-    server.config = old_config
+    server.config.clear()
+    server.config.update(old_config_data)
     server.active_tokens.clear()
     server.active_tokens.update(old_active_tokens)
     server._auth_attempts.clear()
     server._auth_attempts.update(old_auth_attempts)
-    server.HISTORY_DIR = old_history_dir
+    shared_state.HISTORY_DIR = old_history_dir
     server.STATIC_DIR = old_static_dir
 
     ae_storage.EGOS_DIR = old_ae_egos_dir
@@ -242,8 +246,12 @@ async def authenticated_client(test_app):
 
     transport = ASGITransport(app=test_app["app"])
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
-        # Authenticate
-        resp = await client.post("/api/auth", json={"pin": test_app["pin"]})
+        # Authenticate (Origin header required by CSRF middleware)
+        resp = await client.post(
+            "/api/auth",
+            json={"pin": test_app["pin"]},
+            headers={"Origin": "http://testserver"},
+        )
         assert resp.status_code == 200
         token = resp.json()["token"]
         client.headers["Authorization"] = f"Bearer {token}"

@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../app/l10n.dart';
 import '../models/agent.dart';
 import '../models/message.dart';
+import 'a2ui_surface.dart';
 import '../providers/agent_provider.dart';
 import '../providers/audio_provider.dart';
 import '../services/audio_service.dart';
@@ -41,6 +42,8 @@ class MessageTile extends ConsumerWidget {
           message: message as ComputerActionMessage, lang: lang),
       SubAgentMessage() =>
         _SubAgentBubble(message: message as SubAgentMessage),
+      A2UISurfaceMessage() =>
+        A2UISurfaceWidget(surface: (message as A2UISurfaceMessage).surface),
     };
   }
 }

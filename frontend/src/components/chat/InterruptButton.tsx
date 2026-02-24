@@ -79,7 +79,7 @@ export default function InterruptButton() {
         {isForceMode ? <OctagonX size={16} /> : <Square size={14} fill="currentColor" />}
         {buttonText}
       </button>
-      <span className="ml-2 text-[11px] text-subtext hidden sm:inline">Esc</span>
+      <span className="ml-2 text-xs text-subtext hidden sm:inline">Esc</span>
     </div>
   );
 }

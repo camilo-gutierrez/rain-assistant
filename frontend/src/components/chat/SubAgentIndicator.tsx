@@ -1,12 +1,14 @@
 "use client";
 
 import type { SubAgentMessage } from "@/lib/types";
+import { useTranslation } from "@/hooks/useTranslation";
 
 interface Props {
   message: SubAgentMessage;
 }
 
 export default function SubAgentIndicator({ message }: Props) {
+  const { t } = useTranslation();
   const isSpawned = message.eventType === "spawned";
   const isCompleted = message.eventType === "completed";
   const isError = message.status === "error";
@@ -21,20 +23,20 @@ export default function SubAgentIndicator({ message }: Props) {
         : "\u2714"; // check
 
   const statusColor = isSpawned
-    ? "text-blue-400"
+    ? "text-blue"
     : isError
-      ? "text-red-400"
+      ? "text-red"
       : isCancelled
-        ? "text-yellow-400"
-        : "text-green-400";
+        ? "text-yellow"
+        : "text-green";
 
   const bgColor = isSpawned
-    ? "bg-blue-500/10 border-blue-500/20"
+    ? "bg-blue/10 border-blue/20"
     : isError
-      ? "bg-red-500/10 border-red-500/20"
+      ? "bg-red/10 border-red/20"
       : isCancelled
-        ? "bg-yellow-500/10 border-yellow-500/20"
-        : "bg-green-500/10 border-green-500/20";
+        ? "bg-yellow/10 border-yellow/20"
+        : "bg-green/10 border-green/20";
 
   return (
     <div className={`flex items-start gap-3 p-3 rounded-lg border ${bgColor} text-sm`}>
@@ -45,23 +47,23 @@ export default function SubAgentIndicator({ message }: Props) {
             {message.shortName}
           </span>
           {isSpawned && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-500/20 text-blue-400 animate-pulse">
-              running
+            <span className="text-xs px-1.5 py-0.5 rounded-full bg-blue/20 text-blue animate-pulse">
+              {t("subAgent.running")}
             </span>
           )}
           {isCompleted && !isError && !isCancelled && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-500/20 text-green-400">
-              done
+            <span className="text-xs px-1.5 py-0.5 rounded-full bg-green/20 text-green">
+              {t("subAgent.done")}
             </span>
           )}
           {isError && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-500/20 text-red-400">
-              error
+            <span className="text-xs px-1.5 py-0.5 rounded-full bg-red/20 text-red">
+              {t("subAgent.error")}
             </span>
           )}
           {isCancelled && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400">
-              cancelled
+            <span className="text-xs px-1.5 py-0.5 rounded-full bg-yellow/20 text-yellow">
+              {t("subAgent.cancelled")}
             </span>
           )}
         </div>

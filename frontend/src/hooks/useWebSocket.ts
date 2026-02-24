@@ -112,6 +112,17 @@ export function useWebSocket() {
         case "alter_ego_changed":
           useSettingsStore.getState().setActiveEgoId(msg.ego_id || "rain");
           break;
+
+        case "mcp_server_status": {
+          // An MCP server failed — show a warning status message
+          if (msg.status === "error" && msg.label) {
+            const label = msg.label as string;
+            connectionStore.setStatusText(
+              `⚠ ${label} MCP server disabled`
+            );
+          }
+          break;
+        }
       }
     };
 

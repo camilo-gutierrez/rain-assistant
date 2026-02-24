@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useToastStore, type Toast } from "@/stores/useToastStore";
 import { CheckCircle, XCircle, AlertTriangle, Info, X } from "lucide-react";
+import { useTranslation } from "@/hooks/useTranslation";
 
 const ICON_MAP = {
   success: CheckCircle,
@@ -36,6 +37,7 @@ const COLOR_MAP = {
 
 function ToastItem({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }) {
   const [exiting, setExiting] = useState(false);
+  const { t } = useTranslation();
   const Icon = ICON_MAP[toast.type];
   const colors = COLOR_MAP[toast.type];
 
@@ -70,7 +72,7 @@ function ToastItem({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }
         <button
           onClick={handleDismiss}
           className="shrink-0 p-0.5 rounded-md hover:bg-overlay/40 transition-colors"
-          aria-label="Dismiss"
+          aria-label={t("a11y.dismiss")}
         >
           <X className="w-3.5 h-3.5 text-subtext" />
         </button>

@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app/l10n.dart';
 import 'app/theme.dart';
+import 'models/a2ui.dart';
 import 'models/agent.dart';
 import 'models/message.dart';
 import 'models/rate_limits.dart';
@@ -62,6 +63,7 @@ class _AppShellState extends ConsumerState<_AppShell> {
   _AppScreen _screen = _AppScreen.loading;
   StreamSubscription<Map<String, dynamic>>? _wsSub;
   AppLifecycleObserver? _lifecycleObserver;
+  Timer? _initTimeout;
 
   @override
   void initState() {
@@ -70,38 +72,60 @@ class _AppShellState extends ConsumerState<_AppShell> {
       _lifecycleObserver = AppLifecycleObserver(ref);
       WidgetsBinding.instance.addObserver(_lifecycleObserver!);
     });
+    // Safety timeout: if still loading after 15s, force navigate out
+    _initTimeout = Timer(const Duration(seconds: 15), () {
+      if (mounted && _screen == _AppScreen.loading) {
+        setState(() => _screen = _AppScreen.serverUrl);
+      }
+    });
     _init();
   }
 
   Future<void> _init() async {
-    // Load persisted settings
-    await ref.read(settingsProvider.notifier).loadFromPrefs();
+    try {
+      // Load persisted settings
+      await ref.read(settingsProvider.notifier).loadFromPrefs();
 
-    // Initialize notification system
-    await ref.read(notificationSettingsProvider.notifier).loadFromPrefs();
-    final notifService = ref.read(notificationServiceProvider);
-    await notifService.init();
-    notifService.onNotificationTap = _onNotificationTap;
+      // Initialize notification system (non-critical, don't block on failure)
+      try {
+        await ref.read(notificationSettingsProvider.notifier).loadFromPrefs();
+        final notifService = ref.read(notificationServiceProvider);
+        await notifService.init();
+        notifService.onNotificationTap = _onNotificationTap;
+      } catch (e) {
+        print('[Rain] Notification init failed (non-critical): $e');
+      }
 
-    // Load persisted auth state
-    final auth = ref.read(authServiceProvider);
-    await auth.init();
+      // Load persisted auth state
+      final auth = ref.read(authServiceProvider);
+      await auth.init();
 
-    if (auth.serverUrl == null) {
-      setState(() => _screen = _AppScreen.serverUrl);
-      return;
+      if (!mounted) return;
+
+      _initTimeout?.cancel();
+
+      if (auth.serverUrl == null) {
+        setState(() => _screen = _AppScreen.serverUrl);
+        return;
+      }
+
+      ref.read(hasServerUrlProvider.notifier).state = true;
+
+      if (auth.token != null) {
+        // Try to reconnect with existing token
+        ref.read(isAuthenticatedProvider.notifier).state = true;
+        _connectWebSocket();
+        return;
+      }
+
+      setState(() => _screen = _AppScreen.pin);
+    } catch (e) {
+      _initTimeout?.cancel();
+      print('[Rain] Init failed: $e');
+      if (mounted) {
+        setState(() => _screen = _AppScreen.serverUrl);
+      }
     }
-
-    ref.read(hasServerUrlProvider.notifier).state = true;
-
-    if (auth.token != null) {
-      // Try to reconnect with existing token
-      ref.read(isAuthenticatedProvider.notifier).state = true;
-      _connectWebSocket();
-      return;
-    }
-
-    setState(() => _screen = _AppScreen.pin);
   }
 
   void _connectWebSocket() {
@@ -116,6 +140,7 @@ class _AppShellState extends ConsumerState<_AppShell> {
 
     // Wait for actual connection before advancing to apiKey screen
     late StreamSubscription<ConnectionStatus> sub;
+    int errorCount = 0;
     sub = ws.statusStream.listen((status) {
       if (!mounted) {
         sub.cancel();
@@ -129,8 +154,15 @@ class _AppShellState extends ConsumerState<_AppShell> {
         } else {
           setState(() => _screen = _AppScreen.apiKey);
         }
+      } else if (status == ConnectionStatus.error) {
+        errorCount++;
+        // After 2 failed attempts, stop waiting and go back to server URL
+        if (errorCount >= 2) {
+          sub.cancel();
+          ws.disconnect();
+          setState(() => _screen = _AppScreen.serverUrl);
+        }
       }
-      // _unauthorized / error handled by _handleConnectionStatus + _handleMessage
     });
   }
 
@@ -406,6 +438,46 @@ class _AppShellState extends ConsumerState<_AppShell> {
           ),
         );
 
+      // ── A2UI surfaces ──
+      case 'a2ui_surface':
+        if (agentId.isEmpty) break;
+        final surfaceJson = msg['surface'];
+        if (surfaceJson != null) {
+          try {
+            final surface = A2UISurface.fromJson(
+              Map<String, dynamic>.from(surfaceJson as Map),
+            );
+            agentNotifier.upsertSurface(agentId, surface);
+            agentNotifier.incrementUnread(agentId);
+          } catch (e) {
+            agentNotifier.appendMessage(
+              agentId,
+              SystemMessage.create('A2UI render error: $e'),
+            );
+          }
+        }
+
+      case 'a2ui_update':
+        if (agentId.isEmpty) break;
+        final surfaceId = msg['surface_id'] as String? ?? '';
+        final updates = msg['updates'];
+        if (surfaceId.isNotEmpty && updates is List) {
+          try {
+            agentNotifier.applySurfaceUpdates(
+              agentId,
+              surfaceId,
+              updates
+                  .map((u) => Map<String, dynamic>.from(u as Map))
+                  .toList(),
+            );
+          } catch (e) {
+            agentNotifier.appendMessage(
+              agentId,
+              SystemMessage.create('A2UI update error: $e'),
+            );
+          }
+        }
+
       case 'model_info':
         if (msg['model'] != null) {
           ref.read(currentModelProvider.notifier).state = msg['model'];
@@ -578,6 +650,7 @@ class _AppShellState extends ConsumerState<_AppShell> {
 
   @override
   void dispose() {
+    _initTimeout?.cancel();
     _wsSub?.cancel();
     _statusSub?.cancel();
     if (_lifecycleObserver != null) {

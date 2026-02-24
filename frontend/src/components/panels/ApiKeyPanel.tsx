@@ -158,7 +158,7 @@ export default function ApiKeyPanel() {
             onChange={(e) => setApiKey(e.target.value)}
             placeholder={info.keyPlaceholder}
             onKeyDown={(e) => e.key === "Enter" && handleConnect()}
-            className="w-full bg-surface2 border border-overlay rounded-lg px-4 py-3 pr-12 text-text font-[family-name:var(--font-jetbrains)] text-sm placeholder:text-subtext focus-ring transition-all"
+            className="w-full bg-surface2 border border-overlay rounded-lg px-4 py-3 pr-12 text-text font-mono text-sm placeholder:text-subtext focus-ring transition-all"
           />
           <button
             type="button"

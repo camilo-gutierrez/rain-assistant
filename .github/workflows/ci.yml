@@ -17,6 +17,22 @@ jobs:
       - run: pip install ruff
       - run: ruff check .
 
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install scanning tools
+        run: pip install bandit pip-audit
+      - name: Run Bandit (SAST)
+        run: bandit -r . -ll --exclude ./tests,./frontend -f json -o bandit-report.json
+      - name: Run pip-audit (dependency vulnerabilities)
+        run: |
+          pip install -e ".[dev]"
+          pip-audit --desc
+
   lint-frontend:
     runs-on: ubuntu-latest
     steps:
@@ -25,6 +41,48 @@ jobs:
         with:
           node-version: 20
       - run: cd frontend && npm ci && npm run lint
+
+  test-python:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-${{ matrix.python-version }}-
+
+      - name: Install project with dev dependencies
+        run: pip install -e ".[dev]" && pip install pytest-cov
+
+      - name: Run tests with coverage
+        run: pytest -v --tb=short --cov=. --cov-report=term --cov-report=xml --cov-config=pyproject.toml
+
+      - name: Upload coverage report
+        if: matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+
+  test-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: cd frontend && npm ci && npm run test
 
   build-frontend:
     runs-on: ubuntu-latest

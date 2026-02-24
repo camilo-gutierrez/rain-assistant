@@ -61,7 +61,7 @@ function BarChart({
 
   return (
     <div className="bg-surface rounded-xl shadow-sm p-4">
-      <h4 className="text-[11px] text-text2 uppercase tracking-wider font-semibold mb-3">
+      <h4 className="text-xs text-text2 uppercase tracking-wider font-semibold mb-3">
         {title}
       </h4>
       <div className="flex items-end gap-[3px] h-[140px] border-b border-overlay/50 pb-1">
@@ -80,7 +80,7 @@ function BarChart({
             >
               {/* Tooltip on hover */}
               <div className="absolute -top-7 left-1/2 -translate-x-1/2 hidden group-hover:block z-10">
-                <div className="bg-text text-surface text-[9px] font-medium px-1.5 py-0.5 rounded whitespace-nowrap shadow-lg">
+                <div className="bg-text text-surface text-xs font-medium px-1.5 py-0.5 rounded whitespace-nowrap shadow-lg">
                   {formatted}
                 </div>
               </div>
@@ -91,7 +91,7 @@ function BarChart({
                   background: `linear-gradient(to top, var(--primary-dark), var(--primary))`,
                 }}
               />
-              <span className="text-[9px] text-subtext truncate w-full text-center leading-tight">
+              <span className="text-xs text-subtext truncate w-full text-center leading-tight">
                 {label}
               </span>
             </div>
@@ -113,6 +113,7 @@ function RateLimitGauge({
   limit?: number;
   reset?: string;
 }) {
+  const { t } = useTranslation();
   if (!limit) return null;
   const pct = Math.round(((remaining ?? 0) / limit) * 100);
   const fillColor =
@@ -121,8 +122,8 @@ function RateLimitGauge({
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex justify-between items-center">
-        <span className="text-[11px] font-medium text-text2">{label}</span>
-        <span className="text-[10px] text-subtext tabular-nums">
+        <span className="text-xs font-medium text-text2">{label}</span>
+        <span className="text-xs text-subtext tabular-nums">
           {remaining?.toLocaleString()} / {limit?.toLocaleString()}
         </span>
       </div>
@@ -133,7 +134,7 @@ function RateLimitGauge({
         />
       </div>
       {reset && (
-        <span className="text-[9px] text-subtext">Reset: {reset}</span>
+        <span className="text-xs text-subtext">{t("metrics.reset", { time: reset })}</span>
       )}
     </div>
   );
@@ -203,13 +204,13 @@ export default function MetricsPanel() {
         <div className="space-y-5">
           {/* Hero — Total Cost */}
           <div className="bg-surface rounded-xl shadow-sm border-l-4 border-l-primary p-5">
-            <span className="text-[11px] text-subtext uppercase tracking-wider font-semibold">
+            <span className="text-xs text-subtext uppercase tracking-wider font-semibold">
               {t("metrics.totalSpent")}
             </span>
             <div className="text-3xl font-bold text-text mt-1 tabular-nums">
               ${totals.cost.toFixed(2)}
             </div>
-            <span className="text-[11px] text-text2">
+            <span className="text-xs text-text2">
               {t("metrics.avgCost")}: ${totals.avg_cost.toFixed(4)}
             </span>
           </div>
@@ -220,7 +221,7 @@ export default function MetricsPanel() {
               <div className="text-xl font-bold text-text tabular-nums">
                 {totals.sessions}
               </div>
-              <div className="text-[10px] text-subtext uppercase tracking-wider font-medium mt-0.5">
+              <div className="text-xs text-subtext uppercase tracking-wider font-medium mt-0.5">
                 {t("metrics.sessions")}
               </div>
             </div>
@@ -228,7 +229,7 @@ export default function MetricsPanel() {
               <div className="text-xl font-bold text-text tabular-nums">
                 {formatDuration(totals.avg_duration_ms)}
               </div>
-              <div className="text-[10px] text-subtext uppercase tracking-wider font-medium mt-0.5">
+              <div className="text-xs text-subtext uppercase tracking-wider font-medium mt-0.5">
                 {t("metrics.avgDuration")}
               </div>
             </div>
@@ -236,10 +237,10 @@ export default function MetricsPanel() {
               <div className="text-xl font-bold text-text tabular-nums">
                 {totals.total_turns}
               </div>
-              <div className="text-[10px] text-subtext uppercase tracking-wider font-medium mt-0.5">
+              <div className="text-xs text-subtext uppercase tracking-wider font-medium mt-0.5">
                 {t("metrics.totalTurns")}
               </div>
-              <div className="text-[9px] text-text2 mt-0.5">
+              <div className="text-xs text-text2 mt-0.5">
                 {t("metrics.inputTokens")}:{" "}
                 {totals.total_input_tokens.toLocaleString()}
               </div>
@@ -261,13 +262,13 @@ export default function MetricsPanel() {
                   key={period}
                   className={`bg-surface rounded-xl shadow-sm p-3.5 border-t-[3px] ${periodColors[period]}`}
                 >
-                  <span className="text-[10px] text-subtext uppercase tracking-wider font-semibold">
+                  <span className="text-xs text-subtext uppercase tracking-wider font-semibold">
                     {t(labelKey)}
                   </span>
                   <div className="text-lg font-bold text-text mt-1 tabular-nums">
                     ${p.cost.toFixed(2)}
                   </div>
-                  <div className="text-[10px] text-text2 mt-0.5">
+                  <div className="text-xs text-text2 mt-0.5">
                     {p.sessions} {t("metrics.sessionsLabel")}
                   </div>
                 </div>
@@ -279,11 +280,11 @@ export default function MetricsPanel() {
           {rateLimits && (
             <div className="bg-surface rounded-xl shadow-sm p-4">
               <div className="flex items-center justify-between mb-3">
-                <h4 className="text-[11px] text-text2 uppercase tracking-wider font-semibold">
+                <h4 className="text-xs text-text2 uppercase tracking-wider font-semibold">
                   {t("metrics.rateLimits")}
                 </h4>
                 {currentModel && (
-                  <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-primary/10 text-primary">
+                  <span className="px-2 py-0.5 rounded-md text-xs font-medium bg-primary/10 text-primary">
                     {currentModel}
                   </span>
                 )}

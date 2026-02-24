@@ -1,5 +1,5 @@
 # Rain Assistant - Zero-Dependency Installer (Windows)
-# Usage: irm https://raw.githubusercontent.com/camilo-gutierrez/rain-assistant/main/install.ps1 | iex
+# Usage: irm https://raw.githubusercontent.com/camilo-gutierrez/rain-assistant-installer/main/install.ps1 | iex
 #
 # Installs Rain Assistant without requiring Python, Node, or any other dependency.
 # Downloads portable Python + ffmpeg and installs everything in ~/.rain/

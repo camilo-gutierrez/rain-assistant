@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Rain Assistant - Zero-Dependency Installer (Linux/macOS)
-# Usage: curl -fsSL https://raw.githubusercontent.com/camilo-gutierrez/rain-assistant/main/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/camilo-gutierrez/rain-assistant-installer/main/install.sh | bash
 #
 # Installs Rain Assistant automatically:
 # - Installs Python 3.11+ if missing (via brew/apt/dnf/pacman)

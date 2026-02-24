@@ -158,6 +158,12 @@ class L10n {
     'cu.noScreenshot': 'Waiting for screenshot...',
     'cu.tapToExpand': 'Tap to expand',
 
+    // A2UI Surfaces
+    'a2ui.surfaceTitle': 'Interactive Surface',
+    'a2ui.renderError': 'Could not render surface',
+    'a2ui.missingComponent': 'Missing component',
+    'a2ui.actionSent': 'Action sent',
+
     // Model Switcher
     'modelSwitcher.keyConfigured': 'Key configured',
     'modelSwitcher.noKey': 'No API key',
@@ -476,6 +482,12 @@ class L10n {
     'cu.iterationProgress': 'Paso {current}',
     'cu.noScreenshot': 'Esperando captura...',
     'cu.tapToExpand': 'Toca para expandir',
+
+    // A2UI Surfaces
+    'a2ui.surfaceTitle': 'Superficie Interactiva',
+    'a2ui.renderError': 'No se pudo renderizar la superficie',
+    'a2ui.missingComponent': 'Componente faltante',
+    'a2ui.actionSent': 'Accion enviada',
 
     // Model Switcher
     'modelSwitcher.keyConfigured': 'Key configurada',

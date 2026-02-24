@@ -37,7 +37,7 @@ GREEN_TOOLS: set[str] = {
     "browser_screenshot",
     "manage_subagents",
     "manage_marketplace",
-    "manage_documents",
+    "render_surface",
 }
 
 # Tools that modify files (require confirmation)
@@ -142,6 +142,13 @@ def classify(tool_name: str, tool_input: dict[str, Any]) -> PermissionLevel:
     # Plugin tools: use the permission_level from the plugin YAML
     if tool_name.startswith("plugin_"):
         return _classify_plugin(tool_name[7:])
+
+    # manage_documents: read-only actions are GREEN, write actions are YELLOW
+    if tool_name == "manage_documents":
+        action = str(tool_input.get("action", ""))
+        if action in ("search", "list", "show"):
+            return PermissionLevel.GREEN
+        return PermissionLevel.YELLOW
 
     # manage_plugins modifies the system, requires confirmation
     if tool_name == "manage_plugins":

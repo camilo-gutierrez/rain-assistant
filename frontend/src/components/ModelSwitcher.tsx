@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState } from "react";
 import { useSettingsStore } from "@/stores/useSettingsStore";
 import { useConnectionStore } from "@/stores/useConnectionStore";
 import { useMetricsStore } from "@/stores/useMetricsStore";
 import { useUIStore } from "@/stores/useUIStore";
 import { useTranslation } from "@/hooks/useTranslation";
+import { usePopover } from "@/hooks/usePopover";
 import {
   PROVIDER_INFO,
   PROVIDER_MODELS,
@@ -41,9 +42,8 @@ function getDisplayModel(
 
 export default function ModelSwitcher() {
   const { t } = useTranslation();
-  const [isOpen, setIsOpen] = useState(false);
+  const { ref: popoverRef, isOpen, toggle, close } = usePopover<HTMLDivElement>();
   const [popoverProvider, setPopoverProvider] = useState<AIProvider | null>(null);
-  const popoverRef = useRef<HTMLDivElement>(null);
 
   // Stores
   const aiProvider = useSettingsStore((s) => s.aiProvider);
@@ -64,25 +64,6 @@ export default function ModelSwitcher() {
   // When popover opens, default to current provider
   const activePopoverProvider = popoverProvider ?? aiProvider;
 
-  // Click outside to close
-  useEffect(() => {
-    if (!isOpen) return;
-    function handleClickOutside(e: MouseEvent) {
-      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
-        setIsOpen(false);
-      }
-    }
-    function handleEscape(e: KeyboardEvent) {
-      if (e.key === "Escape") setIsOpen(false);
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    document.addEventListener("keydown", handleEscape);
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-      document.removeEventListener("keydown", handleEscape);
-    };
-  }, [isOpen]);
-
   const displayModel = getDisplayModel(currentModel, aiModel, aiProvider);
   const providerName = PROVIDER_INFO[aiProvider].name;
 
@@ -100,12 +81,12 @@ export default function ModelSwitcher() {
       setActivePanel("apiKey");
     }
 
-    setIsOpen(false);
+    close();
   }
 
   function handleToggle() {
     if (!isOpen) setPopoverProvider(null);
-    setIsOpen(!isOpen);
+    toggle();
   }
 
   const popoverModels = PROVIDER_MODELS[activePopoverProvider];
@@ -133,7 +114,7 @@ export default function ModelSwitcher() {
 
         {/* Key indicator */}
         {usingApiKey && (
-          <span className="hidden md:inline text-[9px] px-1 py-0.5 rounded bg-green/15 text-green font-medium">
+          <span className="hidden md:inline text-xs px-1 py-0.5 rounded bg-green/15 text-green font-medium">
             API
           </span>
         )}
@@ -170,7 +151,7 @@ export default function ModelSwitcher() {
           </div>
 
           {/* Model list */}
-          <div className="py-1 max-h-52 overflow-y-auto" role="listbox" aria-label="Models">
+          <div className="py-1 max-h-52 overflow-y-auto" role="listbox" aria-label={t("a11y.models")}>
             {popoverModels.map((model) => {
               const isActive = aiProvider === activePopoverProvider && aiModel === model.id;
               return (
@@ -211,7 +192,7 @@ export default function ModelSwitcher() {
                     onClick={() => {
                       setAIProvider(activePopoverProvider);
                       setActivePanel("apiKey");
-                      setIsOpen(false);
+                      close();
                     }}
                     className="text-primary hover:underline ml-1"
                   >
@@ -224,7 +205,7 @@ export default function ModelSwitcher() {
 
           {/* Note */}
           <div className="border-t border-overlay/50 px-3 py-1.5">
-            <span className="text-[10px] text-subtext">
+            <span className="text-xs text-subtext">
               {t("modelSwitcher.appliesNext")}
             </span>
           </div>

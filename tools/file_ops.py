@@ -12,9 +12,17 @@ def resolve_path(path_str: str, cwd: str) -> Path:
     p = Path(path_str)
     if not p.is_absolute():
         p = Path(cwd) / p
-    resolved = p.resolve()
+    try:
+        resolved = p.resolve(strict=True)
+    except OSError:
+        # For new files that don't exist yet, resolve the parent
+        try:
+            parent_resolved = p.parent.resolve(strict=True)
+        except OSError:
+            raise ValueError(f"Path does not exist: {path_str}")
+        resolved = parent_resolved / p.name
     cwd_resolved = Path(cwd).resolve()
-    if not str(resolved).startswith(str(cwd_resolved)):
+    if not str(resolved).startswith(str(cwd_resolved) + os.sep) and resolved != cwd_resolved:
         raise ValueError(f"Path traversal blocked: {path_str}")
     return resolved
 

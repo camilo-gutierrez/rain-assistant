@@ -6,12 +6,14 @@ import { useTranslation } from "@/hooks/useTranslation";
 import { fetchMemories, addMemory, deleteMemory, clearAllMemories } from "@/lib/api";
 import type { Memory } from "@/lib/types";
 import { Brain, Plus, Trash2, X, AlertTriangle } from "lucide-react";
+import EmptyState from "@/components/EmptyState";
+import { SkeletonList } from "@/components/Skeleton";
 
 const CATEGORY_COLORS: Record<string, string> = {
-  preference: "bg-blue-500/15 text-blue-600",
-  fact: "bg-green-500/15 text-green-600",
-  pattern: "bg-purple-500/15 text-purple-600",
-  project: "bg-amber-500/15 text-amber-600",
+  preference: "bg-blue/15 text-blue",
+  fact: "bg-green/15 text-green",
+  pattern: "bg-mauve/15 text-mauve",
+  project: "bg-yellow/15 text-yellow",
 };
 
 export default function MemoriesPanel() {
@@ -125,12 +127,12 @@ export default function MemoriesPanel() {
           onChange={(e) => setNewContent(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && handleAdd()}
           placeholder={t("memories.addPlaceholder")}
-          className="flex-1 text-sm px-3 py-2 rounded-lg bg-surface2 border border-overlay text-text placeholder:text-subtext focus:outline-none focus:ring-1 focus:ring-primary"
+          className="flex-1 text-sm px-3 py-2 rounded-lg bg-surface2 border border-overlay text-text placeholder:text-subtext focus-ring"
         />
         <select
           value={newCategory}
           onChange={(e) => setNewCategory(e.target.value)}
-          className="text-xs px-2 py-1 rounded-lg bg-surface2 border border-overlay text-text focus:outline-none"
+          className="text-xs px-2 py-1 rounded-lg bg-surface2 border border-overlay text-text focus-ring"
         >
           <option value="fact">{t("memories.category.fact")}</option>
           <option value="preference">{t("memories.category.preference")}</option>
@@ -148,17 +150,9 @@ export default function MemoriesPanel() {
 
       {/* Memory list */}
       {loading ? (
-        <div className="space-y-2">
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="h-12 rounded-lg shimmer-bg" />
-          ))}
-        </div>
+        <SkeletonList count={3} height="h-12" />
       ) : memories.length === 0 ? (
-        <div className="text-center py-8">
-          <Brain size={32} className="mx-auto text-text2/40 mb-2" />
-          <p className="text-sm text-text2">{t("memories.empty")}</p>
-          <p className="text-xs text-subtext mt-1">{t("memories.emptyHint")}</p>
-        </div>
+        <EmptyState icon={Brain} title={t("memories.empty")} hint={t("memories.emptyHint")} />
       ) : (
         <div className="space-y-1.5">
           {memories.map((memory) => (
@@ -167,7 +161,7 @@ export default function MemoriesPanel() {
               className="group flex items-start gap-2 p-2.5 rounded-lg bg-surface2/50 hover:bg-surface2 transition-colors"
             >
               {/* Category badge */}
-              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium shrink-0 mt-0.5 ${
+              <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium shrink-0 mt-0.5 ${
                 CATEGORY_COLORS[memory.category] || CATEGORY_COLORS.fact
               }`}>
                 {t(`memories.category.${memory.category}`)}
@@ -180,7 +174,7 @@ export default function MemoriesPanel() {
               <button
                 onClick={() => handleDelete(memory.id)}
                 className="opacity-0 group-hover:opacity-100 text-text2 hover:text-red transition-all shrink-0"
-                title="Delete"
+                title={t("a11y.delete")}
               >
                 <Trash2 size={14} />
               </button>

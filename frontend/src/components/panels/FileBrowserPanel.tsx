@@ -7,6 +7,7 @@ import { useConnectionStore } from "@/stores/useConnectionStore";
 import { useUIStore } from "@/stores/useUIStore";
 import { useTranslation } from "@/hooks/useTranslation";
 import { Folder, FolderUp, FolderOpen, File, HardDrive } from "lucide-react";
+import EmptyState from "@/components/EmptyState";
 import type { FileEntry } from "@/lib/types";
 
 function formatSize(bytes: number): string {
@@ -120,7 +121,7 @@ export default function FileBrowserPanel() {
           <HardDrive className="w-5 h-5 text-primary" />
           {t("browser.title")}
         </h2>
-        <p className="text-xs text-subtext font-[family-name:var(--font-jetbrains)] truncate">
+        <p className="text-xs text-subtext font-mono truncate">
           {currentPath}
         </p>
       </div>
@@ -173,10 +174,7 @@ export default function FileBrowserPanel() {
             ))}
 
             {dirs.length === 0 && files.length === 0 && (
-              <div className="flex flex-col items-center justify-center gap-3 py-12 text-subtext">
-                <FolderOpen className="w-10 h-10 opacity-40" />
-                <p className="text-sm">{t("browser.empty")}</p>
-              </div>
+              <EmptyState icon={FolderOpen} title={t("browser.empty")} />
             )}
           </div>
 

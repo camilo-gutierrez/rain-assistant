@@ -184,7 +184,11 @@ const translations: Record<Language, Record<string, string>> = {
     "mcp.hub": "Hub",
     "mcp.email": "Email",
     "mcp.browser": "Browser",
+    "mcp.calendar": "Calendar",
     "mcp.smarthome": "Smart Home",
+    "mcp.serverError": "{label} failed to start and has been disabled",
+    "mcp.serverDisabled": "{label} is not configured. Set it up with: rain setup",
+    "mcp.allServersFailed": "All MCP servers failed to start. Rain will work without integrations.",
 
     // Months
     "month.0": "Jan", "month.1": "Feb", "month.2": "Mar", "month.3": "Apr",
@@ -201,6 +205,11 @@ const translations: Record<Language, Record<string, string>> = {
     "toast.sendFailed": "Could not send message",
     "toast.deletedConversation": "Conversation deleted",
     "toast.connectSuccess": "Connected successfully",
+
+    // Error boundary
+    "error.title": "Something went wrong",
+    "error.fallback": "An unexpected error occurred.",
+    "error.retry": "Try again",
 
     // Security banner
     "security.httpWarning": "Insecure connection (HTTP). Use HTTPS in production.",
@@ -243,6 +252,18 @@ const translations: Record<Language, Record<string, string>> = {
     "marketplace.installing": "Installing...",
     "marketplace.requiresEnv": "Requires configuration",
     "marketplace.allCategories": "All",
+    "marketplace.upToDate": "All skills are up to date",
+    "marketplace.checkUpdates": "Check for updates",
+
+    // Sub-agents
+    "subAgent.running": "running",
+    "subAgent.done": "done",
+    "subAgent.error": "error",
+    "subAgent.cancelled": "cancelled",
+
+    // Alter Ego hints
+    "alterEgo.createHint": "Rain can create custom egos via chat",
+    "alterEgo.createHintShort": "Ask Rain to create custom egos via chat",
 
     // Devices
     "devices.title": "Connected Devices",
@@ -268,6 +289,16 @@ const translations: Record<Language, Record<string, string>> = {
     "devices.revokeAllConfirmTitle": "Remove All Devices?",
     "devices.revokeAllConfirmBody": "All connected devices will be disconnected immediately. You can then log in with this device.",
     "devices.revokeAllError": "Could not remove devices. Try again.",
+
+    // Accessibility / common UI
+    "a11y.close": "Close",
+    "a11y.copy": "Copy",
+    "a11y.delete": "Delete",
+    "a11y.dismiss": "Dismiss",
+    "a11y.menu": "Menu",
+    "a11y.models": "Models",
+    "sidebar.subtitle": "AI Assistant",
+    "metrics.reset": "Reset: {time}",
   },
   es: {
     // Status bar
@@ -452,7 +483,11 @@ const translations: Record<Language, Record<string, string>> = {
     "mcp.hub": "Hub",
     "mcp.email": "Email",
     "mcp.browser": "Navegador",
+    "mcp.calendar": "Calendario",
     "mcp.smarthome": "Smart Home",
+    "mcp.serverError": "{label} no pudo iniciar y fue deshabilitado",
+    "mcp.serverDisabled": "{label} no esta configurado. Configuralo con: rain setup",
+    "mcp.allServersFailed": "Todos los servidores MCP fallaron al iniciar. Rain funcionara sin integraciones.",
 
     // Months
     "month.0": "Ene", "month.1": "Feb", "month.2": "Mar", "month.3": "Abr",
@@ -469,6 +504,11 @@ const translations: Record<Language, Record<string, string>> = {
     "toast.sendFailed": "No se pudo enviar el mensaje",
     "toast.deletedConversation": "Conversaci\u00f3n eliminada",
     "toast.connectSuccess": "Conectado exitosamente",
+
+    // Error boundary
+    "error.title": "Algo sali\u00f3 mal",
+    "error.fallback": "Ocurri\u00f3 un error inesperado.",
+    "error.retry": "Reintentar",
 
     // Security banner
     "security.httpWarning": "Conexi\u00f3n insegura (HTTP). Usa HTTPS en producci\u00f3n.",
@@ -511,6 +551,18 @@ const translations: Record<Language, Record<string, string>> = {
     "marketplace.installing": "Instalando...",
     "marketplace.requiresEnv": "Requiere configuracion",
     "marketplace.allCategories": "Todos",
+    "marketplace.upToDate": "Todos los skills estan actualizados",
+    "marketplace.checkUpdates": "Buscar actualizaciones",
+
+    // Sub-agents
+    "subAgent.running": "ejecutando",
+    "subAgent.done": "listo",
+    "subAgent.error": "error",
+    "subAgent.cancelled": "cancelado",
+
+    // Alter Ego hints
+    "alterEgo.createHint": "Rain puede crear egos personalizados por chat",
+    "alterEgo.createHintShort": "Pidele a Rain que cree egos personalizados por chat",
 
     // Devices
     "devices.title": "Dispositivos Conectados",
@@ -536,6 +588,16 @@ const translations: Record<Language, Record<string, string>> = {
     "devices.revokeAllConfirmTitle": "Eliminar todos los dispositivos?",
     "devices.revokeAllConfirmBody": "Todos los dispositivos conectados se desconectaran inmediatamente. Podras iniciar sesion con este dispositivo.",
     "devices.revokeAllError": "No se pudieron eliminar los dispositivos. Intenta de nuevo.",
+
+    // Accessibility / common UI
+    "a11y.close": "Cerrar",
+    "a11y.copy": "Copiar",
+    "a11y.delete": "Eliminar",
+    "a11y.dismiss": "Cerrar",
+    "a11y.menu": "Men\u00fa",
+    "a11y.models": "Modelos",
+    "sidebar.subtitle": "Asistente IA",
+    "metrics.reset": "Reinicio: {time}",
   },
 };
 

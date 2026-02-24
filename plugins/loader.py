@@ -1,6 +1,7 @@
 """Plugin loader — reads YAML files from ~/.rain-assistant/plugins/."""
 
 import json
+import os
 from pathlib import Path
 
 from .schema import Plugin, PluginValidationError, parse_plugin_dict
@@ -41,6 +42,10 @@ def load_all_plugins() -> list[Plugin]:
 def load_plugin_by_name(name: str) -> Plugin | None:
     """Load a specific plugin by name (including disabled)."""
     import yaml
+    from .schema import NAME_PATTERN
+
+    if not NAME_PATTERN.match(name):
+        return None
 
     yaml_path = PLUGINS_DIR / f"{name}.yaml"
     if not yaml_path.exists():
@@ -66,7 +71,11 @@ def save_plugin_yaml(name: str, yaml_content: str) -> Path:
     plugin = parse_plugin_dict(data)
 
     # Use the plugin name from content, not the argument
-    file_path = PLUGINS_DIR / f"{plugin.name}.yaml"
+    file_path = (PLUGINS_DIR / f"{plugin.name}.yaml").resolve()
+    plugins_root = PLUGINS_DIR.resolve()
+    if not str(file_path).startswith(str(plugins_root) + os.sep) and file_path.parent != plugins_root:
+        raise ValueError(f"Plugin name resolves outside plugins directory: {plugin.name}")
+
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(yaml_content)
 
@@ -75,6 +84,11 @@ def save_plugin_yaml(name: str, yaml_content: str) -> Path:
 
 def delete_plugin(name: str) -> bool:
     """Delete a plugin file. Returns True if deleted."""
+    from .schema import NAME_PATTERN
+
+    if not NAME_PATTERN.match(name):
+        return False
+
     file_path = PLUGINS_DIR / f"{name}.yaml"
     if file_path.exists():
         file_path.unlink()
@@ -85,6 +99,10 @@ def delete_plugin(name: str) -> bool:
 def set_plugin_enabled(name: str, enabled: bool) -> bool:
     """Enable or disable a plugin by modifying its YAML file."""
     import yaml
+    from .schema import NAME_PATTERN
+
+    if not NAME_PATTERN.match(name):
+        return False
 
     file_path = PLUGINS_DIR / f"{name}.yaml"
     if not file_path.exists():

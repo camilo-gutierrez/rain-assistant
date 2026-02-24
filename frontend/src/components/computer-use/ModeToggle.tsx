@@ -28,7 +28,7 @@ export default function ModeToggle() {
       onClick={handleToggle}
       className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 mx-1 rounded-full text-xs font-medium transition-all ${
         isComputerUse
-          ? "bg-purple/15 text-purple border border-purple/30 hover:bg-purple/25"
+          ? "bg-mauve/15 text-mauve border border-mauve/30 hover:bg-mauve/25"
           : "bg-surface2/50 text-subtext border border-overlay hover:bg-surface2 hover:text-text"
       }`}
       title={isComputerUse ? t("cu.switchToCoding") : t("cu.switchToComputerUse")}

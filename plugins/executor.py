@@ -152,13 +152,12 @@ def _resolve_template(template: str, arguments: dict, env: dict) -> str:
 
 
 def _escape_cmd_arg(value: str) -> str:
-    """Escape a value for Windows cmd.exe."""
-    # Replace special cmd.exe characters
-    dangerous = ['&', '|', '<', '>', '^', '%', '!']
-    result = value
-    for ch in dangerous:
-        result = result.replace(ch, f'^{ch}')
-    return f'"{result}"'
+    """Escape a value for Windows cmd.exe using subprocess.list2cmdline."""
+    import subprocess
+    # Strip null bytes and control characters that can't appear in cmd args
+    cleaned = value.replace('\0', '').replace('\n', ' ').replace('\r', ' ')
+    # list2cmdline handles all quoting rules correctly (including embedded ")
+    return subprocess.list2cmdline([cleaned])
 
 
 def _resolve_template_bash(template: str, arguments: dict, env: dict) -> str:
@@ -382,10 +381,10 @@ async def _execute_http(
     requests and cannot access the local filesystem.  The httpx timeout
     (TIMEOUT seconds) prevents hanging on unresponsive servers.
 
-    DNS rebinding mitigation: the hostname is resolved *twice* — once in
-    ``_is_safe_url`` (initial gate) and again immediately before the HTTP
-    call.  If the second resolution returns a private/internal IP (i.e. the
-    DNS record changed between the two lookups), the request is blocked.
+    DNS rebinding mitigation: the hostname is resolved once and for HTTP
+    URLs the resolved IP is pinned in the request URL to prevent the DNS
+    from changing between validation and connection.  For HTTPS, TLS
+    certificate verification inherently prevents DNS rebinding attacks.
     """
     import ipaddress
     import socket
@@ -394,58 +393,80 @@ async def _execute_http(
 
     url = _resolve_template(execution.url, arguments, env)
 
-    # SSRF protection: block requests to internal/private addresses
-    if not _is_safe_url(url):
+    # SSRF protection: single DNS resolution with IP pinning.
+    # Resolves hostname once and pins the result to prevent DNS rebinding
+    # (TOCTOU attacks where DNS changes between validation and connection).
+    parsed_url = urlparse(url)
+    hostname = parsed_url.hostname
+
+    if not hostname:
+        return {"content": "Invalid URL: no hostname", "is_error": True}
+
+    if hostname.lower() in _BLOCKED_HOSTNAMES:
         return {
-            "content": f"Blocked: URL targets a private/internal address: {url}",
+            "content": f"Blocked: {hostname} is an internal/metadata hostname",
             "is_error": True,
         }
 
-    # --- DNS rebinding mitigation -------------------------------------------
-    # Re-resolve the hostname right before issuing the HTTP request.  If the
-    # DNS answer has changed to a private/loopback IP since _is_safe_url ran,
-    # we refuse to proceed.
-    parsed_url = urlparse(url)
-    hostname = parsed_url.hostname
-    if hostname:
+    try:
+        addrinfos = socket.getaddrinfo(
+            hostname,
+            parsed_url.port or (443 if parsed_url.scheme == "https" else 80),
+        )
+    except socket.gaierror:
+        return {"content": f"DNS resolution failed for {hostname}", "is_error": True}
+
+    if not addrinfos:
+        return {"content": f"No DNS results for {hostname}", "is_error": True}
+
+    pinned_ip = None
+    for family, _, _, _, sockaddr in addrinfos:
+        ip_str = sockaddr[0]
         try:
-            resolved = socket.getaddrinfo(hostname, parsed_url.port or 80)
-            for family, _, _, _, sockaddr in resolved:
-                try:
-                    ip = ipaddress.ip_address(sockaddr[0])
-                except ValueError:
-                    return {
-                        "content": f"SSRF blocked: cannot parse resolved IP for {hostname}",
-                        "is_error": True,
-                    }
-                if _is_unsafe_ip(ip):
-                    return {
-                        "content": f"SSRF blocked: {hostname} resolves to private/internal IP {ip}",
-                        "is_error": True,
-                    }
-        except socket.gaierror:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
             return {
-                "content": f"DNS resolution failed for {hostname}",
+                "content": f"SSRF blocked: cannot parse resolved IP for {hostname}",
                 "is_error": True,
             }
-    # -----------------------------------------------------------------------
+        if _is_unsafe_ip(ip):
+            return {
+                "content": f"SSRF blocked: {hostname} resolves to private/internal IP {ip}",
+                "is_error": True,
+            }
+        if pinned_ip is None:
+            pinned_ip = ip_str
 
     method = execution.method.upper()
     headers = _resolve_dict(execution.headers, arguments, env)
     params = _resolve_dict(execution.params, arguments, env)
     body = _resolve_dict(execution.body, arguments, env) if execution.body else None
 
-    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+    # Pin DNS: for plain HTTP, replace hostname with resolved IP to prevent
+    # rebinding between our check and the actual connection.
+    # For HTTPS, TLS certificate verification prevents DNS rebinding
+    # (cert must match hostname, so rebinding to a different IP fails TLS).
+    request_url = url
+    if parsed_url.scheme != "https" and pinned_ip:
+        port_part = f":{parsed_url.port}" if parsed_url.port else ""
+        if ":" in pinned_ip:  # IPv6
+            pinned_netloc = f"[{pinned_ip}]{port_part}"
+        else:
+            pinned_netloc = f"{pinned_ip}{port_part}"
+        request_url = parsed_url._replace(netloc=pinned_netloc).geturl()
+        headers.setdefault("Host", hostname)
+
+    async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=False) as client:
         if method == "GET":
-            response = await client.get(url, headers=headers, params=params)
+            response = await client.get(request_url, headers=headers, params=params)
         elif method == "POST":
-            response = await client.post(url, headers=headers, params=params, json=body)
+            response = await client.post(request_url, headers=headers, params=params, json=body)
         elif method == "PUT":
-            response = await client.put(url, headers=headers, params=params, json=body)
+            response = await client.put(request_url, headers=headers, params=params, json=body)
         elif method == "DELETE":
-            response = await client.delete(url, headers=headers, params=params)
+            response = await client.delete(request_url, headers=headers, params=params)
         elif method == "PATCH":
-            response = await client.patch(url, headers=headers, params=params, json=body)
+            response = await client.patch(request_url, headers=headers, params=params, json=body)
         else:
             return {"content": f"Unsupported HTTP method: {method}", "is_error": True}
 

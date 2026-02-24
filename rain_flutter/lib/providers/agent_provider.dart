@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
+import '../models/a2ui.dart';
 import '../models/agent.dart';
 import '../models/message.dart';
 
@@ -215,6 +216,45 @@ class AgentNotifier extends StateNotifier<AgentState> {
     if (idx >= 0) {
       agent.messages[idx] =
           (agent.messages[idx] as PermissionRequestMessage).copyWith(status: status);
+      _notify();
+    }
+  }
+
+  /// Create or replace an A2UI surface message (upsert by surfaceId).
+  void upsertSurface(String agentId, A2UISurface surface) {
+    final agent = state.agents[agentId];
+    if (agent == null) return;
+
+    final idx = agent.messages.indexWhere(
+      (m) => m is A2UISurfaceMessage && m.surface.surfaceId == surface.surfaceId,
+    );
+
+    if (idx >= 0) {
+      agent.messages[idx] =
+          (agent.messages[idx] as A2UISurfaceMessage).copyWith(surface: surface);
+    } else {
+      agent.messages.add(A2UISurfaceMessage(
+        id: _uuid.v4(),
+        surface: surface,
+        timestamp: DateTime.now().millisecondsSinceEpoch,
+      ));
+    }
+    _notify();
+  }
+
+  /// Apply partial updates to an existing A2UI surface.
+  void applySurfaceUpdates(
+      String agentId, String surfaceId, List<Map<String, dynamic>> updates) {
+    final agent = state.agents[agentId];
+    if (agent == null) return;
+
+    final idx = agent.messages.indexWhere(
+      (m) => m is A2UISurfaceMessage && m.surface.surfaceId == surfaceId,
+    );
+
+    if (idx >= 0) {
+      final msg = agent.messages[idx] as A2UISurfaceMessage;
+      agent.messages[idx] = msg.copyWith(surface: msg.surface.applyUpdates(updates));
       _notify();
     }
   }

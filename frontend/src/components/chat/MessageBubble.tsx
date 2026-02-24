@@ -17,7 +17,7 @@ const sanitizeSchema = {
     ...defaultSchema.attributes,
     // Allow class for syntax highlighting
     code: [...(defaultSchema.attributes?.code || []), 'className'],
-    span: [...(defaultSchema.attributes?.span || []), 'className', 'style'],
+    span: [...(defaultSchema.attributes?.span || []), 'className'],
   },
   // Block dangerous protocols
   protocols: {
@@ -73,7 +73,7 @@ const MessageBubble = React.memo(function MessageBubble({ message }: Props) {
     if (isMeta) {
       return (
         <div className={`self-center bg-surface2/60 rounded-full px-3 py-1 ${animClass}`}>
-          <span className="text-[11px] text-subtext tabular-nums">{message.text}</span>
+          <span className="text-xs text-subtext tabular-nums">{message.text}</span>
         </div>
       );
     }
@@ -116,7 +116,7 @@ const MessageBubble = React.memo(function MessageBubble({ message }: Props) {
         <button
           onClick={handleCopy}
           className="absolute top-1.5 right-1.5 min-w-[32px] min-h-[32px] flex items-center justify-center rounded-md border border-overlay bg-surface text-subtext hover:text-primary hover:border-primary transition-all opacity-0 group-hover:opacity-100 touch-visible"
-          aria-label="Copy"
+          aria-label={t("a11y.copy")}
         >
           {copied ? <Check size={14} /> : <Copy size={14} />}
         </button>
@@ -129,7 +129,7 @@ const MessageBubble = React.memo(function MessageBubble({ message }: Props) {
         </div>
       ) : (
         <>
-          <div className="text-sm text-text prose prose-sm max-w-none break-words overflow-hidden [&_pre]:bg-surface2 [&_pre]:rounded-lg [&_pre]:p-3 [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:font-[family-name:var(--font-jetbrains)] [&_code]:text-primary [&_pre_code]:text-text [&_a]:text-primary [&_a]:no-underline hover:[&_a]:underline [&_table]:border-overlay [&_th]:border-overlay [&_td]:border-overlay [&_table]:block [&_table]:overflow-x-auto [&_table]:max-w-full [&_blockquote]:border-l-primary/30 [&_blockquote]:text-text2 [&_img]:max-w-full [&_img]:h-auto">
+          <div className="text-sm text-text prose prose-sm max-w-none break-words overflow-hidden [&_pre]:bg-surface2 [&_pre]:rounded-lg [&_pre]:p-3 [&_pre]:overflow-x-auto [&_pre]:text-xs [&_code]:font-mono [&_code]:text-primary [&_pre_code]:text-text [&_a]:text-primary [&_a]:no-underline hover:[&_a]:underline [&_table]:border-overlay [&_th]:border-overlay [&_td]:border-overlay [&_table]:block [&_table]:overflow-x-auto [&_table]:max-w-full [&_blockquote]:border-l-primary/30 [&_blockquote]:text-text2 [&_img]:max-w-full [&_img]:h-auto">
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               rehypePlugins={[[rehypeSanitize, sanitizeSchema]]}

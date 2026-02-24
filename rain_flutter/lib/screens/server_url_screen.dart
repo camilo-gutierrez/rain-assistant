@@ -19,6 +19,16 @@ class _ServerUrlScreenState extends ConsumerState<ServerUrlScreen> {
   String? _error;
 
   @override
+  void initState() {
+    super.initState();
+    // Pre-populate with saved URL if available
+    final savedUrl = ref.read(authServiceProvider).serverUrl;
+    if (savedUrl != null) {
+      _controller.text = savedUrl;
+    }
+  }
+
+  @override
   void dispose() {
     _controller.dispose();
     super.dispose();

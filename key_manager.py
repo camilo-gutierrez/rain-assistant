@@ -176,6 +176,11 @@ def ensure_encryption_key(config_path: Path) -> str:
     # 0. Check for environment variable first (preferred for server deployments)
     env_key = os.environ.get("RAIN_ENCRYPTION_KEY")
     if env_key:
+        try:
+            from cryptography.fernet import Fernet
+            Fernet(env_key.encode())
+        except Exception:
+            raise ValueError("RAIN_ENCRYPTION_KEY is not a valid Fernet key (must be 32 url-safe base64 bytes)")
         return env_key
 
     # 1. Try keyring
@@ -215,8 +220,15 @@ def ensure_encryption_key(config_path: Path) -> str:
             )
             import sys
             print(
-                "[SECURITY WARNING] Encryption key stored in config.json (plaintext). "
-                "Set RAIN_ENCRYPTION_KEY env var or install a keyring backend for better security.",
+                "  \u26a0\ufe0f  WARNING: Encryption key stored in config.json (plaintext fallback).",
+                file=sys.stderr, flush=True,
+            )
+            print(
+                "  \u26a0\ufe0f  For better security, set RAIN_ENCRYPTION_KEY environment variable",
+                file=sys.stderr, flush=True,
+            )
+            print(
+                "  \u26a0\ufe0f  or install a keyring backend: pip install keyrings.alt",
                 file=sys.stderr, flush=True,
             )
         return existing_key
@@ -244,8 +256,15 @@ def ensure_encryption_key(config_path: Path) -> str:
         )
         import sys
         print(
-            "[SECURITY WARNING] Encryption key stored in config.json (plaintext). "
-            "Set RAIN_ENCRYPTION_KEY env var or install a keyring backend for better security.",
+            "  \u26a0\ufe0f  WARNING: Encryption key stored in config.json (plaintext fallback).",
+            file=sys.stderr, flush=True,
+        )
+        print(
+            "  \u26a0\ufe0f  For better security, set RAIN_ENCRYPTION_KEY environment variable",
+            file=sys.stderr, flush=True,
+        )
+        print(
+            "  \u26a0\ufe0f  or install a keyring backend: pip install keyrings.alt",
             file=sys.stderr, flush=True,
         )
 

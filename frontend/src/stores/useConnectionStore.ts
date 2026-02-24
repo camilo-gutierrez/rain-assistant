@@ -2,9 +2,14 @@ import { create } from "zustand";
 import type { WSSendMessage, AIProvider } from "@/lib/types";
 import { getWsUrl } from "@/lib/constants";
 
-// Simple token obfuscation for sessionStorage (not encryption, but prevents casual inspection)
 const TOKEN_STORAGE_KEY = 'rain_session_token';
 
+/**
+ * Simple XOR obfuscation for tokens in sessionStorage.
+ * NOT cryptographic — prevents casual inspection only.
+ * Acceptable because: tokens are ephemeral (session-only),
+ * transmitted over WSS, and expire server-side (24h TTL).
+ */
 function obfuscateToken(token: string): string {
   const key = 'rain_obfuscation_key_2026';
   let result = '';
@@ -103,13 +108,16 @@ export const useConnectionStore = create<ConnectionState>()((set, get) => ({
     }
 
     const wsUrl = getWsUrl();
-    const protocols = authToken ? [`rain-token.${authToken}`] : undefined;
 
     set({ connectionStatus: "connecting" });
 
-    const ws = new WebSocket(wsUrl, protocols);
+    const ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
+      // Send auth token as first message instead of subprotocol
+      if (authToken) {
+        ws.send(JSON.stringify({ type: 'auth', token: authToken }));
+      }
       set({ connectionStatus: "connected", consecutiveFails: 0, statusText: "Connected" });
     };
 
@@ -172,7 +180,11 @@ export const useConnectionStore = create<ConnectionState>()((set, get) => ({
   },
 
   resetToPin: () => {
-    set({ authToken: null, ws: null });
+    const { reconnectTimerId } = get();
+    if (reconnectTimerId) {
+      clearTimeout(reconnectTimerId);
+    }
+    set({ authToken: null, ws: null, reconnectTimerId: null });
     sessionStorage.removeItem(TOKEN_STORAGE_KEY);
     sessionStorage.removeItem("rain-token"); // clean up old key
     // UI store will handle panel switching via the useWebSocket hook

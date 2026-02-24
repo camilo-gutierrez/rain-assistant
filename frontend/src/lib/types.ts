@@ -239,7 +239,8 @@ export type WSReceiveMessage =
   | { type: "talk_state_changed"; agent_id: string; state: VoiceState }
   | { type: "voice_transcription"; agent_id: string; text: string; is_final: boolean }
   | { type: "voice_mode_changed"; agent_id: string; mode: VoiceMode }
-  | { type: "partial_transcription"; agent_id: string; text: string; is_final: boolean };
+  | { type: "partial_transcription"; agent_id: string; text: string; is_final: boolean }
+  | { type: "mcp_server_status"; agent_id: string; status: string; label?: string; server?: string };
 
 // === AI Provider ===
 export type AIProvider = "claude" | "openai" | "gemini" | "ollama";

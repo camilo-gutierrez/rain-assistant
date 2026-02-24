@@ -114,12 +114,12 @@ const PermissionRequestBlock = React.memo(function PermissionRequestBlock({
           <span className={`text-xs font-semibold px-1.5 py-0.5 rounded ${badgeBg}`}>
             {isRed ? t("perm.levelRed") : t("perm.levelYellow")}
           </span>
-          <span className="text-xs font-semibold text-text1">
+          <span className="text-xs font-semibold text-text">
             {message.tool}
           </span>
         </div>
         {detail && (
-          <div className="text-xs text-text2 font-[family-name:var(--font-jetbrains)] mt-1 break-all">
+          <div className="text-xs text-text2 font-mono mt-1 break-all">
             {detail}
           </div>
         )}
@@ -142,14 +142,14 @@ const PermissionRequestBlock = React.memo(function PermissionRequestBlock({
         <span className={`text-xs font-semibold px-1.5 py-0.5 rounded ${badgeBg}`}>
           {isRed ? t("perm.levelRed") : t("perm.levelYellow")}
         </span>
-        <span className="text-xs font-semibold text-text1">
+        <span className="text-xs font-semibold text-text">
           {message.tool}
         </span>
       </div>
 
       {/* Tool detail */}
       {detail && (
-        <div className="text-xs text-text2 font-[family-name:var(--font-jetbrains)] mt-1 break-all">
+        <div className="text-xs text-text2 font-mono mt-1 break-all">
           {detail}
         </div>
       )}
@@ -175,7 +175,7 @@ const PermissionRequestBlock = React.memo(function PermissionRequestBlock({
             }}
             placeholder={t("perm.enterPin")}
             disabled={isSubmitting}
-            className="w-full px-3 h-10 text-base rounded border border-border bg-bg text-text1 placeholder:text-text2/50 focus-ring"
+            className="w-full px-3 h-10 text-base rounded border border-border bg-bg text-text placeholder:text-text2/50 focus-ring"
             autoFocus
           />
         </div>

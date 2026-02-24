@@ -17,12 +17,11 @@ async def run_bash(args: dict, cwd: str) -> dict:
 
     try:
         if sys.platform == "win32":
-            proc = await asyncio.create_subprocess_shell(
-                command,
+            proc = await asyncio.create_subprocess_exec(
+                "cmd.exe", "/c", command,
                 cwd=cwd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                shell=True,
             )
         else:
             proc = await asyncio.create_subprocess_exec(

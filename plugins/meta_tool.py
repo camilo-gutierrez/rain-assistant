@@ -12,7 +12,9 @@ from .loader import (
     set_plugin_env,
     PLUGINS_DIR,
 )
-from .schema import PluginValidationError
+from .schema import NAME_PATTERN, PluginValidationError
+
+_INVALID_NAME_MSG = "Error: invalid plugin name (lowercase letters, digits, underscores only)"
 
 # Flag for signaling that plugins need to be reloaded
 _reload_needed = False
@@ -117,9 +119,10 @@ def _action_create(args: dict) -> dict:
             if isinstance(exec_data, dict):
                 exec_type = exec_data.get("type", "")
 
-        if exec_type == "python":
+        if exec_type in ("python", "bash"):
             return {
-                "content": "⚠️ Python plugins cannot be created via chat for security reasons. "
+                "content": f"⚠️ {exec_type.capitalize()} plugins cannot be created via chat for security reasons. "
+                           "They allow arbitrary code/command execution. "
                            "Install them manually as files in ~/.rain-assistant/plugins/",
                 "is_error": True,
             }
@@ -181,6 +184,8 @@ def _action_enable(args: dict) -> dict:
     name = args.get("name", "")
     if not name:
         return {"content": "Error: 'name' is required", "is_error": True}
+    if not NAME_PATTERN.match(name):
+        return {"content": _INVALID_NAME_MSG, "is_error": True}
     if set_plugin_enabled(name, True):
         mark_reload_needed()
         return {"content": f"Plugin '{name}' enabled.", "is_error": False}
@@ -191,6 +196,8 @@ def _action_disable(args: dict) -> dict:
     name = args.get("name", "")
     if not name:
         return {"content": "Error: 'name' is required", "is_error": True}
+    if not NAME_PATTERN.match(name):
+        return {"content": _INVALID_NAME_MSG, "is_error": True}
     if set_plugin_enabled(name, False):
         mark_reload_needed()
         return {"content": f"Plugin '{name}' disabled.", "is_error": False}
@@ -201,6 +208,8 @@ def _action_delete(args: dict) -> dict:
     name = args.get("name", "")
     if not name:
         return {"content": "Error: 'name' is required", "is_error": True}
+    if not NAME_PATTERN.match(name):
+        return {"content": _INVALID_NAME_MSG, "is_error": True}
     if delete_plugin(name):
         mark_reload_needed()
         return {"content": f"Plugin '{name}' deleted.", "is_error": False}
@@ -211,6 +220,8 @@ def _action_show(args: dict) -> dict:
     name = args.get("name", "")
     if not name:
         return {"content": "Error: 'name' is required", "is_error": True}
+    if not NAME_PATTERN.match(name):
+        return {"content": _INVALID_NAME_MSG, "is_error": True}
 
     file_path = PLUGINS_DIR / f"{name}.yaml"
     if not file_path.exists():
@@ -246,6 +257,9 @@ def _action_set_env(args: dict) -> dict:
     if not value:
         return {"content": "Error: 'value' is required for set_env", "is_error": True}
 
+    import re
+    if not re.match(r'^[A-Za-z_]\w*$', key):
+        return {"content": "Error: key must contain only letters, digits, and underscores", "is_error": True}
     if key.upper() in _BLOCKED_ENV_VARS:
         return {
             "content": f"⚠️ Environment variable '{key}' is blocked for security reasons.",

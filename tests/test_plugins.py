@@ -51,7 +51,7 @@ name: bash_test
 description: A bash plugin for testing
 version: "1.0"
 enabled: true
-permission_level: green
+permission_level: yellow
 parameters:
   - name: filename
     type: string
@@ -242,7 +242,26 @@ class TestParsePluginDict:
         plugin = parse_plugin_dict(data)
         assert plugin.name == "bash_test"
         assert plugin.execution.type == "bash"
+        assert plugin.permission_level == "yellow"
         assert "echo" in plugin.execution.command
+
+    def test_bash_plugin_cannot_be_green(self):
+        """Bash plugins with permission_level='green' must be rejected."""
+        data = yaml.safe_load(SAMPLE_BASH_PLUGIN_YAML)
+        data["permission_level"] = "green"
+        with pytest.raises(PluginValidationError, match="cannot have permission_level='green'"):
+            parse_plugin_dict(data)
+
+    def test_python_plugin_cannot_be_green(self):
+        """Python plugins with permission_level='green' must be rejected."""
+        data = {
+            "name": "py_test",
+            "description": "A python plugin",
+            "permission_level": "green",
+            "execution": {"type": "python", "script": "print('hi')"},
+        }
+        with pytest.raises(PluginValidationError, match="cannot have permission_level='green'"):
+            parse_plugin_dict(data)
 
     def test_parse_disabled_plugin(self):
         data = yaml.safe_load(SAMPLE_DISABLED_PLUGIN_YAML)

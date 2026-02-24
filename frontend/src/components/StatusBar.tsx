@@ -33,8 +33,8 @@ export default function StatusBar() {
       <button
         onClick={toggleMobileSidebar}
         className="md:hidden min-w-[44px] min-h-[44px] flex items-center justify-center -ml-2 rounded-full hover:bg-surface2 transition-colors text-text2 focus-ring"
-        aria-label="Menu"
-        title="Menu"
+        aria-label={t("a11y.menu")}
+        title={t("a11y.menu")}
       >
         <Menu size={20} />
       </button>

@@ -244,7 +244,7 @@ function DevicesSection() {
                           {device.device_name || "Unknown"}
                         </span>
                         {isCurrent && (
-                          <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded-full bg-primary/15 text-primary">
+                          <span className="text-xs font-semibold uppercase px-1.5 py-0.5 rounded-full bg-primary/15 text-primary">
                             {t("devices.thisDevice")}
                           </span>
                         )}
@@ -337,7 +337,7 @@ export default function SettingsPanel() {
   ];
 
   return (
-    <div className="p-5 space-y-1 overflow-y-auto">
+    <div className="p-5 space-y-3 overflow-y-auto">
       {/* ── Language ── */}
       <section className="rounded-xl bg-surface2/50 p-4">
         <SectionHeader icon={<Globe size={18} />} label={t("settings.language")} />

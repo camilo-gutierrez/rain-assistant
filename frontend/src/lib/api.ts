@@ -1,12 +1,38 @@
 import type { AuthResponse, BrowseResponse, ConversationFull, ConversationMeta, HistoryMessage, MetricsData, Memory, AlterEgo, MarketplaceSkill, MarketplaceCategory, InstalledMarketplaceSkill, SkillUpdate, DeviceInfo } from "./types";
 import { getApiUrl } from "./constants";
 
+const DEFAULT_TIMEOUT_MS = 30_000;
+
 function authHeaders(token: string | null): HeadersInit {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
 /**
- * Fetch with automatic retry on 429 (rate limit).
+ * Fetch with a timeout via AbortController.
+ * Throws "Request timed out" if the request exceeds timeoutMs.
+ */
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit,
+  timeoutMs = DEFAULT_TIMEOUT_MS
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    return res;
+  } catch (err: unknown) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error("Request timed out");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Fetch with automatic retry on 429 (rate limit) + timeout.
  * Reads the Retry-After header and waits before retrying.
  */
 async function fetchWithRetry(
@@ -14,13 +40,14 @@ async function fetchWithRetry(
   options: RequestInit,
   maxRetries = 1
 ): Promise<Response> {
-  let res = await fetch(url, options);
+  let res = await fetchWithTimeout(url, options);
   let retries = 0;
   while (res.status === 429 && retries < maxRetries) {
-    const retryAfter = parseInt(res.headers.get("Retry-After") || "2", 10);
+    const rawRetry = Number.parseInt(res.headers.get("Retry-After") || "2", 10);
+    const retryAfter = Number.isFinite(rawRetry) && rawRetry > 0 ? rawRetry : 2;
     const waitMs = Math.min(retryAfter * 1000, 30_000); // cap at 30s
     await new Promise((resolve) => setTimeout(resolve, waitMs));
-    res = await fetch(url, options);
+    res = await fetchWithTimeout(url, options);
     retries++;
   }
   return res;
@@ -34,7 +61,7 @@ export async function authenticate(
 ): Promise<AuthResponse> {
   const body: Record<string, string> = { pin, device_id: deviceId, device_name: deviceName };
   if (replaceDeviceId) body.replace_device_id = replaceDeviceId;
-  const res = await fetch(`${getApiUrl()}/auth`, {
+  const res = await fetchWithTimeout(`${getApiUrl()}/auth`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -46,7 +73,7 @@ export async function fetchDevicesWithPin(
   pin: string,
 ): Promise<{ devices: DeviceInfo[]; max_devices: number } | null> {
   try {
-    const res = await fetch(`${getApiUrl()}/auth/devices`, {
+    const res = await fetchWithTimeout(`${getApiUrl()}/auth/devices`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ pin }),
@@ -60,7 +87,7 @@ export async function fetchDevicesWithPin(
 
 export async function revokeDeviceWithPin(pin: string, deviceId: string): Promise<boolean> {
   try {
-    const res = await fetch(`${getApiUrl()}/auth/revoke-device`, {
+    const res = await fetchWithTimeout(`${getApiUrl()}/auth/revoke-device`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ pin, device_id: deviceId }),
@@ -75,7 +102,7 @@ export async function revokeDeviceWithPin(pin: string, deviceId: string): Promis
 
 export async function revokeAllWithPin(pin: string): Promise<boolean> {
   try {
-    const res = await fetch(`${getApiUrl()}/auth/revoke-all`, {
+    const res = await fetchWithTimeout(`${getApiUrl()}/auth/revoke-all`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ pin }),
@@ -104,7 +131,7 @@ export async function revokeDevice(
   deviceId: string,
   token: string | null
 ): Promise<{ revoked: boolean }> {
-  const res = await fetch(
+  const res = await fetchWithTimeout(
     `${getApiUrl()}/devices/${encodeURIComponent(deviceId)}`,
     { method: "DELETE", headers: authHeaders(token) }
   );
@@ -117,7 +144,7 @@ export async function renameDevice(
   name: string,
   token: string | null
 ): Promise<{ renamed: boolean }> {
-  const res = await fetch(
+  const res = await fetchWithTimeout(
     `${getApiUrl()}/devices/${encodeURIComponent(deviceId)}`,
     {
       method: "PATCH",
@@ -161,7 +188,7 @@ export async function loadMessages(
   token: string | null
 ): Promise<{ messages: HistoryMessage[] }> {
   const params = new URLSearchParams({ cwd, agent_id: agentId });
-  const res = await fetch(`${getApiUrl()}/messages?${params}`, {
+  const res = await fetchWithTimeout(`${getApiUrl()}/messages?${params}`, {
     headers: authHeaders(token),
   });
   if (!res.ok) throw new Error(`Load messages failed: ${res.status}`);
@@ -174,7 +201,7 @@ export async function clearMessages(
   token: string | null
 ): Promise<{ deleted: number }> {
   const params = new URLSearchParams({ cwd, agent_id: agentId });
-  const res = await fetch(`${getApiUrl()}/messages?${params}`, {
+  const res = await fetchWithTimeout(`${getApiUrl()}/messages?${params}`, {
     method: "DELETE",
     headers: authHeaders(token),
   });
@@ -185,7 +212,7 @@ export async function clearMessages(
 export async function fetchMetrics(
   token: string | null
 ): Promise<MetricsData> {
-  const res = await fetch(`${getApiUrl()}/metrics`, {
+  const res = await fetchWithTimeout(`${getApiUrl()}/metrics`, {
     headers: authHeaders(token),
   });
   if (!res.ok) throw new Error(`Fetch metrics failed: ${res.status}`);
@@ -221,7 +248,7 @@ export async function synthesize(
 export async function listConversations(
   token: string | null
 ): Promise<{ conversations: ConversationMeta[] }> {
-  const res = await fetch(`${getApiUrl()}/history`, {
+  const res = await fetchWithTimeout(`${getApiUrl()}/history`, {
     headers: authHeaders(token),
   });
   if (!res.ok) throw new Error(`List conversations failed: ${res.status}`);
@@ -232,7 +259,7 @@ export async function saveConversation(
   conversation: ConversationFull,
   token: string | null
 ): Promise<{ saved: boolean; id: string; deleted: string[] }> {
-  const res = await fetch(`${getApiUrl()}/history`, {
+  const res = await fetchWithTimeout(`${getApiUrl()}/history`, {
     method: "POST",
     headers: { ...authHeaders(token), "Content-Type": "application/json" },
     body: JSON.stringify(conversation),
@@ -245,7 +272,7 @@ export async function loadConversation(
   conversationId: string,
   token: string | null
 ): Promise<ConversationFull> {
-  const res = await fetch(
+  const res = await fetchWithTimeout(
     `${getApiUrl()}/history/${encodeURIComponent(conversationId)}`,
     { headers: authHeaders(token) }
   );
@@ -257,7 +284,7 @@ export async function deleteConversation(
   conversationId: string,
   token: string | null
 ): Promise<{ deleted: boolean }> {
-  const res = await fetch(
+  const res = await fetchWithTimeout(
     `${getApiUrl()}/history/${encodeURIComponent(conversationId)}`,
     { method: "DELETE", headers: authHeaders(token) }
   );
@@ -270,7 +297,7 @@ export async function deleteConversation(
 export async function fetchMemories(
   token: string | null
 ): Promise<{ memories: Memory[] }> {
-  const res = await fetch(`${getApiUrl()}/memories`, {
+  const res = await fetchWithTimeout(`${getApiUrl()}/memories`, {
     headers: authHeaders(token),
   });
   if (!res.ok) throw new Error(`Fetch memories failed: ${res.status}`);
@@ -282,7 +309,7 @@ export async function addMemory(
   category: string,
   token: string | null
 ): Promise<{ memory: Memory }> {
-  const res = await fetch(`${getApiUrl()}/memories`, {
+  const res = await fetchWithTimeout(`${getApiUrl()}/memories`, {
     method: "POST",
     headers: { ...authHeaders(token), "Content-Type": "application/json" },
     body: JSON.stringify({ content, category }),
@@ -295,7 +322,7 @@ export async function deleteMemory(
   memoryId: string,
   token: string | null
 ): Promise<{ deleted: boolean }> {
-  const res = await fetch(
+  const res = await fetchWithTimeout(
     `${getApiUrl()}/memories/${encodeURIComponent(memoryId)}`,
     { method: "DELETE", headers: authHeaders(token) }
   );
@@ -306,7 +333,7 @@ export async function deleteMemory(
 export async function clearAllMemories(
   token: string | null
 ): Promise<{ cleared: number }> {
-  const res = await fetch(`${getApiUrl()}/memories`, {
+  const res = await fetchWithTimeout(`${getApiUrl()}/memories`, {
     method: "DELETE",
     headers: authHeaders(token),
   });
@@ -319,7 +346,7 @@ export async function clearAllMemories(
 export async function fetchAlterEgos(
   token: string | null
 ): Promise<{ egos: AlterEgo[]; active_ego_id: string }> {
-  const res = await fetch(`${getApiUrl()}/alter-egos`, {
+  const res = await fetchWithTimeout(`${getApiUrl()}/alter-egos`, {
     headers: authHeaders(token),
   });
   if (!res.ok) throw new Error(`Fetch alter egos failed: ${res.status}`);
@@ -330,7 +357,7 @@ export async function saveAlterEgo(
   ego: Partial<AlterEgo>,
   token: string | null
 ): Promise<{ saved: boolean; path: string }> {
-  const res = await fetch(`${getApiUrl()}/alter-egos`, {
+  const res = await fetchWithTimeout(`${getApiUrl()}/alter-egos`, {
     method: "POST",
     headers: { ...authHeaders(token), "Content-Type": "application/json" },
     body: JSON.stringify(ego),
@@ -343,7 +370,7 @@ export async function deleteAlterEgo(
   egoId: string,
   token: string | null
 ): Promise<{ deleted: boolean }> {
-  const res = await fetch(
+  const res = await fetchWithTimeout(
     `${getApiUrl()}/alter-egos/${encodeURIComponent(egoId)}`,
     { method: "DELETE", headers: authHeaders(token) }
   );

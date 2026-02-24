@@ -137,11 +137,11 @@ export default function McpToolsSection() {
         onClick={toggleCollapsed}
         className="flex items-center gap-2 px-2 py-1.5 mb-1.5 w-full group cursor-pointer rounded-lg hover:bg-surface2/40 transition-colors"
       >
-        <span className="text-[10px] uppercase tracking-widest text-subtext font-semibold group-hover:text-text transition-colors">
+        <span className="text-xs uppercase tracking-widest text-subtext font-semibold group-hover:text-text transition-colors">
           {t("mcp.title")}
         </span>
         <div className="flex-1 h-px bg-gradient-to-r from-overlay/40 to-transparent" />
-        <span className="text-[10px] font-bold text-primary bg-primary/8 px-1.5 py-0.5 rounded-md tabular-nums">
+        <span className="text-xs font-bold text-primary bg-primary/8 px-1.5 py-0.5 rounded-md tabular-nums">
           {totalTools}
         </span>
         <span className="text-subtext group-hover:text-text transition-colors">
@@ -169,10 +169,10 @@ export default function McpToolsSection() {
               <span className={`${category.color} transition-transform duration-200 group-hover:scale-110`}>
                 {category.icon}
               </span>
-              <span className="text-[11px] font-medium text-text leading-tight">
+              <span className="text-xs font-medium text-text leading-tight">
                 {t(category.labelKey)}
               </span>
-              <span className={`text-[9px] font-bold px-1.5 py-px rounded-md ${category.color} opacity-60`}>
+              <span className={`text-xs font-bold px-1.5 py-px rounded-md ${category.color} opacity-60`}>
                 {category.toolCount}
               </span>
             </button>

@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import sqlite3
 import time
@@ -104,6 +105,8 @@ def _ensure_db():
         """)
         # Migrate: add agent_id column if missing (upgrade from old schema)
         _migrate_agent_id(conn)
+        # Migrate: add user_id column for per-user data isolation
+        _migrate_messages_user_id(conn)
         # Now safe to create the compound index
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_messages_cwd_agent
@@ -238,6 +241,18 @@ def _migrate_agent_id(conn):
         """)
 
 
+def _migrate_messages_user_id(conn):
+    """Add user_id column to messages table for per-user data isolation."""
+    cursor = conn.execute("PRAGMA table_info(messages)")
+    columns = [row[1] for row in cursor.fetchall()]
+    if "user_id" not in columns:
+        conn.execute("ALTER TABLE messages ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default'")
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_messages_user_cwd_agent
+            ON messages(user_id, cwd, agent_id, timestamp)
+        """)
+
+
 def _migrate_device_columns(conn):
     """Add device_id and device_name columns to active_sessions."""
     cursor = conn.execute("PRAGMA table_info(active_sessions)")
@@ -266,7 +281,8 @@ def _connect():
 _ENCRYPTED_MSG_TYPES = {"text", "assistant_text", "tool_use", "tool_result"}
 
 
-def save_message(cwd: str, role: str, msg_type: str, content: dict, agent_id: str = "default") -> int:
+def save_message(cwd: str, role: str, msg_type: str, content: dict,
+                 agent_id: str = "default", user_id: str = "default") -> int:
     """Insert a message and return its id.
 
     Content is encrypted at rest for sensitive message types (text, assistant_text,
@@ -278,21 +294,21 @@ def save_message(cwd: str, role: str, msg_type: str, content: dict, agent_id: st
         content_json = encrypt_field(content_json)
     with _connect() as conn:
         cur = conn.execute(
-            "INSERT INTO messages (cwd, agent_id, role, type, content_json, timestamp) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (cwd, agent_id, role, msg_type, content_json, time.time()),
+            "INSERT INTO messages (cwd, agent_id, user_id, role, type, content_json, timestamp) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (cwd, agent_id, user_id, role, msg_type, content_json, time.time()),
         )
         conn.commit()
         return cur.lastrowid
 
 
-def get_messages(cwd: str, agent_id: str = "default") -> list[dict]:
-    """Return all messages for a cwd + agent_id, ordered by timestamp."""
+def get_messages(cwd: str, agent_id: str = "default", user_id: str = "default") -> list[dict]:
+    """Return all messages for a user + cwd + agent_id, ordered by timestamp."""
     with _connect() as conn:
         rows = conn.execute(
             "SELECT id, role, type, content_json, timestamp "
-            "FROM messages WHERE cwd = ? AND agent_id = ? ORDER BY timestamp ASC",
-            (cwd, agent_id),
+            "FROM messages WHERE user_id = ? AND cwd = ? AND agent_id = ? ORDER BY timestamp ASC",
+            (user_id, cwd, agent_id),
         ).fetchall()
     results = []
     for r in rows:
@@ -313,13 +329,19 @@ def get_messages(cwd: str, agent_id: str = "default") -> list[dict]:
     return results
 
 
-def clear_messages(cwd: str, agent_id: str | None = None) -> int:
-    """Delete messages for a cwd. If agent_id given, only that agent. Returns count deleted."""
+def clear_messages(cwd: str, agent_id: str | None = None, user_id: str = "default") -> int:
+    """Delete messages for a user + cwd. If agent_id given, only that agent. Returns count deleted."""
     with _connect() as conn:
         if agent_id:
-            cur = conn.execute("DELETE FROM messages WHERE cwd = ? AND agent_id = ?", (cwd, agent_id))
+            cur = conn.execute(
+                "DELETE FROM messages WHERE user_id = ? AND cwd = ? AND agent_id = ?",
+                (user_id, cwd, agent_id),
+            )
         else:
-            cur = conn.execute("DELETE FROM messages WHERE cwd = ?", (cwd,))
+            cur = conn.execute(
+                "DELETE FROM messages WHERE user_id = ? AND cwd = ?",
+                (user_id, cwd),
+            )
         conn.commit()
         return cur.rowcount
 
@@ -784,3 +806,293 @@ def update_user_login(user_id: str) -> None:
     with _connect() as conn:
         conn.execute("UPDATE users SET last_login = ? WHERE user_id = ?", (time.time(), user_id))
         conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Database backup & restore
+# ---------------------------------------------------------------------------
+
+_log = logging.getLogger(__name__)
+
+DEFAULT_BACKUP_DIR = CONFIG_DIR / "backups"
+DEFAULT_MAX_BACKUPS = 5
+
+
+def _discover_databases() -> list[Path]:
+    """Find all .db files under ~/.rain-assistant/ (including subdirectories).
+
+    Returns a sorted list of absolute Paths.  Only regular files with the
+    ``.db`` extension are included; backup files are excluded.
+    """
+    dbs: list[Path] = []
+    backup_dir = DEFAULT_BACKUP_DIR
+    for p in CONFIG_DIR.rglob("*.db"):
+        if p.is_file() and not str(p).startswith(str(backup_dir)):
+            dbs.append(p)
+    return sorted(dbs)
+
+
+def backup_database(
+    db_path: Path | str | None = None,
+    backup_dir: Path | str | None = None,
+    max_backups: int = DEFAULT_MAX_BACKUPS,
+) -> Path | None:
+    """Create a safe backup of a SQLite database using sqlite3.backup().
+
+    This uses the built-in ``sqlite3.backup()`` API which is safe even when
+    the database is in WAL mode or being written to concurrently.
+
+    Args:
+        db_path: Path to the database file to back up.  Defaults to the main
+                 ``conversations.db``.
+        backup_dir: Directory where backups are stored.  Defaults to
+                    ``~/.rain-assistant/backups/``.
+        max_backups: Maximum number of backup files to retain *per database*.
+                     Oldest backups are deleted when this limit is exceeded.
+                     Set to 0 to keep all backups.
+
+    Returns:
+        Path to the newly created backup file, or ``None`` if the source
+        database does not exist.
+    """
+    src = Path(db_path) if db_path else DB_PATH
+    dst_dir = Path(backup_dir) if backup_dir else DEFAULT_BACKUP_DIR
+
+    if not src.exists():
+        _log.warning("Backup skipped — source database does not exist: %s", src)
+        return None
+
+    # Build a descriptive backup filename:
+    #   <stem>_YYYY-MM-DD_HHMMSS.db
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    backup_name = f"{src.stem}_{timestamp}.db"
+
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    _secure_chmod(dst_dir, 0o700)
+
+    dst = dst_dir / backup_name
+
+    try:
+        # Use sqlite3.backup() for a consistent, online backup
+        src_conn = sqlite3.connect(str(src))
+        dst_conn = sqlite3.connect(str(dst))
+        try:
+            src_conn.backup(dst_conn)
+        finally:
+            dst_conn.close()
+            src_conn.close()
+
+        _secure_chmod(dst, 0o600)
+        _log.info("Database backed up: %s → %s", src.name, dst)
+    except Exception:
+        _log.exception("Failed to back up database: %s", src)
+        # Clean up partial backup if it was created
+        if dst.exists():
+            dst.unlink()
+        return None
+
+    # Prune old backups for this specific database stem
+    if max_backups > 0:
+        _prune_old_backups(dst_dir, src.stem, max_backups)
+
+    return dst
+
+
+def backup_all_databases(
+    backup_dir: Path | str | None = None,
+    max_backups: int = DEFAULT_MAX_BACKUPS,
+) -> list[Path]:
+    """Discover and back up every .db file under ~/.rain-assistant/.
+
+    This is a convenience wrapper around :func:`backup_database` that
+    automatically finds ``conversations.db``, ``memories.db``,
+    ``scheduler.db``, etc.
+
+    Args:
+        backup_dir: Directory where backups are stored.
+        max_backups: Max backups to retain per database.
+
+    Returns:
+        List of paths to the newly created backup files.
+    """
+    dst_dir = Path(backup_dir) if backup_dir else DEFAULT_BACKUP_DIR
+    created: list[Path] = []
+
+    for db in _discover_databases():
+        result = backup_database(db_path=db, backup_dir=dst_dir, max_backups=max_backups)
+        if result:
+            created.append(result)
+
+    if created:
+        _log.info("Backed up %d database(s) to %s", len(created), dst_dir)
+    else:
+        _log.info("No databases found to back up")
+
+    return created
+
+
+def _prune_old_backups(backup_dir: Path, db_stem: str, max_backups: int) -> int:
+    """Delete oldest backups for *db_stem* so that at most *max_backups* remain.
+
+    Backups are identified by the naming convention ``<db_stem>_*.db``.
+    Returns the number of files deleted.
+    """
+    pattern = f"{db_stem}_*.db"
+    backups = sorted(backup_dir.glob(pattern), key=lambda p: p.stat().st_mtime)
+
+    deleted = 0
+    while len(backups) > max_backups:
+        oldest = backups.pop(0)
+        try:
+            oldest.unlink()
+            _log.debug("Pruned old backup: %s", oldest.name)
+            deleted += 1
+        except OSError as e:
+            _log.warning("Failed to prune backup %s: %s", oldest.name, e)
+
+    return deleted
+
+
+def restore_database(
+    backup_path: Path | str,
+    target_path: Path | str | None = None,
+) -> Path:
+    """Restore a database from a backup file.
+
+    The restore uses ``sqlite3.backup()`` to safely overwrite the target
+    database.  A pre-restore backup of the *current* target is automatically
+    created (with a ``_pre_restore_`` prefix) so the operation is reversible.
+
+    Args:
+        backup_path: Path to the backup file to restore from.
+        target_path: Where to restore to.  Defaults to the main
+                     ``conversations.db``.  The stem of the backup filename
+                     is used to infer the target when not specified.
+
+    Returns:
+        Path to the restored database.
+
+    Raises:
+        FileNotFoundError: If *backup_path* does not exist.
+        sqlite3.DatabaseError: If the backup is not a valid SQLite database.
+    """
+    src = Path(backup_path)
+    if not src.exists():
+        raise FileNotFoundError(f"Backup file not found: {src}")
+
+    # Determine the target path
+    if target_path:
+        dst = Path(target_path)
+    else:
+        dst = DB_PATH
+
+    # Validate the backup is a readable SQLite database
+    try:
+        check_conn = sqlite3.connect(str(src))
+        check_conn.execute("SELECT count(*) FROM sqlite_master")
+        check_conn.close()
+    except sqlite3.DatabaseError as e:
+        raise sqlite3.DatabaseError(f"Backup is not a valid SQLite database: {e}") from e
+
+    # Create a safety backup of the current database before overwriting
+    if dst.exists():
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        safety_name = f"{dst.stem}_pre_restore_{timestamp}.db"
+        safety_dir = DEFAULT_BACKUP_DIR
+        safety_dir.mkdir(parents=True, exist_ok=True)
+        safety_path = safety_dir / safety_name
+        try:
+            src_conn = sqlite3.connect(str(dst))
+            dst_conn = sqlite3.connect(str(safety_path))
+            try:
+                src_conn.backup(dst_conn)
+            finally:
+                dst_conn.close()
+                src_conn.close()
+            _secure_chmod(safety_path, 0o600)
+            _log.info("Pre-restore safety backup created: %s", safety_path)
+        except Exception:
+            _log.exception("Failed to create pre-restore safety backup")
+            raise
+
+    # Perform the restore via sqlite3.backup()
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    src_conn = sqlite3.connect(str(src))
+    dst_conn = sqlite3.connect(str(dst))
+    try:
+        src_conn.backup(dst_conn)
+    finally:
+        dst_conn.close()
+        src_conn.close()
+
+    _secure_chmod(dst, 0o600)
+    _log.info("Database restored: %s → %s", src.name, dst)
+    return dst
+
+
+def list_backups(
+    backup_dir: Path | str | None = None,
+    db_stem: str | None = None,
+) -> list[dict]:
+    """List available backup files with metadata.
+
+    Args:
+        backup_dir: Directory to scan.  Defaults to ``~/.rain-assistant/backups/``.
+        db_stem: If provided, only list backups for this database stem
+                 (e.g. ``"conversations"``).  Otherwise list all.
+
+    Returns:
+        List of dicts with keys: ``path``, ``name``, ``size_bytes``,
+        ``created`` (ISO timestamp), ``db_stem``.  Sorted newest-first.
+    """
+    dst_dir = Path(backup_dir) if backup_dir else DEFAULT_BACKUP_DIR
+    if not dst_dir.exists():
+        return []
+
+    pattern = f"{db_stem}_*.db" if db_stem else "*.db"
+    results = []
+    for p in dst_dir.glob(pattern):
+        if not p.is_file():
+            continue
+        stat = p.stat()
+        # Extract the original db stem from the backup filename
+        # Format: <stem>_YYYY-MM-DD_HHMMSS.db
+        parts = p.stem.rsplit("_", 2)
+        stem = parts[0] if len(parts) >= 3 else p.stem
+        results.append({
+            "path": str(p),
+            "name": p.name,
+            "size_bytes": stat.st_size,
+            "created": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            "db_stem": stem,
+        })
+
+    results.sort(key=lambda x: x["created"], reverse=True)
+    return results
+
+
+def auto_backup_on_startup(
+    backup_dir: Path | str | None = None,
+    max_backups: int = DEFAULT_MAX_BACKUPS,
+) -> list[Path]:
+    """Run an automatic backup of all databases.
+
+    Intended to be called once during server initialization.  This is a
+    thin wrapper around :func:`backup_all_databases` that catches all
+    exceptions so a backup failure never prevents the server from starting.
+
+    Args:
+        backup_dir: Directory for backups.
+        max_backups: Max backups to retain per database.
+
+    Returns:
+        List of created backup paths (empty list on failure).
+    """
+    try:
+        _log.info("Running automatic database backup on startup...")
+        result = backup_all_databases(backup_dir=backup_dir, max_backups=max_backups)
+        _log.info("Startup backup complete — %d file(s) created", len(result))
+        return result
+    except Exception:
+        _log.exception("Automatic startup backup failed (non-fatal)")
+        return []

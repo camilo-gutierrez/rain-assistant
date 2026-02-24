@@ -7,6 +7,8 @@ import { useHistory } from "@/hooks/useHistory";
 import { useTranslation } from "@/hooks/useTranslation";
 import { X, Clock, MessageSquare, Trash2 } from "lucide-react";
 import type { ConversationMeta } from "@/lib/types";
+import EmptyState from "@/components/EmptyState";
+import { SkeletonList } from "@/components/Skeleton";
 
 interface HistorySidebarProps {
   mode: "inline" | "drawer";
@@ -84,7 +86,7 @@ export default function HistorySidebar({ mode }: HistorySidebarProps) {
           <button
             onClick={toggleMobileSidebar}
             className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl hover:bg-surface2 transition-colors text-text2 hover:text-text focus-ring"
-            aria-label="Close"
+            aria-label={t("a11y.close")}
           >
             <X size={18} />
           </button>
@@ -94,11 +96,11 @@ export default function HistorySidebar({ mode }: HistorySidebarProps) {
       {mode === "inline" && (
         <div className="flex items-center gap-2 px-4 py-2.5">
           <Clock size={13} className="text-subtext" />
-          <span className="text-[10px] font-semibold text-subtext uppercase tracking-widest">
+          <span className="text-xs font-semibold text-subtext uppercase tracking-widest">
             {t("history.title")}
           </span>
           {conversations.length > 0 && (
-            <span className="ml-auto text-[10px] font-bold text-primary bg-primary/10 px-2 py-0.5 rounded-full">
+            <span className="ml-auto text-xs font-bold text-primary bg-primary/10 px-2 py-0.5 rounded-full">
               {conversations.length}
             </span>
           )}
@@ -107,26 +109,15 @@ export default function HistorySidebar({ mode }: HistorySidebarProps) {
 
       <div className="flex-1 overflow-y-auto">
         {isLoading ? (
-          <div className="space-y-2 px-3 py-3">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="rounded-xl bg-surface2/40 p-3 animate-pulse">
-                <div className="h-3.5 w-3/4 bg-surface2 rounded-md mb-2" />
-                <div className="h-3 w-1/2 bg-surface2 rounded-md" />
-              </div>
-            ))}
+          <div className="px-3 py-3">
+            <SkeletonList count={3} height="h-16" gap="space-y-2" />
           </div>
         ) : conversations.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-10 px-6">
-            <div className="w-14 h-14 rounded-2xl bg-surface2/60 flex items-center justify-center mb-3">
-              <MessageSquare size={24} strokeWidth={1.5} className="text-subtext/60" />
-            </div>
-            <p className="text-sm text-text2 text-center font-medium">
-              {t("history.empty")}
-            </p>
-            <p className="text-xs text-subtext text-center mt-1.5 max-w-[200px] leading-relaxed">
-              {t("sidebar.emptyHint")}
-            </p>
-          </div>
+          <EmptyState
+            icon={MessageSquare}
+            title={t("history.empty")}
+            hint={t("sidebar.emptyHint")}
+          />
         ) : (
           <div className="flex flex-col gap-1 px-2 py-2">
             {conversations.map((conv) => (
@@ -148,7 +139,7 @@ export default function HistorySidebar({ mode }: HistorySidebarProps) {
         )}
       </div>
 
-      <div className="px-4 py-2.5 border-t border-overlay/40 text-[10px] text-subtext text-center font-medium">
+      <div className="px-4 py-2.5 border-t border-overlay/40 text-xs text-subtext text-center font-medium">
         {t("history.count", { n: conversations.length, max: 5 })}
       </div>
     </>
@@ -206,13 +197,13 @@ function ConversationEntry({
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
-          <div className={`text-[13px] font-semibold truncate leading-tight ${isActive ? "text-primary" : "text-text"}`}>
+          <div className={`text-sm font-semibold truncate leading-tight ${isActive ? "text-primary" : "text-text"}`}>
             {conv.label}
           </div>
           <div className="text-xs text-text2 truncate mt-1 leading-tight opacity-80">
             {conv.preview || "..."}
           </div>
-          <div className="flex items-center gap-1.5 mt-1.5 text-[10px] text-subtext">
+          <div className="flex items-center gap-1.5 mt-1.5 text-xs text-subtext">
             <span>{formatDate(conv.updatedAt)}</span>
             <span className="text-overlay">|</span>
             <span>{conv.messageCount} msgs</span>

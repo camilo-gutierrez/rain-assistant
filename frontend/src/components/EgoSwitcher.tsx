@@ -1,19 +1,19 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useSettingsStore } from "@/stores/useSettingsStore";
 import { useConnectionStore } from "@/stores/useConnectionStore";
 import { useTranslation } from "@/hooks/useTranslation";
+import { usePopover } from "@/hooks/usePopover";
 import { fetchAlterEgos } from "@/lib/api";
 import type { AlterEgo } from "@/lib/types";
 import { ChevronDown, Check } from "lucide-react";
 
 export default function EgoSwitcher() {
   const { t } = useTranslation();
-  const [isOpen, setIsOpen] = useState(false);
+  const { ref: popoverRef, isOpen, toggle, close } = usePopover<HTMLDivElement>();
   const [egos, setEgos] = useState<AlterEgo[]>([]);
   const [loading, setLoading] = useState(false);
-  const popoverRef = useRef<HTMLDivElement>(null);
 
   const activeEgoId = useSettingsStore((s) => s.activeEgoId);
   const setActiveEgoId = useSettingsStore((s) => s.setActiveEgoId);
@@ -48,38 +48,19 @@ export default function EgoSwitcher() {
     }
   }, [connectionStatus, loadEgos]);
 
-  // Click outside to close
-  useEffect(() => {
-    if (!isOpen) return;
-    function handleClickOutside(e: MouseEvent) {
-      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
-        setIsOpen(false);
-      }
-    }
-    function handleEscape(e: KeyboardEvent) {
-      if (e.key === "Escape") setIsOpen(false);
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    document.addEventListener("keydown", handleEscape);
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-      document.removeEventListener("keydown", handleEscape);
-    };
-  }, [isOpen]);
-
   function handleToggle() {
     if (!isOpen) loadEgos();
-    setIsOpen(!isOpen);
+    toggle();
   }
 
   function handleSelect(ego: AlterEgo) {
     if (ego.id === activeEgoId) {
-      setIsOpen(false);
+      close();
       return;
     }
     setActiveEgoId(ego.id);
     send({ type: "set_alter_ego", ego_id: ego.id });
-    setIsOpen(false);
+    close();
   }
 
   const displayEmoji = activeEgo?.emoji || "🌧️";
@@ -115,7 +96,7 @@ export default function EgoSwitcher() {
           </div>
 
           {/* Ego list */}
-          <div className="py-1 max-h-64 overflow-y-auto" role="listbox" aria-label="Alter Egos">
+          <div className="py-1 max-h-64 overflow-y-auto" role="listbox" aria-label={t("alterEgo.title")}>
             {loading && egos.length === 0 ? (
               <div className="px-3 py-4 text-center text-sm text-text2">...</div>
             ) : (
@@ -145,16 +126,16 @@ export default function EgoSwitcher() {
                           {ego.name}
                         </span>
                         {isActive && (
-                          <span className="text-[9px] px-1 py-0.5 rounded bg-primary/15 text-primary font-medium shrink-0">
+                          <span className="text-xs px-1 py-0.5 rounded bg-primary/15 text-primary font-medium shrink-0">
                             {t("alterEgo.active")}
                           </span>
                         )}
                         {ego.is_builtin ? (
-                          <span className="hidden sm:inline text-[9px] px-1 py-0.5 rounded bg-overlay text-subtext shrink-0">
+                          <span className="hidden sm:inline text-xs px-1 py-0.5 rounded bg-overlay text-subtext shrink-0">
                             {t("alterEgo.builtin")}
                           </span>
                         ) : (
-                          <span className="hidden sm:inline text-[9px] px-1 py-0.5 rounded bg-green/15 text-green shrink-0">
+                          <span className="hidden sm:inline text-xs px-1 py-0.5 rounded bg-green/15 text-green shrink-0">
                             {t("alterEgo.custom")}
                           </span>
                         )}
@@ -178,9 +159,8 @@ export default function EgoSwitcher() {
 
           {/* Footer note */}
           <div className="border-t border-overlay/50 px-3 py-1.5">
-            <span className="text-[10px] text-subtext">
-              {t("alterEgo.switchingTo", { name: "..." }).replace("...", "").replace("Switching to ", "").replace("Cambiando a ", "")}
-              Rain can create custom egos via chat
+            <span className="text-xs text-subtext">
+              {t("alterEgo.createHint")}
             </span>
           </div>
         </div>

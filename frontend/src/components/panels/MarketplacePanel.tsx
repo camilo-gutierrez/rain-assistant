@@ -31,6 +31,8 @@ import {
   Package,
   Loader2,
 } from "lucide-react";
+import EmptyState from "@/components/EmptyState";
+import { SkeletonList } from "@/components/Skeleton";
 
 type Tab = "browse" | "installed" | "updates";
 
@@ -205,7 +207,7 @@ export default function MarketplacePanel() {
           >
             {tb.label}
             {tb.key === "updates" && updates.length > 0 && (
-              <span className="ml-1 text-[10px] bg-red/20 text-red px-1 rounded-full">
+              <span className="ml-1 text-xs bg-red/20 text-red px-1 rounded-full">
                 {updates.length}
               </span>
             )}
@@ -229,7 +231,7 @@ export default function MarketplacePanel() {
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleSearch()}
                 placeholder={t("marketplace.search")}
-                className="w-full text-sm pl-8 pr-3 py-2 rounded-lg bg-surface2 border border-overlay text-text placeholder:text-subtext focus:outline-none focus:ring-1 focus:ring-primary"
+                className="w-full text-sm pl-8 pr-3 py-2 rounded-lg bg-surface2 border border-overlay text-text placeholder:text-subtext focus-ring"
               />
             </div>
             <button
@@ -245,7 +247,7 @@ export default function MarketplacePanel() {
             <div className="flex gap-1.5 flex-wrap">
               <button
                 onClick={() => handleCategoryChange("")}
-                className={`text-[11px] px-2 py-1 rounded-full transition-colors ${
+                className={`text-xs px-2 py-1 rounded-full transition-colors ${
                   !category
                     ? "bg-primary text-on-primary"
                     : "bg-surface2 text-text2 hover:bg-surface2/80"
@@ -257,7 +259,7 @@ export default function MarketplacePanel() {
                 <button
                   key={cat.id}
                   onClick={() => handleCategoryChange(cat.id)}
-                  className={`text-[11px] px-2 py-1 rounded-full transition-colors ${
+                  className={`text-xs px-2 py-1 rounded-full transition-colors ${
                     category === cat.id
                       ? "bg-primary text-on-primary"
                       : "bg-surface2 text-text2 hover:bg-surface2/80"
@@ -271,19 +273,9 @@ export default function MarketplacePanel() {
 
           {/* Skill cards */}
           {loading ? (
-            <div className="space-y-2">
-              {[1, 2, 3].map((i) => (
-                <div key={i} className="h-20 rounded-lg shimmer-bg" />
-              ))}
-            </div>
+            <SkeletonList count={3} height="h-20" />
           ) : skills.length === 0 ? (
-            <div className="text-center py-8">
-              <Package size={32} className="mx-auto text-text2/40 mb-2" />
-              <p className="text-sm text-text2">{t("marketplace.noResults")}</p>
-              <p className="text-xs text-subtext mt-1">
-                {t("marketplace.noResultsHint")}
-              </p>
-            </div>
+            <EmptyState icon={Package} title={t("marketplace.noResults")} hint={t("marketplace.noResultsHint")} />
           ) : (
             <div className="space-y-2">
               {skills.map((skill) => (
@@ -307,19 +299,9 @@ export default function MarketplacePanel() {
       {tab === "installed" && (
         <>
           {loading ? (
-            <div className="space-y-2">
-              {[1, 2, 3].map((i) => (
-                <div key={i} className="h-14 rounded-lg shimmer-bg" />
-              ))}
-            </div>
+            <SkeletonList count={3} height="h-14" />
           ) : installed.length === 0 ? (
-            <div className="text-center py-8">
-              <Store size={32} className="mx-auto text-text2/40 mb-2" />
-              <p className="text-sm text-text2">{t("marketplace.empty")}</p>
-              <p className="text-xs text-subtext mt-1">
-                {t("marketplace.emptyHint")}
-              </p>
-            </div>
+            <EmptyState icon={Store} title={t("marketplace.empty")} hint={t("marketplace.emptyHint")} />
           ) : (
             <div className="space-y-1.5">
               {installed.map((skill) => (
@@ -333,7 +315,7 @@ export default function MarketplacePanel() {
                       {skill.name}
                     </span>
                     {skill.version && (
-                      <span className="text-[10px] text-text2 ml-1.5">
+                      <span className="text-xs text-text2 ml-1.5">
                         v{skill.version}
                       </span>
                     )}
@@ -361,16 +343,9 @@ export default function MarketplacePanel() {
       {tab === "updates" && (
         <>
           {loading ? (
-            <div className="space-y-2">
-              {[1, 2].map((i) => (
-                <div key={i} className="h-14 rounded-lg shimmer-bg" />
-              ))}
-            </div>
+            <SkeletonList count={2} height="h-14" />
           ) : updates.length === 0 ? (
-            <div className="text-center py-8">
-              <CheckCircle size={32} className="mx-auto text-green/40 mb-2" />
-              <p className="text-sm text-text2">All skills are up to date</p>
-            </div>
+            <EmptyState icon={CheckCircle} title={t("marketplace.upToDate")} />
           ) : (
             <div className="space-y-1.5">
               {updates.map((upd) => (
@@ -378,19 +353,19 @@ export default function MarketplacePanel() {
                   key={upd.name}
                   className="flex items-center gap-3 p-2.5 rounded-lg bg-surface2/50 hover:bg-surface2 transition-colors"
                 >
-                  <ArrowUpCircle size={16} className="text-blue-400 shrink-0" />
+                  <ArrowUpCircle size={16} className="text-blue shrink-0" />
                   <div className="flex-1 min-w-0">
                     <span className="text-sm font-medium text-text">
                       {upd.name}
                     </span>
-                    <span className="text-[10px] text-text2 ml-1.5">
+                    <span className="text-xs text-text2 ml-1.5">
                       {upd.current_version} → {upd.latest_version}
                     </span>
                   </div>
                   <button
                     onClick={() => handleUpdate(upd.name)}
                     disabled={installingName === upd.name}
-                    className="text-xs px-2.5 py-1 rounded-lg bg-blue-500/15 text-blue-500 hover:bg-blue-500/25 transition-colors disabled:opacity-40"
+                    className="text-xs px-2.5 py-1 rounded-lg bg-blue/15 text-blue hover:bg-blue/25 transition-colors disabled:opacity-40"
                   >
                     {installingName === upd.name ? (
                       <Loader2 size={12} className="animate-spin" />
@@ -410,7 +385,7 @@ export default function MarketplacePanel() {
             className="w-full flex items-center justify-center gap-2 text-xs py-2 rounded-lg bg-surface2 text-text2 hover:bg-surface2/80 transition-colors disabled:opacity-40"
           >
             <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
-            Check for updates
+            {t("marketplace.checkUpdates")}
           </button>
         </>
       )}
@@ -463,7 +438,7 @@ function SkillCard({
             {/* Verified badge */}
             {skill.verified && (
               <span title={t("marketplace.verified")}>
-                <Shield size={12} className="text-blue-400 shrink-0" />
+                <Shield size={12} className="text-blue shrink-0" />
               </span>
             )}
           </div>
@@ -476,7 +451,7 @@ function SkillCard({
             <button
               onClick={onUninstall}
               disabled={isLoading}
-              className="text-[11px] px-2.5 py-1 rounded-lg bg-red/10 text-red hover:bg-red/20 transition-colors disabled:opacity-40"
+              className="text-xs px-2.5 py-1 rounded-lg bg-red/10 text-red hover:bg-red/20 transition-colors disabled:opacity-40"
             >
               {isLoading ? (
                 <Loader2 size={12} className="animate-spin" />
@@ -488,7 +463,7 @@ function SkillCard({
             <button
               onClick={onInstall}
               disabled={isLoading}
-              className="text-[11px] px-2.5 py-1 rounded-lg bg-green/10 text-green hover:bg-green/20 transition-colors disabled:opacity-40"
+              className="text-xs px-2.5 py-1 rounded-lg bg-green/10 text-green hover:bg-green/20 transition-colors disabled:opacity-40"
             >
               {isLoading ? (
                 <Loader2 size={12} className="animate-spin" />
@@ -508,19 +483,19 @@ function SkillCard({
         {skill.tags.slice(0, 3).map((tag) => (
           <span
             key={tag}
-            className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary"
+            className="text-xs px-1.5 py-0.5 rounded-full bg-primary/10 text-primary"
           >
             {tag}
           </span>
         ))}
-        <span className="text-[10px] text-subtext ml-auto">
+        <span className="text-xs text-subtext ml-auto">
           v{skill.version} · {skill.author}
         </span>
       </div>
 
       {/* Env requirements */}
       {skill.requires_env.length > 0 && (
-        <p className="text-[10px] text-yellow flex items-center gap-1">
+        <p className="text-xs text-yellow flex items-center gap-1">
           <Shield size={10} />
           {t("marketplace.requiresEnv")}: {skill.requires_env.join(", ")}
         </p>

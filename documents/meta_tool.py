@@ -62,7 +62,7 @@ async def handle_manage_documents(args: dict, cwd: str) -> dict:
     If absent, falls back to ``"default"`` for backward compatibility.
     """
     action = args.get("action", "")
-    user_id = args.get("_user_id", "default")
+    user_id = args.pop("_user_id", "default")
 
     try:
         if action == "ingest":
@@ -97,14 +97,44 @@ def _action_ingest(args: dict, cwd: str, user_id: str) -> dict:
     if not path.is_absolute():
         path = Path(cwd) / path
 
+    # Defense-in-depth: reject direct symbolic links before resolution
+    if path.is_symlink():
+        return {"content": "Access denied: symbolic links are not allowed", "is_error": True}
+
     # Resolve to canonical path to prevent path traversal (e.g. ../../etc/passwd)
     path = path.resolve()
 
     # Validate the resolved path is under the user's home directory or cwd
     home_dir = Path.home().resolve()
     cwd_dir = Path(cwd).resolve()
-    if not (str(path).startswith(str(home_dir)) or str(path).startswith(str(cwd_dir))):
+    try:
+        path.relative_to(home_dir)
+        _path_allowed = True
+    except ValueError:
+        try:
+            path.relative_to(cwd_dir)
+            _path_allowed = True
+        except ValueError:
+            _path_allowed = False
+    if not _path_allowed:
         return {"content": "Access denied: path is outside allowed directory", "is_error": True}
+
+    # Block sensitive directories inside home
+    _sensitive_dirs = [
+        home_dir / ".rain-assistant",
+        home_dir / ".ssh",
+        home_dir / ".aws",
+        home_dir / ".gnupg",
+        home_dir / ".config",
+        home_dir / ".kube",
+        home_dir / ".docker",
+    ]
+    for sensitive in _sensitive_dirs:
+        try:
+            path.relative_to(sensitive)
+            return {"content": "Access denied: path is inside a sensitive directory", "is_error": True}
+        except ValueError:
+            continue
 
     # Validate file extension before proceeding
     allowed_extensions = {".txt", ".md", ".pdf"}

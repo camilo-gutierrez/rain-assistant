@@ -17,8 +17,8 @@ from .browser_ops import (
 )
 
 # Permission levels for tools
-GREEN_TOOLS = {"read_file", "list_directory", "search_files", "grep_search", "manage_memories", "manage_alter_egos", "browser_extract_text", "browser_screenshot", "manage_scheduled_tasks", "manage_subagents", "manage_marketplace", "manage_documents"}
-YELLOW_TOOLS = {"write_file", "edit_file", "browser_navigate", "browser_click", "browser_type", "browser_scroll", "browser_close"}
+GREEN_TOOLS = {"read_file", "list_directory", "search_files", "grep_search", "browser_extract_text", "browser_screenshot", "render_surface"}
+YELLOW_TOOLS = {"write_file", "edit_file", "browser_navigate", "browser_click", "browser_type", "browser_scroll", "browser_close", "manage_memories", "manage_alter_egos", "manage_scheduled_tasks", "manage_subagents", "manage_marketplace", "manage_documents"}
 # bash is classified by command content (handled by permission_callback)
 
 
@@ -90,6 +90,7 @@ class ToolExecutor:
         from scheduled_tasks import handle_manage_scheduled_tasks
         from marketplace import handle_manage_marketplace
         from documents import handle_manage_documents
+        from a2ui import handle_render_surface
 
         self._handlers["manage_plugins"] = handle_manage_plugins
         self._handlers["manage_memories"] = handle_manage_memories
@@ -97,6 +98,7 @@ class ToolExecutor:
         self._handlers["manage_scheduled_tasks"] = handle_manage_scheduled_tasks
         self._handlers["manage_marketplace"] = handle_manage_marketplace
         self._handlers["manage_documents"] = handle_manage_documents
+        self._handlers["render_surface"] = handle_render_surface
         # manage_subagents handler is injected at runtime from server.py
         # (it requires a bound SubAgentManager + caller agent_id)
         if "manage_subagents" not in self._handlers:

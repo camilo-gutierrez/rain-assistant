@@ -163,7 +163,7 @@ export default function ChatPanel() {
                 </button>
               )}
             </div>
-            <span className="hidden sm:inline text-[11px] text-subtext select-none">
+            <span className="hidden sm:inline text-xs text-subtext select-none">
               {t("chat.shiftEnterHint")}
             </span>
             {/* Send button is part of ChatInput, right side is balanced by this spacer on small screens */}
