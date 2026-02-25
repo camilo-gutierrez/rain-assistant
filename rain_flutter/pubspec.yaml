@@ -1,7 +1,7 @@
 name: rain_flutter
 description: "Rain Assistant - Flutter Client"
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.0.12+12
 
 environment:
   sdk: ^3.9.2
