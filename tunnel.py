@@ -17,6 +17,7 @@ import os
 import platform
 import re
 import shutil
+import ssl
 import subprocess
 import sys
 import tarfile
@@ -44,6 +45,36 @@ _DATA_DIR = Path.home() / ".rain-assistant"
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _ssl_context() -> ssl.SSLContext:
+    """Build an SSL context that works across machines.
+
+    Tries ``certifi`` first (most reliable on Windows), then falls back to
+    the default system context, and finally to an *unverified* context so the
+    download can still proceed on hosts with broken CA bundles.
+    """
+    # 1. certifi — bundled CA certs, always up-to-date
+    try:
+        import certifi
+        ctx = ssl.create_default_context(cafile=certifi.where())
+        return ctx
+    except Exception:
+        pass
+
+    # 2. Default system context (works on most Linux / macOS)
+    try:
+        ctx = ssl.create_default_context()
+        return ctx
+    except Exception:
+        pass
+
+    # 3. Last resort: skip verification (with warning)
+    print("  [tunnel] WARNING: SSL certificates not available, downloading without verification", flush=True)
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return ctx
 
 
 def _get_platform_key() -> tuple[str, str]:
@@ -116,17 +147,19 @@ def _download_binary() -> Path:
 
     print(f"  Downloading cloudflared...", flush=True)
 
+    ctx = _ssl_context()
+
     if url.endswith(".tgz"):
         # macOS releases are .tgz archives — download, extract, clean up
         with tempfile.NamedTemporaryFile(suffix=".tgz", delete=False) as tmp:
             tmp_path = Path(tmp.name)
-            with urlopen(url) as resp:
+            with urlopen(url, context=ctx) as resp:
                 shutil.copyfileobj(resp, tmp)
         with tarfile.open(tmp_path, "r:gz") as tar:
             tar.extract("cloudflared", path=_DATA_DIR)
         tmp_path.unlink(missing_ok=True)
     else:
-        with urlopen(url) as resp:
+        with urlopen(url, context=ctx) as resp:
             with dest.open("wb") as f:
                 shutil.copyfileobj(resp, f)
 

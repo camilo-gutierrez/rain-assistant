@@ -1003,6 +1003,9 @@ if isinstance(_extra_origins, list):
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
+    # Allow any origin from RFC 1918 private IP ranges (LAN access from
+    # Flutter apps, phones on same WiFi, etc.)
+    allow_origin_regex=r"^https?://(192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
@@ -3255,6 +3258,89 @@ def _start_server(cmd_args):
     asyncio.run(_run())
 
 
+def _run_update():
+    """Update Rain Assistant to the latest version via pip."""
+    import subprocess
+
+    print(flush=True)
+    print(f"  Rain Assistant v{_get_version()} — Actualizando...", flush=True)
+    print(flush=True)
+
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--upgrade", "rain-assistant"],
+            capture_output=True, text=True,
+        )
+        if result.returncode == 0:
+            # Show installed version
+            for line in result.stdout.splitlines():
+                if "Successfully installed" in line:
+                    print(f"  {line.strip()}", flush=True)
+                    break
+            else:
+                print("  Ya tienes la version mas reciente.", flush=True)
+            print(flush=True)
+        else:
+            print(f"  ERROR: {result.stderr.strip()}", flush=True)
+            sys.exit(1)
+    except Exception as e:
+        print(f"  ERROR: {e}", flush=True)
+        sys.exit(1)
+
+
+def _run_uninstall():
+    """Uninstall Rain Assistant."""
+    import subprocess
+    from pathlib import Path
+
+    print(flush=True)
+    print("  Rain Assistant — Desinstalador", flush=True)
+    print(flush=True)
+
+    rain_dir = Path.home() / ".rain"
+
+    if sys.platform == "win32":
+        script = rain_dir / "uninstall.ps1"
+        if script.exists():
+            resp = input("  Desinstalar Rain Assistant? (s/n): ").strip().lower()
+            if resp not in ("s", "y", "si"):
+                print("  Cancelado.", flush=True)
+                sys.exit(0)
+            subprocess.run(
+                ["powershell", "-ExecutionPolicy", "Bypass", "-File", str(script)],
+            )
+        else:
+            # Fallback: pip uninstall
+            resp = input("  Desinstalar Rain Assistant via pip? (s/n): ").strip().lower()
+            if resp not in ("s", "y", "si"):
+                print("  Cancelado.", flush=True)
+                sys.exit(0)
+            subprocess.run([sys.executable, "-m", "pip", "uninstall", "rain-assistant", "-y"])
+            print(flush=True)
+            print("  Rain Assistant desinstalado.", flush=True)
+            print("  Nota: ~/.rain-assistant/ (config/datos) NO se elimino.", flush=True)
+            print(flush=True)
+    else:
+        script = rain_dir / "uninstall.sh"
+        if script.exists():
+            resp = input("  Desinstalar Rain Assistant? (s/n): ").strip().lower()
+            if resp not in ("s", "y", "si"):
+                print("  Cancelado.", flush=True)
+                sys.exit(0)
+            subprocess.run(["bash", str(script)])
+        else:
+            # Fallback: pip uninstall
+            resp = input("  Desinstalar Rain Assistant via pip? (s/n): ").strip().lower()
+            if resp not in ("s", "y", "si"):
+                print("  Cancelado.", flush=True)
+                sys.exit(0)
+            subprocess.run([sys.executable, "-m", "pip", "uninstall", "rain-assistant", "-y"])
+            print(flush=True)
+            print("  Rain Assistant desinstalado.", flush=True)
+            print("  Nota: ~/.rain-assistant/ (config/datos) NO se elimino.", flush=True)
+            print(flush=True)
+
+
 def main():
     """Entry point for `rain` / `rain-assistant` CLI."""
     import argparse
@@ -3266,10 +3352,12 @@ def main():
         description="Rain Assistant — AI coding assistant with voice, plugins & web UI",
     )
     parser.add_argument("--version", action="store_true", help="Show version and exit")
+    parser.add_argument("--update", action="store_true", help="Update Rain Assistant to the latest version")
+    parser.add_argument("--uninstall", action="store_true", help="Uninstall Rain Assistant")
     parser.add_argument("--telegram", action="store_true", help="Start Telegram bot alongside web server")
     parser.add_argument("--telegram-only", action="store_true", help="Start only the Telegram bot (no web server)")
     parser.add_argument("--port", type=int, default=8000, help="Server port (default: 8000)")
-    parser.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)")
+    parser.add_argument("--host", default="0.0.0.0", help="Bind address (default: 0.0.0.0)")
     parser.add_argument("--no-browser", action="store_true", help="Don't auto-open browser")
 
     subparsers = parser.add_subparsers(dest="command")
@@ -3280,6 +3368,14 @@ def main():
 
     if cmd_args.version:
         print(f"Rain Assistant v{_get_version()}")
+        sys.exit(0)
+
+    if cmd_args.update:
+        _run_update()
+        sys.exit(0)
+
+    if cmd_args.uninstall:
+        _run_uninstall()
         sys.exit(0)
 
     if cmd_args.command == "doctor":

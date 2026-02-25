@@ -73,6 +73,11 @@ class SettingsScreen extends ConsumerWidget {
             provider: settings.aiProvider,
             onChanged: notifier.setAIModel,
           ),
+          _ApiKeySection(
+            provider: settings.aiProvider,
+            model: settings.aiModel,
+            lang: lang,
+          ),
 
           const Divider(),
 
@@ -656,6 +661,119 @@ class _DevicesSectionState extends ConsumerState<_DevicesSection> {
             );
           }),
       ],
+    );
+  }
+}
+
+/// API key input for the selected provider.
+class _ApiKeySection extends ConsumerStatefulWidget {
+  final AIProvider provider;
+  final String model;
+  final String lang;
+
+  const _ApiKeySection({
+    required this.provider,
+    required this.model,
+    required this.lang,
+  });
+
+  @override
+  ConsumerState<_ApiKeySection> createState() => _ApiKeySectionState();
+}
+
+class _ApiKeySectionState extends ConsumerState<_ApiKeySection> {
+  final _controller = TextEditingController();
+  bool _obscure = true;
+  bool _applied = false;
+
+  @override
+  void didUpdateWidget(_ApiKeySection old) {
+    super.didUpdateWidget(old);
+    if (old.provider != widget.provider) {
+      _controller.clear();
+      _applied = false;
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _apply() {
+    final key = _controller.text.trim();
+    if (key.isEmpty) return;
+
+    ref.read(webSocketServiceProvider).send({
+      'type': 'set_api_key',
+      'key': key,
+      'provider': widget.provider.name,
+      'model': widget.model,
+    });
+
+    setState(() => _applied = true);
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) setState(() => _applied = false);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final info = providerInfo[widget.provider]!;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextField(
+            controller: _controller,
+            obscureText: _obscure,
+            autocorrect: false,
+            onSubmitted: (_) => _apply(),
+            decoration: InputDecoration(
+              labelText: L10n.t('settings.apiKey', widget.lang),
+              hintText: info.keyPlaceholder,
+              prefixIcon: const Icon(Icons.vpn_key_outlined),
+              suffixIcon: IconButton(
+                icon: Icon(
+                  _obscure
+                      ? Icons.visibility_outlined
+                      : Icons.visibility_off_outlined,
+                ),
+                onPressed: () => setState(() => _obscure = !_obscure),
+              ),
+              isDense: true,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '${L10n.t('settings.apiKeyHint', widget.lang)} ${info.consoleUrl}',
+                  style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
+                ),
+              ),
+              const SizedBox(width: 12),
+              FilledButton.tonalIcon(
+                onPressed: _applied ? null : _apply,
+                icon: Icon(
+                  _applied ? Icons.check : Icons.send,
+                  size: 16,
+                ),
+                label: Text(
+                  _applied
+                      ? L10n.t('settings.apiKeyApplied', widget.lang)
+                      : L10n.t('settings.apiKeyApply', widget.lang),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }

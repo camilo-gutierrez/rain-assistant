@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rain-assistant"
-version = "1.0.10"
+version = "1.0.11"
 description = "AI-powered coding assistant with voice, plugins, web UI, and Telegram bot"
 readme = "README.md"
 license = "Apache-2.0"
@@ -51,7 +51,7 @@ computer-use = [
 browser = ["playwright>=1.40.0,<2.0"]
 scheduler = ["croniter>=1.3.0,<2.0"]
 ollama = ["ollama>=0.4.0,<1.0"]
-tunnel = ["pycloudflared>=0.2.0,<1.0"]
+tunnel = ["pycloudflared>=0.2.0,<1.0", "certifi>=2023.0,<2027.0"]
 memory = ["sentence-transformers>=2.2.0,<3.0", "pypdf>=3.0,<4.0"]
 voice = [
     "torch>=2.0,<3.0",
