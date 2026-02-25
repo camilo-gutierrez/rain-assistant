@@ -104,7 +104,7 @@ from shared_state import (
 )
 
 # Route modules
-from routes import auth_router, agents_router, files_router, settings_router
+from routes import auth_router, agents_router, files_router, settings_router, directors_router
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -307,6 +307,7 @@ from memories import migrate_shared_to_user_isolated as _migrate_memories
 from documents import migrate_legacy_documents as _migrate_documents
 from alter_egos import migrate_shared_ego_to_user_isolated as _migrate_egos
 from scheduled_tasks import migrate_legacy_scheduled_tasks as _migrate_tasks
+from directors import migrate_directors as _migrate_directors
 
 # Ensure built-in alter egos exist on startup
 ensure_builtin_egos()
@@ -720,6 +721,72 @@ async def _scheduler_loop():
         except Exception as e:
             _sched_logger.error("[SCHEDULER] Unexpected error: %s", e)
 
+        # --- Autonomous Directors: scheduled runs ---
+        try:
+            from directors.storage import get_pending_directors, mark_director_run
+            from directors.executor import execute_director
+
+            pending_directors = get_pending_directors()
+            for director in pending_directors:
+                director_id = director["id"]
+                director_user = director.get("user_id", "default")
+                try:
+                    result_text, error_text, cost = await asyncio.wait_for(
+                        execute_director(director, trigger="schedule", user_id=director_user),
+                        timeout=300,
+                    )
+                    mark_director_run(director_id, result=result_text, error=error_text, cost=cost)
+                    _sched_logger.info("[DIRECTORS] %s completed (schedule)", director_id)
+                except asyncio.TimeoutError:
+                    mark_director_run(director_id, error="Execution timed out after 300s")
+                    _sched_logger.error("[DIRECTORS] %s timed out", director_id)
+                except Exception as e:
+                    mark_director_run(director_id, error=str(e))
+                    _sched_logger.error("[DIRECTORS] %s failed: %s", director_id, e)
+        except ImportError:
+            pass
+        except Exception as e:
+            _sched_logger.error("[DIRECTORS] Unexpected error in director loop: %s", e)
+
+        # --- Autonomous Directors: task queue processing ---
+        try:
+            from directors.task_queue import get_ready_tasks, claim_task, complete_task, fail_task
+            from directors.storage import get_director as _get_director_for_task
+            from directors.executor import execute_director as _exec_director_task
+
+            ready_tasks = get_ready_tasks()
+            for dtask in ready_tasks:
+                assignee_id = dtask.get("assignee_id")
+                task_user = dtask.get("user_id", "default")
+                if not assignee_id:
+                    continue
+                director = _get_director_for_task(assignee_id, user_id=task_user)
+                if not director or not director.get("enabled"):
+                    continue
+                claimed = claim_task(dtask["id"], assignee_id, task_user)
+                if not claimed:
+                    continue
+                try:
+                    result_text, error_text, cost = await asyncio.wait_for(
+                        _exec_director_task(director, trigger="task", task=dtask, user_id=task_user),
+                        timeout=300,
+                    )
+                    if error_text:
+                        fail_task(dtask["id"], error_text, task_user)
+                    else:
+                        complete_task(dtask["id"], {"result": result_text, "cost": cost}, task_user)
+                    _sched_logger.info("[DIRECTORS] Task %s for %s completed", dtask["id"], assignee_id)
+                except asyncio.TimeoutError:
+                    fail_task(dtask["id"], "Task execution timed out after 300s", task_user)
+                    _sched_logger.error("[DIRECTORS] Task %s timed out", dtask["id"])
+                except Exception as e:
+                    fail_task(dtask["id"], str(e), task_user)
+                    _sched_logger.error("[DIRECTORS] Task %s failed: %s", dtask["id"], e)
+        except ImportError:
+            pass
+        except Exception as e:
+            _sched_logger.error("[DIRECTORS] Unexpected error in task queue: %s", e)
+
 
 def _restore_tokens_from_db():
     """Restore active_tokens from persisted encrypted tokens in the database."""
@@ -756,6 +823,7 @@ async def lifespan(application: FastAPI):
     _migrate_documents()
     _migrate_egos()
     _migrate_tasks()
+    _migrate_directors()
     # Restore tokens from DB so sessions survive server restarts
     _restore_tokens_from_db()
     loop = asyncio.get_event_loop()
@@ -1142,6 +1210,7 @@ app.include_router(auth_router)
 app.include_router(agents_router)
 app.include_router(files_router)
 app.include_router(settings_router)
+app.include_router(directors_router)
 
 # Inject transcriber/synthesizer into settings routes (avoids circular imports)
 from routes.settings import init_settings_deps
@@ -1190,7 +1259,10 @@ async def websocket_endpoint(ws: WebSocket):
         except (asyncio.TimeoutError, json.JSONDecodeError, Exception):
             pass
         if not verify_token(token):
-            await ws.close(code=4001, reason="Unauthorized")
+            try:
+                await ws.close(code=4001, reason="Unauthorized")
+            except Exception:
+                pass  # Client already disconnected during auth handshake
             return
     else:
         # Origin validation (only for pre-accept auth methods)
@@ -1202,13 +1274,19 @@ async def websocket_endpoint(ws: WebSocket):
             if server_host:
                 allowed_hosts.add(server_host)
             if parsed_origin.hostname and parsed_origin.hostname not in allowed_hosts:
-                await ws.accept()
-                await ws.close(code=4003, reason="Origin not allowed")
+                try:
+                    await ws.accept()
+                    await ws.close(code=4003, reason="Origin not allowed")
+                except Exception:
+                    pass
                 return
 
         if not verify_token(token):
-            await ws.accept()
-            await ws.close(code=4001, reason="Unauthorized")
+            try:
+                await ws.accept()
+                await ws.close(code=4001, reason="Unauthorized")
+            except Exception:
+                pass
             return
         # Don't echo token in subprotocol response — it would be visible
         # in HTTP upgrade headers and proxy logs.  Use generic protocol name.
@@ -1312,7 +1390,7 @@ async def websocket_endpoint(ws: WebSocket):
     def _get_subagent_provider_config() -> dict:
         """Return current provider config for sub-agent spawning."""
         return {
-            "api_key": api_key or "",
+            "api_key": provider_keys.get(current_provider_name, api_key or ""),
             "provider_name": current_provider_name,
             "model": current_model,
             "compose_system_prompt": lambda: compose_system_prompt(current_ego_id, user_id=user_id),
@@ -1360,6 +1438,13 @@ async def websocket_endpoint(ws: WebSocket):
         if level == PermissionLevel.GREEN:
             database.log_permission_decision(
                 active_agent_id, tool_name, tool_input, level.value, "approved",
+            )
+            return PermissionResultAllow()
+
+        # AUTO-APPROVE: skip user confirmation if agent has auto-approve enabled
+        if agents.get(active_agent_id, {}).get("auto_approve", False):
+            database.log_permission_decision(
+                active_agent_id, tool_name, tool_input, level.value, "auto_approved",
             )
             return PermissionResultAllow()
 
@@ -1792,7 +1877,13 @@ async def websocket_endpoint(ws: WebSocket):
                             if level == PermissionLevel.GREEN:
                                 level = PermissionLevel.YELLOW
 
-                        if level != PermissionLevel.GREEN:
+                        # AUTO-APPROVE: skip permission UI if agent has auto-approve
+                        if agents.get(agent_id, {}).get("auto_approve", False):
+                            if level != PermissionLevel.GREEN:
+                                database.log_permission_decision(
+                                    agent_id, tool_name, tool_input, level.value, "auto_approved",
+                                )
+                        elif level != PermissionLevel.GREEN:
                             request_id = f"perm_{secrets.token_hex(8)}"
                             event = asyncio.Event()
                             pending_perms[request_id] = event
@@ -1958,11 +2049,19 @@ async def websocket_endpoint(ws: WebSocket):
     try:
         await send({"type": "status", "agent_id": None, "text": "Connected. Select a project directory."})
 
+        # If the initial send already failed, the client disconnected before
+        # we entered the main loop — bail out cleanly.
+        if _send_failed:
+            return
+
         while True:
             try:
                 raw = await asyncio.wait_for(ws.receive_text(), timeout=300.0)  # 5 min idle timeout
             except asyncio.TimeoutError:
                 await ws.close(code=1000, reason="Idle timeout")
+                break
+            except RuntimeError:
+                # "WebSocket is not connected" — client dropped mid-loop
                 break
             last_activity = time.time()
 
@@ -2055,8 +2154,20 @@ async def websocket_endpoint(ws: WebSocket):
                     requested_provider = data.get("provider", "claude")
                     current_provider_name = requested_provider if requested_provider in _VALID_PROVIDERS else "claude"
                     current_model = data.get("model", "auto")
-                    # Store key for failover
+                    # Store key per-provider (used for init + failover)
                     provider_keys[current_provider_name] = key
+                    # Persist to config so keys survive reconnections
+                    try:
+                        _cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8")) if CONFIG_FILE.exists() else {}
+                        _cfg.setdefault("provider_keys", {})[current_provider_name] = key
+                        _cfg["default_provider"] = current_provider_name
+                        _cfg["default_api_key"] = key
+                        _cfg["auth_mode"] = "api_key"
+                        CONFIG_FILE.write_text(json.dumps(_cfg, indent=2), encoding="utf-8")
+                        _secure_chmod(CONFIG_FILE, 0o600)
+                        config.update(_cfg)
+                    except Exception:
+                        pass
                     provider_label = PROVIDER_LABELS.get(current_provider_name, current_provider_name)
                     await send({"type": "status", "agent_id": agent_id, "text": f"API key set for {provider_label}."})
 
@@ -2146,9 +2257,13 @@ async def websocket_endpoint(ws: WebSocket):
                     if level == PermissionLevel.GREEN:
                         return True
 
+                    # AUTO-APPROVE: skip user confirmation if agent has auto-approve enabled
+                    active_aid = _get_active_streaming_agent() or agent_id
+                    if agents.get(active_aid, {}).get("auto_approve", False):
+                        return True
+
                     # YELLOW/RED: send permission request to frontend and wait
                     request_id = f"perm_{secrets.token_hex(8)}"
-                    active_aid = _get_active_streaming_agent() or agent_id
                     event = asyncio.Event()
                     pending_permissions[request_id] = event
 
@@ -2205,8 +2320,10 @@ async def websocket_endpoint(ws: WebSocket):
                 init_provider_name = current_provider_name
                 provider = None
                 try:
+                    # Use per-provider key if available, fall back to global api_key
+                    init_key = provider_keys.get(current_provider_name, api_key or "")
                     provider, init_provider_name = await _try_init_provider(
-                        current_provider_name, api_key or ""
+                        current_provider_name, init_key
                     )
                 except Exception as primary_err:
                     # Try failover providers
@@ -2278,20 +2395,33 @@ async def websocket_endpoint(ws: WebSocket):
             # ---- Send message to a specific agent ----
             elif msg_type == "send_message":
                 text = data.get("text", "").strip()
-                if not text:
+                images = data.get("images") or []  # list of {base64, mediaType}
+                if not text and not images:
                     continue
                 if len(text) > WS_MAX_TEXT_LENGTH:
                     await send({"type": "error", "agent_id": agent_id, "text": f"Message too long (max {WS_MAX_TEXT_LENGTH} chars)."})
                     continue
+
+                # Validate images (max 10 images, each ≤ 20MB base64)
+                _VALID_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+                valid_images = []
+                for img in images[:10]:
+                    if isinstance(img, dict) and img.get("base64") and img.get("mediaType") in _VALID_IMAGE_TYPES:
+                        if len(img["base64"]) <= 20 * 1024 * 1024 * 4 // 3:  # ~20MB in base64
+                            valid_images.append(img)
 
                 agent = agents.get(agent_id)
                 if not agent or not agent.get("provider"):
                     await send({"type": "error", "agent_id": agent_id, "text": "No project directory selected for this agent."})
                     continue
 
-                # Persist user message
+                # Persist user message (images stored in content_json)
                 if agent.get("cwd"):
-                    database.save_message(agent["cwd"], "user", "text", {"text": text}, agent_id=agent_id, user_id=user_id)
+                    msg_content: dict = {"text": text}
+                    if valid_images:
+                        # Store only metadata (mediaType + truncated hash) to keep DB light
+                        msg_content["image_count"] = len(valid_images)
+                    database.save_message(agent["cwd"], "user", "text", msg_content, agent_id=agent_id, user_id=user_id)
 
                 # ── Computer Use mode: separate agent loop (Claude only) ──
                 if agent.get("mode") == "computer_use" and COMPUTER_USE_AVAILABLE:
@@ -2306,7 +2436,7 @@ async def websocket_endpoint(ws: WebSocket):
                         _computer_use_loop(
                             agent_id=agent_id,
                             user_text=cu_enriched,
-                            api_key_str=api_key or "",
+                            api_key_str=provider_keys.get("claude", api_key or ""),
                             executor=agent["computer_executor"],
                             send_ws=send,
                             agents_ref=agents,
@@ -2329,7 +2459,7 @@ async def websocket_endpoint(ws: WebSocket):
 
                 try:
                     provider = agent["provider"]
-                    await provider.send_message(enriched_text)
+                    await provider.send_message(enriched_text, images=valid_images or None)
                     task = asyncio.create_task(
                         stream_provider_response(provider, agent_id, user_text=text)
                     )
@@ -2364,6 +2494,16 @@ async def websocket_endpoint(ws: WebSocket):
             elif msg_type == "destroy_agent":
                 await destroy_agent(agent_id)
                 await send({"type": "agent_destroyed", "agent_id": agent_id})
+
+            # ---- Toggle auto-approve permissions per agent ----
+            elif msg_type == "set_auto_approve":
+                enabled = bool(data.get("enabled", False))
+                agent = agents.get(agent_id)
+                if agent:
+                    agents[agent_id]["auto_approve"] = enabled
+                    await send({"type": "auto_approve_changed", "agent_id": agent_id, "enabled": enabled})
+                else:
+                    await send({"type": "error", "agent_id": agent_id, "text": "Agent not found."})
 
             # ---- Set agent mode (coding / computer_use) ----
             elif msg_type == "set_mode":
@@ -2458,9 +2598,10 @@ async def websocket_endpoint(ws: WebSocket):
 
                     # Create new provider with new prompt
                     provider = get_provider(current_provider_name)
+                    reinit_key = provider_keys.get(current_provider_name, api_key or "")
                     try:
                         await provider.initialize(
-                            api_key=api_key or "",
+                            api_key=reinit_key,
                             model=current_model,
                             cwd=saved_cwd,
                             system_prompt=new_prompt,
@@ -2787,6 +2928,20 @@ async def websocket_endpoint(ws: WebSocket):
 
     except WebSocketDisconnect:
         pass
+    except RuntimeError as exc:
+        # Starlette raises RuntimeError("WebSocket is not connected…") when
+        # the client drops the TCP connection before or during the main loop.
+        # This is equivalent to a normal disconnect — log quietly, don't spam.
+        if "not connected" in str(exc).lower():
+            pass
+        else:
+            import traceback
+            traceback.print_exc()
+            database.log_security_event(
+                "ws_unhandled_error", "error",
+                token_prefix=token[:8] if token else "",
+                details=str(exc)[:500],
+            )
     except Exception as exc:
         import traceback
         traceback.print_exc()
