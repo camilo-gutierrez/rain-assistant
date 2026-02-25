@@ -376,6 +376,7 @@ def get_all_tool_definitions() -> list[dict]:
     from marketplace import MANAGE_MARKETPLACE_DEFINITION
     from documents import MANAGE_DOCUMENTS_DEFINITION
     from a2ui import RENDER_SURFACE_DEFINITION
+    from directors import MANAGE_DIRECTORS_DEFINITION
 
     all_tools = list(TOOL_DEFINITIONS)
     all_tools.append(MANAGE_PLUGINS_DEFINITION)
@@ -386,6 +387,7 @@ def get_all_tool_definitions() -> list[dict]:
     all_tools.append(MANAGE_MARKETPLACE_DEFINITION)
     all_tools.append(MANAGE_DOCUMENTS_DEFINITION)
     all_tools.append(RENDER_SURFACE_DEFINITION)
+    all_tools.append(MANAGE_DIRECTORS_DEFINITION)
 
     for plugin in load_all_plugins():
         all_tools.append(plugin_to_tool_definition(plugin))

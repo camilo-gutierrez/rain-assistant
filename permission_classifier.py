@@ -158,6 +158,10 @@ def classify(tool_name: str, tool_input: dict[str, Any]) -> PermissionLevel:
     if tool_name == "manage_scheduled_tasks":
         return PermissionLevel.YELLOW
 
+    # manage_directors: all actions need confirmation
+    if tool_name == "manage_directors":
+        return PermissionLevel.YELLOW
+
     # Unknown tools default to YELLOW (safe default)
     return PermissionLevel.YELLOW
 

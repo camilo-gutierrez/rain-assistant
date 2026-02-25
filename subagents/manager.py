@@ -122,6 +122,10 @@ class SubAgentManager:
             if level == PermissionLevel.GREEN:
                 return True
 
+            # AUTO-APPROVE: skip user confirmation if agent has auto-approve enabled
+            if self._agents.get(agent_id, {}).get("auto_approve", False):
+                return True
+
             # YELLOW/RED: send permission request to frontend
             request_id = f"perm_{secrets_mod.token_hex(8)}"
             event = asyncio.Event()

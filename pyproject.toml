@@ -100,7 +100,7 @@ py-modules = [
 include-package-data = true
 
 [tool.setuptools.packages.find]
-include = ["rain_assistant*", "plugins*", "providers*", "tools*", "memories*", "documents*", "alter_egos*", "scheduled_tasks*", "subagents*", "marketplace*", "voice*", "routes*", "a2ui*", "utils*", "static"]
+include = ["rain_assistant*", "plugins*", "providers*", "tools*", "memories*", "documents*", "alter_egos*", "scheduled_tasks*", "subagents*", "marketplace*", "voice*", "routes*", "a2ui*", "utils*", "directors*", "static"]
 exclude = ["static_backup*", "tests*", "rain_flutter*", "frontend*"]
 
 [tool.setuptools.package-data]

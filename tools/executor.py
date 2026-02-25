@@ -43,7 +43,7 @@ class ToolExecutor:
     # Meta-tools that need per-user isolation via _user_id injection
     _META_TOOLS_WITH_USER = frozenset({
         "manage_memories", "manage_alter_egos", "manage_documents",
-        "manage_scheduled_tasks",
+        "manage_scheduled_tasks", "manage_directors",
     })
 
     def __init__(
@@ -91,6 +91,7 @@ class ToolExecutor:
         from marketplace import handle_manage_marketplace
         from documents import handle_manage_documents
         from a2ui import handle_render_surface
+        from directors import handle_manage_directors
 
         self._handlers["manage_plugins"] = handle_manage_plugins
         self._handlers["manage_memories"] = handle_manage_memories
@@ -99,6 +100,7 @@ class ToolExecutor:
         self._handlers["manage_marketplace"] = handle_manage_marketplace
         self._handlers["manage_documents"] = handle_manage_documents
         self._handlers["render_surface"] = handle_render_surface
+        self._handlers["manage_directors"] = handle_manage_directors
         # manage_subagents handler is injected at runtime from server.py
         # (it requires a bound SubAgentManager + caller agent_id)
         if "manage_subagents" not in self._handlers:

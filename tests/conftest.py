@@ -200,6 +200,10 @@ def test_app(tmp_path):
     # Ensure per-user directory exists for default user
     (config_dir / "users" / "default").mkdir(parents=True, exist_ok=True)
 
+    # Clear rate limiter to prevent 429s bleeding between tests
+    from rate_limiter import rate_limiter as rl
+    rl._windows.clear()
+
     from httpx import AsyncClient, ASGITransport
     import asyncio
 

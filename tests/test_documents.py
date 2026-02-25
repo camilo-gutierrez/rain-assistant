@@ -421,12 +421,16 @@ class TestIntegration:
         names = [t["function"]["name"] for t in tools]
         assert "manage_documents" in names
 
-    def test_green_tools_include_documents(self):
-        """manage_documents is classified as GREEN."""
-        from tools.executor import GREEN_TOOLS
-        assert "manage_documents" in GREEN_TOOLS
+    def test_documents_read_actions_are_green(self):
+        """manage_documents read-only actions are classified as GREEN."""
+        from permission_classifier import classify, PermissionLevel
+        for action in ("search", "list", "show"):
+            level = classify("manage_documents", {"action": action})
+            assert level == PermissionLevel.GREEN, f"{action} should be GREEN"
 
-    def test_permission_classifier_green(self):
-        """manage_documents is GREEN in permission classifier."""
-        from permission_classifier import GREEN_TOOLS
-        assert "manage_documents" in GREEN_TOOLS
+    def test_documents_write_actions_are_yellow(self):
+        """manage_documents write actions are classified as YELLOW."""
+        from permission_classifier import classify, PermissionLevel
+        for action in ("ingest", "remove"):
+            level = classify("manage_documents", {"action": action})
+            assert level == PermissionLevel.YELLOW, f"{action} should be YELLOW"
