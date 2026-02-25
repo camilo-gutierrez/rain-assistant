@@ -1,4 +1,5 @@
 import { useAgentStore } from "@/stores/useAgentStore";
+import { useConnectionStore } from "@/stores/useConnectionStore";
 import type { WSReceiveMessage, AnyMessage } from "@/lib/types";
 
 /**
@@ -9,7 +10,19 @@ export function handlePermissionMessage(msg: WSReceiveMessage, agentId: string):
   if (msg.type !== "permission_request") return false;
 
   const agentStore = useAgentStore.getState();
-  if (!agentStore.agents[agentId]) return true;
+  const agent = agentStore.agents[agentId];
+  if (!agent) return true;
+
+  // Safety net: if auto-approve is on, auto-respond (shouldn't happen if backend is correct)
+  if (agent.autoApprove) {
+    useConnectionStore.getState().send({
+      type: "permission_response",
+      request_id: msg.request_id,
+      agent_id: agentId,
+      approved: true,
+    });
+    return true;
+  }
 
   agentStore.finalizeStreaming(agentId);
   const permMsg: AnyMessage = {

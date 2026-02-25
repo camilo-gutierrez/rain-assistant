@@ -24,6 +24,8 @@ import SettingsPanel from "@/components/panels/SettingsPanel";
 import MemoriesPanel from "@/components/panels/MemoriesPanel";
 import AlterEgosPanel from "@/components/panels/AlterEgosPanel";
 import MarketplacePanel from "@/components/panels/MarketplacePanel";
+import DirectorsPanel from "@/components/panels/DirectorsPanel";
+import DirectorsInboxPanel from "@/components/panels/DirectorsInboxPanel";
 import ToastContainer from "@/components/Toast";
 
 export default function HomePage() {
@@ -37,11 +39,15 @@ export default function HomePage() {
   const memoriesDrawerOpen = useUIStore((s) => s.memoriesDrawerOpen);
   const alterEgosDrawerOpen = useUIStore((s) => s.alterEgosDrawerOpen);
   const marketplaceDrawerOpen = useUIStore((s) => s.marketplaceDrawerOpen);
+  const directorsDrawerOpen = useUIStore((s) => s.directorsDrawerOpen);
+  const inboxDrawerOpen = useUIStore((s) => s.inboxDrawerOpen);
   const toggleMetricsDrawer = useUIStore((s) => s.toggleMetricsDrawer);
   const toggleSettingsDrawer = useUIStore((s) => s.toggleSettingsDrawer);
   const toggleMemoriesDrawer = useUIStore((s) => s.toggleMemoriesDrawer);
   const toggleAlterEgosDrawer = useUIStore((s) => s.toggleAlterEgosDrawer);
   const toggleMarketplaceDrawer = useUIStore((s) => s.toggleMarketplaceDrawer);
+  const toggleDirectorsDrawer = useUIStore((s) => s.toggleDirectorsDrawer);
+  const toggleInboxDrawer = useUIStore((s) => s.toggleInboxDrawer);
   const ensureDefaultAgent = useAgentStore((s) => s.ensureDefaultAgent);
   const activeAgentId = useAgentStore((s) => s.activeAgentId);
   const activeAgentPanel = useAgentStore((s) => {
@@ -138,6 +144,24 @@ export default function HomePage() {
         title={t("marketplace.title")}
       >
         <MarketplacePanel />
+      </DrawerOverlay>
+
+      {/* Directors drawer */}
+      <DrawerOverlay
+        open={directorsDrawerOpen}
+        onClose={toggleDirectorsDrawer}
+        title={t("directors.title")}
+      >
+        <DirectorsPanel />
+      </DrawerOverlay>
+
+      {/* Inbox drawer */}
+      <DrawerOverlay
+        open={inboxDrawerOpen}
+        onClose={toggleInboxDrawer}
+        title={t("inbox.title")}
+      >
+        <DirectorsInboxPanel />
       </DrawerOverlay>
 
       {/* Metrics drawer */}

@@ -107,6 +107,11 @@ export default function TabBar() {
                 {folderName(agent.cwd, agent.label)}
               </span>
 
+              {/* Auto-approve indicator */}
+              {agent.autoApprove && (
+                <span className="w-1.5 h-1.5 rounded-full bg-yellow shrink-0" />
+              )}
+
               {/* Unread badge */}
               {agent.unread > 0 && !isActive && (
                 <span className="min-w-[18px] h-[18px] flex items-center justify-center px-1 rounded-full bg-primary text-on-primary text-xs font-bold animate-fade-in">

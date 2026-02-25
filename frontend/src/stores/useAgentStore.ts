@@ -28,6 +28,7 @@ interface AgentState {
 
   // Permission
   updatePermissionStatus: (agentId: string, requestId: string, status: PermissionRequestMessage["status"]) => void;
+  setAutoApprove: (agentId: string, enabled: boolean) => void;
 
   // Computer Use
   setAgentMode: (agentId: string, mode: AgentMode) => void;
@@ -84,6 +85,8 @@ function createAgentObject(id: string, label: string): Agent {
     computerIteration: 0,
     // Sub-agents
     subAgents: [],
+    // Auto-approve permissions (ephemeral)
+    autoApprove: false,
   };
 }
 
@@ -397,6 +400,17 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
     });
   },
 
+  setAutoApprove: (agentId, enabled) => {
+    const { agents } = get();
+    if (!agents[agentId]) return;
+    set({
+      agents: {
+        ...agents,
+        [agentId]: { ...agents[agentId], autoApprove: enabled },
+      },
+    });
+  },
+
   // --- Computer Use ---
 
   setAgentMode: (agentId, mode) => {
@@ -557,14 +571,17 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
         if (agent.sessionId) msg.session_id = agent.sessionId;
         sendFn(msg);
       }
-      // Reset processing state since server lost context
-      if (agent.isProcessing) {
+      // Reset processing state and auto-approve since server lost context
+      if (agent.isProcessing || agent.autoApprove) {
         updatedAgents[agentId] = {
-          ...agent,
-          isProcessing: false,
-          interruptPending: false,
-          interruptTimerId: null,
-          status: "idle",
+          ...updatedAgents[agentId],
+          ...(agent.isProcessing && {
+            isProcessing: false,
+            interruptPending: false,
+            interruptTimerId: null,
+            status: "idle" as const,
+          }),
+          autoApprove: false,
         };
         if (agent.interruptTimerId) {
           clearTimeout(agent.interruptTimerId);

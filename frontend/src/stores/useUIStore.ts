@@ -10,6 +10,9 @@ interface UIState {
   memoriesDrawerOpen: boolean;
   alterEgosDrawerOpen: boolean;
   marketplaceDrawerOpen: boolean;
+  directorsDrawerOpen: boolean;
+  inboxDrawerOpen: boolean;
+  inboxUnreadCount: number;
   mobileSidebarOpen: boolean;
 
   setActivePanel: (panel: ActivePanel) => void;
@@ -18,6 +21,9 @@ interface UIState {
   toggleMemoriesDrawer: () => void;
   toggleAlterEgosDrawer: () => void;
   toggleMarketplaceDrawer: () => void;
+  toggleDirectorsDrawer: () => void;
+  toggleInboxDrawer: () => void;
+  setInboxUnreadCount: (count: number) => void;
   toggleMobileSidebar: () => void;
   setTabFocused: (val: boolean) => void;
   incrementUnreadCount: () => void;
@@ -33,6 +39,9 @@ export const useUIStore = create<UIState>()((set) => ({
   memoriesDrawerOpen: false,
   alterEgosDrawerOpen: false,
   marketplaceDrawerOpen: false,
+  directorsDrawerOpen: false,
+  inboxDrawerOpen: false,
+  inboxUnreadCount: 0,
   mobileSidebarOpen: false,
 
   setActivePanel: (panel) => set({ activePanel: panel }),
@@ -51,6 +60,14 @@ export const useUIStore = create<UIState>()((set) => ({
 
   toggleMarketplaceDrawer: () =>
     set((s) => ({ marketplaceDrawerOpen: !s.marketplaceDrawerOpen })),
+
+  toggleDirectorsDrawer: () =>
+    set((s) => ({ directorsDrawerOpen: !s.directorsDrawerOpen })),
+
+  toggleInboxDrawer: () =>
+    set((s) => ({ inboxDrawerOpen: !s.inboxDrawerOpen })),
+
+  setInboxUnreadCount: (count) => set({ inboxUnreadCount: count }),
 
   toggleMobileSidebar: () =>
     set((s) => ({ mobileSidebarOpen: !s.mobileSidebarOpen })),

@@ -9,7 +9,7 @@ import { useTTS, useTTSStore } from "@/hooks/useTTS";
 import { useSettingsStore } from "@/stores/useSettingsStore";
 import { useToastStore } from "@/stores/useToastStore";
 import { useTranslation } from "@/hooks/useTranslation";
-import type { UserMessage, AssistantMessage, SystemMessage } from "@/lib/types";
+import type { UserMessage, AssistantMessage, SystemMessage, ImageAttachment } from "@/lib/types";
 
 const sanitizeSchema = {
   ...defaultSchema,
@@ -86,15 +86,39 @@ const MessageBubble = React.memo(function MessageBubble({ message }: Props) {
   }
 
   if (message.type === "user") {
+    const userMsg = message as UserMessage;
+    const hasImages = userMsg.images && userMsg.images.length > 0;
     return (
       <div
         className={`self-end max-w-[85%] rounded-2xl rounded-br-sm px-4 py-2.5 bg-primary text-on-primary ${
           message.animate ? "animate-msg-appear" : ""
         }`}
       >
-        <p className="text-sm whitespace-pre-wrap break-words">
-          {message.text}
-        </p>
+        {hasImages && (
+          <div className={`${userMsg.images!.length === 1 ? "" : "grid grid-cols-2 gap-1.5"} mb-2`}>
+            {userMsg.images!.map((img: ImageAttachment, idx: number) => (
+              <img
+                key={idx}
+                src={`data:${img.mediaType};base64,${img.base64}`}
+                alt={`Image ${idx + 1}`}
+                className="rounded-lg max-w-full h-auto max-h-64 object-cover cursor-pointer hover:opacity-90 transition-opacity"
+                onClick={() => {
+                  // Open image in new tab for full view
+                  const w = window.open();
+                  if (w) {
+                    w.document.write(`<img src="data:${img.mediaType};base64,${img.base64}" style="max-width:100%;height:auto;" />`);
+                    w.document.title = `Image ${idx + 1}`;
+                  }
+                }}
+              />
+            ))}
+          </div>
+        )}
+        {userMsg.text && (
+          <p className="text-sm whitespace-pre-wrap break-words">
+            {userMsg.text}
+          </p>
+        )}
       </div>
     );
   }

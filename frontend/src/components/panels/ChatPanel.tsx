@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { FolderOpen, Save, Trash2, RotateCcw } from "lucide-react";
+import { FolderOpen, Save, Trash2, RotateCcw, ShieldOff } from "lucide-react";
 import { useAgentStore } from "@/stores/useAgentStore";
 import { useConnectionStore } from "@/stores/useConnectionStore";
 import { useUIStore } from "@/stores/useUIStore";
@@ -35,8 +35,17 @@ export default function ChatPanel() {
   const { activate, deactivate } = useVoiceMode();
   const [talkModeActive, setTalkModeActive] = useState(false);
 
+  const send = useConnectionStore((s) => s.send);
   const activeAgent = activeAgentId ? agents[activeAgentId] : null;
   const cwd = activeAgent?.cwd;
+  const autoApprove = activeAgent?.autoApprove ?? false;
+
+  const handleAutoApproveToggle = () => {
+    if (!activeAgentId) return;
+    const newVal = !autoApprove;
+    send({ type: "set_auto_approve", agent_id: activeAgentId, enabled: newVal });
+    useAgentStore.getState().setAutoApprove(activeAgentId, newVal);
+  };
 
   const folderName = cwd
     ? cwd.replace(/\\/g, "/").split("/").filter(Boolean).pop() || cwd
@@ -88,6 +97,23 @@ export default function ChatPanel() {
         )}
 
         <div className="flex-1" />
+
+        {cwd && (
+          <button
+            onClick={handleAutoApproveToggle}
+            className={`inline-flex items-center justify-center gap-1.5 min-w-[36px] min-h-[36px] px-2 sm:px-3 py-1.5 text-xs rounded-md transition-colors shrink-0 ${
+              autoApprove
+                ? "bg-yellow/15 text-yellow border border-yellow/30"
+                : "text-text2 hover:bg-surface2 hover:text-text"
+            }`}
+            title={autoApprove ? t("perm.autoApproveOnTip") : t("perm.autoApproveOffTip")}
+          >
+            <ShieldOff size={14} />
+            <span className="hidden sm:inline">
+              {autoApprove ? t("perm.autoApproveOn") : t("perm.autoApproveOff")}
+            </span>
+          </button>
+        )}
 
         <button
           onClick={() => save()}

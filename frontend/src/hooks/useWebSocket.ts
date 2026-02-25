@@ -123,6 +123,10 @@ export function useWebSocket() {
           }
           break;
         }
+
+        case "auto_approve_changed":
+          useAgentStore.getState().setAutoApprove(msg.agent_id, msg.enabled);
+          break;
       }
     };
 
