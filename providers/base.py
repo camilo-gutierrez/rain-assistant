@@ -72,8 +72,14 @@ class BaseProvider(ABC):
         ...
 
     @abstractmethod
-    async def send_message(self, text: str) -> None:
-        """Send a user message, starting the agentic loop."""
+    async def send_message(self, text: str, images: list[dict] | None = None) -> None:
+        """Send a user message, starting the agentic loop.
+
+        Args:
+            text: User message text.
+            images: Optional list of image dicts with keys ``base64`` (raw
+                    base64-encoded data) and ``mediaType`` (e.g. ``"image/png"``).
+        """
         ...
 
     @abstractmethod

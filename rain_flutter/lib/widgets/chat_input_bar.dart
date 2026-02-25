@@ -1,5 +1,12 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import '../app/l10n.dart';
+import '../models/message.dart';
+
+/// Callback that receives the selected images alongside the send action.
+typedef OnSendWithImages = void Function(List<ImageAttachment> images);
 
 class ChatInputBar extends StatelessWidget {
   final TextEditingController controller;
@@ -13,6 +20,11 @@ class ChatInputBar extends StatelessWidget {
   final bool talkModeActive;
   final VoidCallback? onToggleTalkMode;
   final String? voiceStateLabel;
+  // Image support
+  final List<ImageAttachment> pendingImages;
+  final VoidCallback? onPickImage;
+  final VoidCallback? onTakePhoto;
+  final void Function(int index)? onRemoveImage;
 
   const ChatInputBar({
     super.key,
@@ -27,6 +39,10 @@ class ChatInputBar extends StatelessWidget {
     this.talkModeActive = false,
     this.onToggleTalkMode,
     this.voiceStateLabel,
+    this.pendingImages = const [],
+    this.onPickImage,
+    this.onTakePhoto,
+    this.onRemoveImage,
   });
 
   @override
@@ -80,8 +96,105 @@ class ChatInputBar extends StatelessWidget {
                 ),
               ),
             ),
+
+          // Image preview strip
+          if (pendingImages.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: SizedBox(
+                height: 68,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: pendingImages.length,
+                  separatorBuilder: (_, __) => const SizedBox(width: 8),
+                  itemBuilder: (context, index) {
+                    final img = pendingImages[index];
+                    return Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(10),
+                          child: Image.memory(
+                            base64Decode(img.base64),
+                            width: 64,
+                            height: 64,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => Container(
+                              width: 64,
+                              height: 64,
+                              color: cs.surfaceContainerHighest,
+                              child: const Icon(Icons.broken_image, size: 24),
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          top: -4,
+                          right: -4,
+                          child: GestureDetector(
+                            onTap: () => onRemoveImage?.call(index),
+                            child: Container(
+                              width: 20,
+                              height: 20,
+                              decoration: BoxDecoration(
+                                color: cs.error,
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(
+                                Icons.close,
+                                size: 12,
+                                color: cs.onError,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ),
+            ),
+
           Row(
             children: [
+              // Image attachment button (gallery + camera popup)
+              PopupMenuButton<String>(
+                enabled: !isProcessing && !isRecording && !isTranscribing,
+                onSelected: (value) {
+                  if (value == 'gallery') {
+                    onPickImage?.call();
+                  } else if (value == 'camera') {
+                    onTakePhoto?.call();
+                  }
+                },
+                icon: Icon(
+                  Icons.add_photo_alternate_outlined,
+                  color: isProcessing ? cs.onSurfaceVariant.withValues(alpha: 0.3) : cs.primary,
+                ),
+                padding: EdgeInsets.zero,
+                itemBuilder: (ctx) => [
+                  PopupMenuItem(
+                    value: 'gallery',
+                    child: Row(
+                      children: [
+                        const Icon(Icons.photo_library_outlined, size: 20),
+                        const SizedBox(width: 12),
+                        Text(L10n.t('chat.gallery', lang)),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: 'camera',
+                    child: Row(
+                      children: [
+                        const Icon(Icons.camera_alt_outlined, size: 20),
+                        const SizedBox(width: 12),
+                        Text(L10n.t('chat.camera', lang)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+
               // Mic button
               isTranscribing
                   ? Padding(

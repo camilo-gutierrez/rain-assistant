@@ -1,10 +1,14 @@
+import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import '../models/a2ui.dart';
 import '../models/agent.dart';
 import '../models/message.dart';
+import '../models/subagent_info.dart';
 
 const _uuid = Uuid();
+const _kSessionKey = 'rain_agent_session';
 
 class AgentState {
   final Map<String, Agent> agents;
@@ -133,6 +137,13 @@ class AgentNotifier extends StateNotifier<AgentState> {
     final agent = state.agents[agentId];
     if (agent == null) return;
     agent.displayInfo = info;
+    _notify();
+  }
+
+  void setAutoApprove(String agentId, bool enabled) {
+    final agent = state.agents[agentId];
+    if (agent == null) return;
+    agent.autoApprove = enabled;
     _notify();
   }
 
@@ -271,6 +282,95 @@ class AgentNotifier extends StateNotifier<AgentState> {
     if (agent == null) return;
     agent.computerIteration++;
     _notify();
+  }
+
+  // ── Sub-agent management ──
+
+  void addSubAgent(String parentId, SubAgentInfo info) {
+    final agent = state.agents[parentId];
+    if (agent == null) return;
+    agent.subAgents.add(info);
+    _notify();
+  }
+
+  void updateSubAgentStatus(String parentId, String subId, String status) {
+    final agent = state.agents[parentId];
+    if (agent == null) return;
+    final idx = agent.subAgents.indexWhere((sa) => sa.id == subId);
+    if (idx >= 0) {
+      agent.subAgents[idx] = agent.subAgents[idx].copyWith(status: status);
+      _notify();
+    }
+  }
+
+  void removeSubAgent(String parentId, String subId) {
+    final agent = state.agents[parentId];
+    if (agent == null) return;
+    agent.subAgents.removeWhere((sa) => sa.id == subId);
+    _notify();
+  }
+
+  // ── Session persistence ──
+
+  /// Persist agent metadata to SharedPreferences (lightweight, no messages).
+  Future<void> persistSession() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final data = <String, dynamic>{
+        'activeAgentId': state.activeAgentId,
+        'agents': state.agents.values.map((a) => <String, dynamic>{
+          'id': a.id,
+          'label': a.label,
+          'cwd': a.cwd,
+          'sessionId': a.sessionId,
+        }).toList(),
+      };
+      await prefs.setString(_kSessionKey, jsonEncode(data));
+    } catch (_) {}
+  }
+
+  /// Restore agents from SharedPreferences. Returns true if agents were restored.
+  Future<bool> restoreSession() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_kSessionKey);
+      if (raw == null) return false;
+
+      final data = jsonDecode(raw) as Map<String, dynamic>;
+      final agentList = data['agents'] as List? ?? [];
+      if (agentList.isEmpty) return false;
+
+      final agents = <String, Agent>{};
+      for (final a in agentList) {
+        final map = a as Map<String, dynamic>;
+        final id = map['id'] as String;
+        agents[id] = Agent(
+          id: id,
+          label: map['label'] as String? ?? 'Rain',
+          cwd: map['cwd'] as String?,
+          sessionId: map['sessionId'] as String?,
+        );
+      }
+
+      final activeId = data['activeAgentId'] as String? ?? '';
+      state = AgentState(
+        agents: agents,
+        activeAgentId: agents.containsKey(activeId)
+            ? activeId
+            : agents.keys.first,
+      );
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Clear persisted session data.
+  Future<void> clearSession() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_kSessionKey);
+    } catch (_) {}
   }
 
   /// Force state rebuild.

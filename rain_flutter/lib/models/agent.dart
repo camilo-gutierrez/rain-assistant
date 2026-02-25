@@ -1,4 +1,5 @@
 import 'message.dart';
+import 'subagent_info.dart';
 
 enum AgentStatus { idle, working, done, error }
 
@@ -50,6 +51,8 @@ class Agent {
   DisplayInfo? displayInfo;
   String? lastScreenshot;
   int computerIteration;
+  bool autoApprove;
+  List<SubAgentInfo> subAgents;
 
   Agent({
     required this.id,
@@ -71,5 +74,8 @@ class Agent {
     this.displayInfo,
     this.lastScreenshot,
     this.computerIteration = 0,
-  }) : messages = messages ?? [];
+    this.autoApprove = false,
+    List<SubAgentInfo>? subAgents,
+  })  : messages = messages ?? [],
+        subAgents = subAgents ?? [];
 }

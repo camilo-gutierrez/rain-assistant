@@ -27,7 +27,8 @@ class MessageTile extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final lang = ref.watch(settingsProvider).language;
     return switch (message) {
-      UserMessage(:final text) => UserBubble(text: text),
+      UserMessage(:final text, :final images) =>
+        UserBubble(text: text, images: images),
       AssistantMessage(:final text, :final isStreaming) =>
         AssistantBubble(text: text, isStreaming: isStreaming),
       SystemMessage(:final text) => SystemLine(text: text),
@@ -41,7 +42,7 @@ class MessageTile extends ConsumerWidget {
       ComputerActionMessage() => ComputerActionBlock(
           message: message as ComputerActionMessage, lang: lang),
       SubAgentMessage() =>
-        _SubAgentBubble(message: message as SubAgentMessage),
+        _SubAgentBubble(message: message as SubAgentMessage, lang: lang),
       A2UISurfaceMessage() =>
         A2UISurfaceWidget(surface: (message as A2UISurfaceMessage).surface),
     };
@@ -52,11 +53,14 @@ class MessageTile extends ConsumerWidget {
 
 class UserBubble extends StatelessWidget {
   final String text;
-  const UserBubble({super.key, required this.text});
+  final List<ImageAttachment>? images;
+  const UserBubble({super.key, required this.text, this.images});
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final hasImages = images != null && images!.isNotEmpty;
+
     return Align(
       alignment: Alignment.centerRight,
       child: Container(
@@ -68,9 +72,49 @@ class UserBubble extends StatelessWidget {
           color: cs.primaryContainer,
           borderRadius: BorderRadius.circular(16),
         ),
-        child: SelectableText(
-          text,
-          style: TextStyle(color: cs.onPrimaryContainer, fontSize: 15),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Image gallery
+            if (hasImages) ...[
+              if (images!.length == 1)
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: Image.memory(
+                    base64Decode(images!.first.base64),
+                    fit: BoxFit.cover,
+                    width: double.infinity,
+                    errorBuilder: (_, __, ___) => const Icon(Icons.broken_image),
+                  ),
+                )
+              else
+                GridView.count(
+                  crossAxisCount: 2,
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  mainAxisSpacing: 6,
+                  crossAxisSpacing: 6,
+                  children: images!.map((img) {
+                    return ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.memory(
+                        base64Decode(img.base64),
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) =>
+                            const Icon(Icons.broken_image),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              if (text.isNotEmpty) const SizedBox(height: 8),
+            ],
+            if (text.isNotEmpty)
+              SelectableText(
+                text,
+                style: TextStyle(color: cs.onPrimaryContainer, fontSize: 15),
+              ),
+          ],
         ),
       ),
     );
@@ -910,7 +954,8 @@ class _PermissionBlockState extends ConsumerState<PermissionBlock> {
 
 class _SubAgentBubble extends StatelessWidget {
   final SubAgentMessage message;
-  const _SubAgentBubble({required this.message});
+  final String lang;
+  const _SubAgentBubble({required this.message, required this.lang});
 
   Color _statusColor(ColorScheme cs) {
     return switch (message.status) {
@@ -918,6 +963,7 @@ class _SubAgentBubble extends StatelessWidget {
       'running' => Colors.orange,
       'completed' => Colors.green,
       'error' => cs.error,
+      'cancelled' => Colors.amber,
       _ => cs.onSurfaceVariant,
     };
   }
@@ -928,18 +974,29 @@ class _SubAgentBubble extends StatelessWidget {
       'running' => Icons.sync,
       'completed' => Icons.check_circle,
       'error' => Icons.error,
+      'cancelled' => Icons.stop_circle,
       _ => Icons.help_outline,
     };
   }
 
   String _statusLabel() {
     return switch (message.status) {
-      'spawned' => 'Spawned',
-      'running' => 'Running',
-      'completed' => 'Completed',
-      'error' => 'Error',
+      'spawned' => L10n.t('subagent.spawned', lang),
+      'running' => L10n.t('subagent.running', lang),
+      'completed' => L10n.t('subagent.completed', lang),
+      'error' => L10n.t('subagent.error', lang),
+      'cancelled' => L10n.t('subagent.cancelled', lang),
       _ => message.status,
     };
+  }
+
+  /// Extract short name from sub-agent ID (format: "parent::child").
+  String get _displayName {
+    final id = message.subAgentId;
+    if (id.contains('::')) {
+      return id.split('::').last;
+    }
+    return L10n.t('subagent.title', lang);
   }
 
   @override
@@ -982,17 +1039,20 @@ class _SubAgentBubble extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        // Header row: icon + "Sub-agent" + status badge
+                        // Header row: icon + name + status badge
                         Row(
                           children: [
                             Icon(_statusIcon(), size: 18, color: color),
                             const SizedBox(width: 8),
-                            Text(
-                              'Sub-agent',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                                color: cs.onSurface,
+                            Flexible(
+                              child: Text(
+                                _displayName,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  color: cs.onSurface,
+                                ),
+                                overflow: TextOverflow.ellipsis,
                               ),
                             ),
                             const SizedBox(width: 8),
@@ -1014,16 +1074,18 @@ class _SubAgentBubble extends StatelessWidget {
                             ),
                           ],
                         ),
-                        const SizedBox(height: 6),
                         // Task description
-                        Text(
-                          message.task,
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: cs.onSurface,
-                            height: 1.4,
+                        if (message.task.isNotEmpty) ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            message.task,
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: cs.onSurface,
+                              height: 1.4,
+                            ),
                           ),
-                        ),
+                        ],
                         // Preview text (if available)
                         if (message.preview.isNotEmpty) ...[
                           const SizedBox(height: 4),

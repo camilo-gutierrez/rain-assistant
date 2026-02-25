@@ -41,12 +41,33 @@ sealed class Message {
   }
 }
 
+/// An image attachment embedded in a user message.
+class ImageAttachment {
+  final String base64;     // raw base64 data (no data: prefix)
+  final String mediaType;  // "image/png", "image/jpeg", etc.
+
+  const ImageAttachment({required this.base64, required this.mediaType});
+
+  factory ImageAttachment.fromJson(Map<String, dynamic> json) =>
+      ImageAttachment(
+        base64: json['base64'] ?? '',
+        mediaType: json['mediaType'] ?? 'image/png',
+      );
+
+  Map<String, dynamic> toJson() => {
+        'base64': base64,
+        'mediaType': mediaType,
+      };
+}
+
 class UserMessage extends Message {
   final String text;
+  final List<ImageAttachment>? images;
 
   const UserMessage({
     required super.id,
     required this.text,
+    this.images,
     required super.timestamp,
     super.animate,
   });
@@ -54,15 +75,23 @@ class UserMessage extends Message {
   @override
   String get type => 'user';
 
-  factory UserMessage.create(String text) => UserMessage(
+  factory UserMessage.create(String text, {List<ImageAttachment>? images}) =>
+      UserMessage(
         id: _uuid.v4(),
         text: text,
+        images: images,
         timestamp: DateTime.now().millisecondsSinceEpoch,
       );
 
   factory UserMessage.fromJson(Map<String, dynamic> json) => UserMessage(
         id: json['id'] ?? _uuid.v4(),
         text: json['text'] ?? '',
+        images: json['images'] != null
+            ? (json['images'] as List)
+                .map((img) =>
+                    ImageAttachment.fromJson(Map<String, dynamic>.from(img)))
+                .toList()
+            : null,
         timestamp: json['timestamp'] ?? DateTime.now().millisecondsSinceEpoch,
         animate: json['animate'] ?? false,
       );
@@ -72,6 +101,8 @@ class UserMessage extends Message {
         'id': id,
         'type': type,
         'text': text,
+        if (images != null && images!.isNotEmpty)
+          'images': images!.map((img) => img.toJson()).toList(),
         'timestamp': timestamp,
         'animate': animate,
       };

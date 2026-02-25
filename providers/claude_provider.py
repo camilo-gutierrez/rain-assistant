@@ -187,10 +187,35 @@ class ClaudeProvider(BaseProvider):
         await self._try_connect(fallback_options)
         print("  [MCP] Agent started without MCP servers.", flush=True)
 
-    async def send_message(self, text: str) -> None:
+    async def send_message(self, text: str, images: list[dict] | None = None) -> None:
         if not self._client:
             raise RuntimeError("Provider not initialized")
-        await self._client.query(text)
+
+        if images:
+            # Build multi-part content: images first, then text
+            content_blocks: list[dict] = []
+            for img in images:
+                content_blocks.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": img.get("mediaType", "image/png"),
+                        "data": img["base64"],
+                    },
+                })
+            content_blocks.append({"type": "text", "text": text})
+
+            # SDK iterable mode expects: {"type": "user", "message": {...}}
+            async def _content_iter():
+                yield {
+                    "type": "user",
+                    "message": {"role": "user", "content": content_blocks},
+                    "parent_tool_use_id": None,
+                }
+
+            await self._client.query(_content_iter())
+        else:
+            await self._client.query(text)
 
     async def stream_response(self) -> AsyncIterator[NormalizedEvent]:
         """Stream Claude SDK messages as NormalizedEvents.

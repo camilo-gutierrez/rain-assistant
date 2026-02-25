@@ -466,6 +466,15 @@ class _AgentCard extends StatelessWidget {
                     ),
                     const SizedBox(width: 8),
                   ],
+                  // Sub-agents count
+                  if (agent.subAgents.isNotEmpty) ...[
+                    _StatChip(
+                      icon: Icons.hub_outlined,
+                      label: '${agent.subAgents.length} sub',
+                      cs: cs,
+                    ),
+                    const SizedBox(width: 8),
+                  ],
 
                   const Spacer(),
 

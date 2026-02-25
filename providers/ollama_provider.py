@@ -101,8 +101,12 @@ class OllamaProvider(BaseProvider):
         # Pre-convert tools
         self._tools = _convert_tools_for_ollama(get_all_tool_definitions())
 
-    async def send_message(self, text: str) -> None:
-        self._messages.append({"role": "user", "content": text})
+    async def send_message(self, text: str, images: list[dict] | None = None) -> None:
+        msg: dict = {"role": "user", "content": text}
+        if images:
+            # Ollama accepts a list of base64 image strings
+            msg["images"] = [img["base64"] for img in images]
+        self._messages.append(msg)
         self._interrupted = False
 
     async def stream_response(self) -> AsyncIterator[NormalizedEvent]:

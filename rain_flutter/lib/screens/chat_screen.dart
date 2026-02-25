@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:image_picker/image_picker.dart';
 import '../app/l10n.dart';
 import '../models/agent.dart';
 import '../models/message.dart';
@@ -22,7 +25,9 @@ import '../widgets/model_switcher.dart';
 import '../widgets/rate_limit_badge.dart';
 import '../widgets/talk_mode_overlay.dart';
 import 'alter_egos_screen.dart';
+import 'directors_screen.dart';
 import 'history_screen.dart';
+import 'inbox_screen.dart';
 import 'marketplace_screen.dart';
 import 'memories_screen.dart';
 import 'metrics_screen.dart';
@@ -40,6 +45,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   final _scrollController = ScrollController();
   int _lastMessageCount = 0;
   bool _userScrolledUp = false;
+
+  // Image attachments
+  final _imagePicker = ImagePicker();
+  final List<ImageAttachment> _pendingImages = [];
 
   // Voice mode
   final _voiceService = VoiceModeService();
@@ -132,7 +141,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   void _onScroll() {
     if (!_scrollController.hasClients) return;
     final pos = _scrollController.position;
+    final wasScrolledUp = _userScrolledUp;
     _userScrolledUp = pos.maxScrollExtent - pos.pixels > 150;
+    if (wasScrolledUp != _userScrolledUp) setState(() {});
   }
 
   void _scrollToBottom({bool force = false}) {
@@ -148,24 +159,97 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     });
   }
 
+  /// Pick images from gallery.
+  Future<void> _pickImages() async {
+    try {
+      final picked = await _imagePicker.pickMultiImage(
+        imageQuality: 85,
+        maxWidth: 2048,
+        maxHeight: 2048,
+      );
+      if (picked.isEmpty) return;
+
+      final remaining = 10 - _pendingImages.length;
+      for (final xfile in picked.take(remaining)) {
+        final bytes = await xfile.readAsBytes();
+        if (bytes.length > 20 * 1024 * 1024) continue; // skip >20MB
+        final mediaType = xfile.mimeType ?? _guessMimeType(xfile.name);
+        _pendingImages.add(ImageAttachment(
+          base64: base64Encode(bytes),
+          mediaType: mediaType,
+        ));
+      }
+      if (mounted) setState(() {});
+    } catch (e) {
+      debugPrint('Image pick error: $e');
+    }
+  }
+
+  /// Take a photo with camera.
+  Future<void> _takePhoto() async {
+    try {
+      final photo = await _imagePicker.pickImage(
+        source: ImageSource.camera,
+        imageQuality: 85,
+        maxWidth: 2048,
+        maxHeight: 2048,
+      );
+      if (photo == null) return;
+
+      final bytes = await photo.readAsBytes();
+      if (bytes.length > 20 * 1024 * 1024) return;
+      final mediaType = photo.mimeType ?? _guessMimeType(photo.name);
+      _pendingImages.add(ImageAttachment(
+        base64: base64Encode(bytes),
+        mediaType: mediaType,
+      ));
+      if (mounted) setState(() {});
+    } catch (e) {
+      debugPrint('Camera error: $e');
+    }
+  }
+
+  void _removeImage(int index) {
+    if (index >= 0 && index < _pendingImages.length) {
+      setState(() => _pendingImages.removeAt(index));
+    }
+  }
+
+  String _guessMimeType(String name) {
+    final ext = name.split('.').last.toLowerCase();
+    return switch (ext) {
+      'png' => 'image/png',
+      'jpg' || 'jpeg' => 'image/jpeg',
+      'gif' => 'image/gif',
+      'webp' => 'image/webp',
+      _ => 'image/jpeg',
+    };
+  }
+
   void _sendMessage() {
     final text = _inputController.text.trim();
-    if (text.isEmpty) return;
+    if (text.isEmpty && _pendingImages.isEmpty) return;
 
     final agentState = ref.read(agentProvider);
     final agentId = agentState.activeAgentId;
     if (agentId.isEmpty) return;
 
+    final images = _pendingImages.isNotEmpty ? List<ImageAttachment>.from(_pendingImages) : null;
+
     final ws = ref.read(webSocketServiceProvider);
-    ws.send({
+    final payload = <String, dynamic>{
       'type': 'send_message',
       'text': text,
       'agent_id': agentId,
-    });
+    };
+    if (images != null) {
+      payload['images'] = images.map((img) => img.toJson()).toList();
+    }
+    ws.send(payload);
 
     ref.read(agentProvider.notifier).appendMessage(
           agentId,
-          UserMessage.create(text),
+          UserMessage.create(text, images: images),
         );
     ref.read(agentProvider.notifier).setProcessing(agentId, true);
     ref
@@ -173,8 +257,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         .setAgentStatus(agentId, AgentStatus.working);
 
     _inputController.clear();
+    _pendingImages.clear();
     _userScrolledUp = false;
     _scrollToBottom(force: true);
+    if (mounted) setState(() {});
   }
 
   void _interrupt() {
@@ -390,6 +476,45 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           ],
         ),
         actions: [
+          // Auto-approve indicator (visible when ON)
+          if (agent != null && agent.autoApprove)
+            Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: GestureDetector(
+                onTap: () {
+                  final ws = ref.read(webSocketServiceProvider);
+                  ws.send({
+                    'type': 'set_auto_approve',
+                    'agent_id': agent.id,
+                    'enabled': false,
+                  });
+                  ref.read(agentProvider.notifier).setAutoApprove(agent.id, false);
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.amber.withValues(alpha: 0.4)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.shield, size: 14, color: Colors.amber),
+                      const SizedBox(width: 4),
+                      Text(
+                        'AUTO',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.amber.shade700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           // Rate limit badge
           RateLimitBadge(
             onTap: () => Navigator.of(context).push(
@@ -411,6 +536,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             icon: const Icon(Icons.more_vert),
             onSelected: (v) {
               switch (v) {
+                case 'auto_approve':
+                  if (agent != null) {
+                    final newVal = !agent.autoApprove;
+                    final ws = ref.read(webSocketServiceProvider);
+                    ws.send({
+                      'type': 'set_auto_approve',
+                      'agent_id': agent.id,
+                      'enabled': newVal,
+                    });
+                    ref.read(agentProvider.notifier).setAutoApprove(agent.id, newVal);
+                  }
                 case 'history':
                   Navigator.of(context).push(
                     MaterialPageRoute(builder: (_) => const HistoryScreen()),
@@ -427,6 +563,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   Navigator.of(context).push(
                     MaterialPageRoute(builder: (_) => const MarketplaceScreen()),
                   );
+                case 'directors':
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const DirectorsScreen()),
+                  );
+                case 'inbox':
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const InboxScreen()),
+                  );
                 case 'metrics':
                   Navigator.of(context).push(
                     MaterialPageRoute(builder: (_) => const MetricsScreen()),
@@ -438,10 +582,37 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               }
             },
             itemBuilder: (_) => [
+              // Auto-approve toggle (prominent, at the top)
+              if (agent != null)
+                PopupMenuItem(
+                  value: 'auto_approve',
+                  child: Row(
+                    children: [
+                      Icon(
+                        agent.autoApprove ? Icons.shield : Icons.shield_outlined,
+                        size: 20,
+                        color: agent.autoApprove ? Colors.amber : null,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(L10n.t('perm.autoApproveMenu', lang)),
+                      ),
+                      Switch.adaptive(
+                        value: agent.autoApprove,
+                        onChanged: null, // handled by PopupMenuItem onSelected
+                        activeTrackColor: Colors.amber.withValues(alpha: 0.5),
+                        activeThumbColor: Colors.amber,
+                      ),
+                    ],
+                  ),
+                ),
+              if (agent != null) const PopupMenuDivider(),
               PopupMenuItem(value: 'history', child: _menuItem(Icons.history, 'history.title', lang)),
               PopupMenuItem(value: 'memories', child: _menuItem(Icons.psychology_outlined, 'memories.title', lang)),
               PopupMenuItem(value: 'egos', child: _menuItem(Icons.person_outline, 'egos.title', lang)),
               PopupMenuItem(value: 'marketplace', child: _menuItem(Icons.store_outlined, 'market.title', lang)),
+              PopupMenuItem(value: 'directors', child: _menuItem(Icons.smart_toy_outlined, 'directors.title', lang)),
+              PopupMenuItem(value: 'inbox', child: _menuItem(Icons.inbox_outlined, 'inbox.title', lang)),
               const PopupMenuDivider(),
               PopupMenuItem(value: 'metrics', child: _menuItem(Icons.bar_chart, 'metrics.title', lang)),
               PopupMenuItem(value: 'settings', child: _menuItem(Icons.settings, 'settings.title', lang)),
@@ -587,9 +758,37 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             talkModeActive: _talkModeActive,
             onToggleTalkMode: _toggleTalkMode,
             voiceStateLabel: _talkModeActive ? _voiceStateLabel : null,
+            pendingImages: _pendingImages,
+            onPickImage: _pickImages,
+            onTakePhoto: _takePhoto,
+            onRemoveImage: _removeImage,
           ),
             ],
           ), // end Column
+
+          // Scroll-to-bottom FAB
+          if (_userScrolledUp && messages.isNotEmpty)
+            Positioned(
+              right: 16,
+              bottom: 80,
+              child: Material(
+                elevation: 4,
+                shape: const CircleBorder(),
+                color: cs.primaryContainer,
+                clipBehavior: Clip.antiAlias,
+                child: InkWell(
+                  onTap: () => _scrollToBottom(force: true),
+                  child: Padding(
+                    padding: const EdgeInsets.all(10),
+                    child: Icon(
+                      Icons.keyboard_arrow_down,
+                      size: 24,
+                      color: cs.onPrimaryContainer,
+                    ),
+                  ),
+                ),
+              ),
+            ),
 
           // Talk Mode overlay (covers screen when active in talk-mode)
           if (_talkModeActive && ref.watch(settingsProvider).voiceMode == 'talk-mode')
@@ -763,6 +962,49 @@ class _AgentTab extends StatelessWidget {
                     isActive ? cs.onPrimaryContainer : cs.onSurfaceVariant,
               ),
             ),
+            // Auto-approve indicator
+            if (agent.autoApprove) ...[
+              const SizedBox(width: 4),
+              Container(
+                width: 6,
+                height: 6,
+                decoration: const BoxDecoration(
+                  color: Colors.amber,
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ],
+            // Sub-agents badge
+            if (agent.subAgents.isNotEmpty) ...[
+              const SizedBox(width: 6),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                decoration: BoxDecoration(
+                  color: Colors.blue.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: Colors.blue.withValues(alpha: 0.3),
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.hub_outlined,
+                        size: 10, color: Colors.blue),
+                    const SizedBox(width: 3),
+                    Text(
+                      '${agent.subAgents.length}',
+                      style: const TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.blue,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             // Unread badge
             if (agent.unread > 0) ...[
               const SizedBox(width: 6),

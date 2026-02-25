@@ -10,6 +10,7 @@ import 'models/a2ui.dart';
 import 'models/agent.dart';
 import 'models/message.dart';
 import 'models/rate_limits.dart';
+import 'models/subagent_info.dart';
 import 'providers/agent_provider.dart';
 import 'providers/audio_provider.dart';
 import 'providers/connection_provider.dart';
@@ -64,6 +65,7 @@ class _AppShellState extends ConsumerState<_AppShell> {
   StreamSubscription<Map<String, dynamic>>? _wsSub;
   AppLifecycleObserver? _lifecycleObserver;
   Timer? _initTimeout;
+  bool _hasRestoredSession = false;
 
   @override
   void initState() {
@@ -114,6 +116,9 @@ class _AppShellState extends ConsumerState<_AppShell> {
       if (auth.token != null) {
         // Try to reconnect with existing token
         ref.read(isAuthenticatedProvider.notifier).state = true;
+        // Restore agent session (cwd, sessionId) from local storage
+        _hasRestoredSession =
+            await ref.read(agentProvider.notifier).restoreSession();
         _connectWebSocket();
         return;
       }
@@ -150,7 +155,13 @@ class _AppShellState extends ConsumerState<_AppShell> {
         sub.cancel();
         // api_key_loaded may have arrived during loading — check before
         if (ref.read(apiKeyLoadedProvider)) {
-          setState(() => _screen = _AppScreen.fileBrowser);
+          // Skip file browser if we restored agents with a valid cwd
+          if (_hasRestoredSession) {
+            _resumeRestoredSession();
+            setState(() => _screen = _AppScreen.chat);
+          } else {
+            setState(() => _screen = _AppScreen.fileBrowser);
+          }
         } else {
           setState(() => _screen = _AppScreen.apiKey);
         }
@@ -229,6 +240,61 @@ class _AppShellState extends ConsumerState<_AppShell> {
     }
   }
 
+  /// Resume a restored session: re-send set_cwd for each agent and load messages.
+  void _resumeRestoredSession() {
+    final agents = ref.read(agentProvider).agents;
+    final ws = ref.read(webSocketServiceProvider);
+    final settings = ref.read(settingsProvider);
+
+    for (final agent in agents.values) {
+      if (agent.cwd != null) {
+        ws.send({
+          'type': 'set_cwd',
+          'path': agent.cwd,
+          'agent_id': agent.id,
+          'model': settings.aiModel,
+          'provider': settings.aiProvider.name,
+          if (agent.sessionId != null && agent.sessionId!.isNotEmpty)
+            'session_id': agent.sessionId,
+        });
+      }
+      // Load messages from server history
+      _restoreMessagesFromHistory(agent.id);
+    }
+  }
+
+  /// Fetch the latest auto-saved conversation for an agent and load its messages.
+  Future<void> _restoreMessagesFromHistory(String agentId) async {
+    try {
+      final auth = ref.read(authServiceProvider);
+      final dio = auth.authenticatedDio;
+
+      // Try to load the active auto-save for this agent
+      final res = await dio.get('/history/conv_${agentId}_active');
+      if (res.statusCode == 200) {
+        final data = res.data as Map<String, dynamic>;
+        final rawMessages = data['messages'] as List? ?? [];
+        if (rawMessages.isEmpty) return;
+
+        final messages = rawMessages
+            .map((m) => Message.fromJson(m as Map<String, dynamic>))
+            .toList();
+
+        final agentNotifier = ref.read(agentProvider.notifier);
+        agentNotifier.setMessages(agentId, messages);
+        agentNotifier.setHistoryLoaded(agentId, true);
+
+        // Restore session_id if present
+        final sessionId = data['sessionId'] as String?;
+        if (sessionId != null && sessionId.isNotEmpty) {
+          agentNotifier.setAgentSessionId(agentId, sessionId);
+        }
+      }
+    } catch (_) {
+      // Non-critical — user just sees empty chat
+    }
+  }
+
   void _handleMessage(Map<String, dynamic> msg) {
     final type = msg['type'] as String?;
     if (type == null) return;
@@ -241,6 +307,8 @@ class _AppShellState extends ConsumerState<_AppShell> {
       case '_unauthorized':
         ref.read(authServiceProvider).clearToken();
         ref.read(isAuthenticatedProvider.notifier).state = false;
+        ref.read(agentProvider.notifier).clearSession();
+        _hasRestoredSession = false;
         final lang = ref.read(settingsProvider).language;
         if (mounted) {
           showToast(context, L10n.t('toast.sessionExpired', lang),
@@ -254,13 +322,19 @@ class _AppShellState extends ConsumerState<_AppShell> {
         ref.read(currentProviderProvider.notifier).state =
             msg['provider'] ?? 'claude';
         if (_screen == _AppScreen.apiKey) {
-          setState(() => _screen = _AppScreen.fileBrowser);
+          if (_hasRestoredSession) {
+            _resumeRestoredSession();
+            setState(() => _screen = _AppScreen.chat);
+          } else {
+            setState(() => _screen = _AppScreen.fileBrowser);
+          }
         }
 
       case 'status':
         ref.read(statusTextProvider.notifier).state = msg['text'] ?? '';
         if (msg['cwd'] != null && agentId.isNotEmpty) {
           agentNotifier.setAgentCwd(agentId, msg['cwd']);
+          agentNotifier.persistSession();
         }
 
       case 'assistant_text':
@@ -316,6 +390,7 @@ class _AppShellState extends ConsumerState<_AppShell> {
 
         if (msg['session_id'] != null) {
           agentNotifier.setAgentSessionId(agentId, msg['session_id']);
+          agentNotifier.persistSession();
         }
 
         agentNotifier.setProcessing(agentId, false);
@@ -357,6 +432,18 @@ class _AppShellState extends ConsumerState<_AppShell> {
 
       case 'permission_request':
         if (agentId.isEmpty) break;
+        // Safety net: auto-respond if agent has auto-approve enabled
+        final reqAgent = agentNotifier.state.agents[agentId];
+        if (reqAgent != null && reqAgent.autoApprove) {
+          final ws = ref.read(webSocketServiceProvider);
+          ws.send({
+            'type': 'permission_response',
+            'request_id': msg['request_id'] ?? '',
+            'agent_id': agentId,
+            'approved': true,
+          });
+          break;
+        }
         agentNotifier.finalizeStreaming(agentId);
         agentNotifier.setProcessing(agentId, false);
         agentNotifier.incrementUnread(agentId);
@@ -376,6 +463,11 @@ class _AppShellState extends ConsumerState<_AppShell> {
           ),
         );
         _dispatchNotification('permission_request', agentId, msg);
+
+      case 'auto_approve_changed':
+        if (agentId.isNotEmpty) {
+          agentNotifier.setAutoApprove(agentId, msg['enabled'] == true);
+        }
 
       case 'agent_destroyed':
         if (agentId.isNotEmpty) agentNotifier.removeAgent(agentId);
@@ -424,19 +516,62 @@ class _AppShellState extends ConsumerState<_AppShell> {
         );
         agentNotifier.incrementComputerIteration(agentId);
 
-      case 'sub_agent':
-        if (agentId.isEmpty) break;
+      case 'subagent_spawned':
+        final subAgentId = msg['agent_id'] as String? ?? '';
+        final parentId = msg['parent_agent_id'] as String? ?? agentId;
+        if (parentId.isEmpty) break;
+
+        // Track active sub-agent
+        agentNotifier.addSubAgent(
+          parentId,
+          SubAgentInfo(
+            id: subAgentId,
+            shortName: msg['short_name'] as String? ?? 'Sub',
+            parentId: parentId,
+            task: msg['task'] as String? ?? '',
+            status: 'running',
+          ),
+        );
+
+        // Show spawned message in parent's chat
         agentNotifier.appendMessage(
-          agentId,
+          parentId,
           SubAgentMessage(
             id: UniqueKey().toString(),
-            subAgentId: msg['sub_agent_id'] ?? '',
-            task: msg['task'] ?? '',
-            status: msg['status'] ?? 'spawned',
-            preview: msg['preview'] ?? '',
+            subAgentId: subAgentId,
+            task: msg['task'] as String? ?? '',
+            status: 'spawned',
             timestamp: DateTime.now().millisecondsSinceEpoch,
           ),
         );
+
+      case 'subagent_completed':
+        final subAgentId = msg['agent_id'] as String? ?? '';
+        final parentId = msg['parent_agent_id'] as String? ?? agentId;
+        if (parentId.isEmpty || subAgentId.isEmpty) break;
+
+        final finalStatus = msg['status'] as String? ?? 'completed';
+
+        // Update tracking status
+        agentNotifier.updateSubAgentStatus(parentId, subAgentId, finalStatus);
+
+        // Show completion message in parent's chat
+        agentNotifier.appendMessage(
+          parentId,
+          SubAgentMessage(
+            id: UniqueKey().toString(),
+            subAgentId: subAgentId,
+            task: '',
+            status: finalStatus,
+            preview: msg['result_preview'] as String? ?? '',
+            timestamp: DateTime.now().millisecondsSinceEpoch,
+          ),
+        );
+
+        // Remove from active tracking after 3 seconds
+        Future.delayed(const Duration(seconds: 3), () {
+          agentNotifier.removeSubAgent(parentId, subAgentId);
+        });
 
       // ── A2UI surfaces ──
       case 'a2ui_surface':
@@ -529,8 +664,9 @@ class _AppShellState extends ConsumerState<_AppShell> {
         }
       }
 
+      // Stable ID per agent — server upserts, no duplicates
       await dio.post('/history', data: {
-        'id': 'conv_${agent.id}_$now',
+        'id': 'conv_${agent.id}_active',
         'createdAt': now,
         'updatedAt': now,
         'label': label,
@@ -543,6 +679,9 @@ class _AppShellState extends ConsumerState<_AppShell> {
         'sessionId': agent.sessionId ?? '',
         'messages': agent.messages.map((m) => m.toJson()).toList(),
       });
+
+      // Persist agent metadata locally after successful save
+      ref.read(agentProvider.notifier).persistSession();
     } catch (_) {
       // Silent fail for auto-save — non-critical
     }
