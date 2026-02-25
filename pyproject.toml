@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rain-assistant"
-version = "1.0.8"
+version = "1.0.9"
 description = "AI-powered coding assistant with voice, plugins, web UI, and Telegram bot"
 readme = "README.md"
 license = "Apache-2.0"
@@ -80,6 +80,7 @@ Documentation = "https://github.com/camilo-gutierrez/rain-assistant#readme"
 [tool.setuptools]
 py-modules = [
     "server",
+    "shared_state",
     "database",
     "key_manager",
     "prompt_composer",
@@ -91,6 +92,10 @@ py-modules = [
     "computer_use",
     "telegram_bot",
     "telegram_config",
+    "claude_client",
+    "logging_config",
+    "metrics",
+    "recorder",
 ]
 include-package-data = true
 
