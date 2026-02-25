@@ -28,7 +28,7 @@ MAX_TOTAL_PIXELS = 1_150_000
 
 # ── Computer Use API constants ───────────────────────────────────────────
 COMPUTER_USE_BETA = "computer-use-2025-01-24"
-COMPUTER_USE_MODEL = "claude-sonnet-4-5"
+COMPUTER_USE_MODEL = "claude-sonnet-4-6"
 COMPUTER_USE_MAX_TOKENS = 4096
 COMPUTER_USE_MAX_ITERATIONS = 50
 COMPUTER_USE_TIMEOUT = 600  # 10 minutes

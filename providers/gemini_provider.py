@@ -18,10 +18,16 @@ from tools.definitions import get_all_tool_definitions_gemini
 
 # Pricing per 1M tokens (USD) — update as needed
 MODEL_PRICING = {
-    "gemini-2.0-flash": {"input": 0.10, "output": 0.40},
+    # Gemini 3 series (preview)
+    "gemini-3.1-pro-preview": {"input": 1.25, "output": 10.00},
+    "gemini-3-pro-preview": {"input": 1.25, "output": 10.00},
+    "gemini-3-flash-preview": {"input": 0.15, "output": 0.60},
+    # Gemini 2.5 series (stable)
     "gemini-2.5-pro": {"input": 1.25, "output": 10.00},
     "gemini-2.5-flash": {"input": 0.15, "output": 0.60},
-    "gemini-2.0-flash-lite": {"input": 0.0, "output": 0.0},  # Free tier
+    "gemini-2.5-flash-lite": {"input": 0.0, "output": 0.0},
+    # Legacy
+    "gemini-2.0-flash": {"input": 0.10, "output": 0.40},
 }
 
 MAX_ITERATIONS = 50
@@ -39,7 +45,7 @@ class GeminiProvider(BaseProvider):
 
     def __init__(self):
         self._model = None
-        self._model_name = "gemini-2.0-flash"
+        self._model_name = "gemini-2.5-flash"
         self._chat = None
         self._tool_executor: ToolExecutor | None = None
         self._interrupted = False
@@ -64,7 +70,7 @@ class GeminiProvider(BaseProvider):
         self._api_key = api_key
         genai.configure(api_key=api_key)
 
-        self._model_name = model if model and model != "auto" else "gemini-2.0-flash"
+        self._model_name = model if model and model != "auto" else "gemini-2.5-flash"
 
         gemini_tools = get_all_tool_definitions_gemini()
 
@@ -77,8 +83,21 @@ class GeminiProvider(BaseProvider):
         self._tool_executor = ToolExecutor(cwd=cwd, permission_callback=can_use_tool, agent_id=agent_id, user_id=user_id)
         self._interrupted = False
 
-    async def send_message(self, text: str) -> None:
-        self._pending_text = text
+    async def send_message(self, text: str, images: list[dict] | None = None) -> None:
+        if images:
+            # Gemini accepts inline_data parts alongside text
+            parts = []
+            for img in images:
+                parts.append({
+                    "inline_data": {
+                        "mime_type": img.get("mediaType", "image/png"),
+                        "data": img["base64"],
+                    }
+                })
+            parts.append(text)
+            self._pending_text = parts
+        else:
+            self._pending_text = text
         self._interrupted = False
 
     async def stream_response(self) -> AsyncIterator[NormalizedEvent]:

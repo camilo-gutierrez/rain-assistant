@@ -12,13 +12,22 @@ from tools.definitions import get_all_tool_definitions
 
 # Pricing per 1M tokens (USD) — update as needed
 MODEL_PRICING = {
+    # GPT-5 series
+    "gpt-5.2": {"input": 1.75, "output": 14.00},
+    "gpt-5.1": {"input": 1.25, "output": 10.00},
+    "gpt-5": {"input": 1.25, "output": 10.00},
+    "gpt-5-mini": {"input": 0.25, "output": 2.00},
+    "gpt-5-nano": {"input": 0.05, "output": 0.40},
+    # Reasoning models
+    "o3": {"input": 2.00, "output": 8.00},
+    "o3-mini": {"input": 1.10, "output": 4.40},
+    "o4-mini": {"input": 1.10, "output": 4.40},
+    # Legacy (still available)
     "gpt-4o": {"input": 2.50, "output": 10.00},
     "gpt-4o-mini": {"input": 0.15, "output": 0.60},
-    "o3-mini": {"input": 1.10, "output": 4.40},
     "gpt-4.1": {"input": 2.00, "output": 8.00},
     "gpt-4.1-mini": {"input": 0.40, "output": 1.60},
     "gpt-4.1-nano": {"input": 0.10, "output": 0.40},
-    "o4-mini": {"input": 1.10, "output": 4.40},
 }
 
 MAX_ITERATIONS = 50  # Safety limit for the agentic loop
@@ -33,7 +42,7 @@ class OpenAIProvider(BaseProvider):
 
     def __init__(self):
         self._client = None
-        self._model = "gpt-4o"
+        self._model = "gpt-5"
         self._system_prompt = ""
         self._messages: list[dict] = []
         self._tool_executor: ToolExecutor | None = None
@@ -72,14 +81,28 @@ class OpenAIProvider(BaseProvider):
         from openai import AsyncOpenAI
 
         self._client = AsyncOpenAI(api_key=api_key)
-        self._model = model if model and model != "auto" else "gpt-4o"
+        self._model = model if model and model != "auto" else "gpt-5"
         self._system_prompt = system_prompt
         self._messages = []
         self._tool_executor = ToolExecutor(cwd=cwd, permission_callback=can_use_tool, agent_id=agent_id, user_id=user_id)
         self._interrupted = False
 
-    async def send_message(self, text: str) -> None:
-        self._messages.append({"role": "user", "content": text})
+    async def send_message(self, text: str, images: list[dict] | None = None) -> None:
+        if images:
+            # OpenAI vision format: array of content parts
+            content_parts: list[dict] = []
+            for img in images:
+                media = img.get("mediaType", "image/png")
+                content_parts.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{media};base64,{img['base64']}",
+                    },
+                })
+            content_parts.append({"type": "text", "text": text})
+            self._messages.append({"role": "user", "content": content_parts})
+        else:
+            self._messages.append({"role": "user", "content": text})
         self._interrupted = False
 
     async def stream_response(self) -> AsyncIterator[NormalizedEvent]:

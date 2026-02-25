@@ -9,29 +9,33 @@ class ProviderModelInfo {
 const providerModels = <AIProvider, List<ProviderModelInfo>>{
   AIProvider.claude: [
     ProviderModelInfo('auto', 'Auto (SDK)'),
-    ProviderModelInfo('claude-sonnet-4-5-20250929', 'Sonnet 4.5'),
     ProviderModelInfo('claude-opus-4-6', 'Opus 4.6'),
-    ProviderModelInfo('claude-sonnet-4-20250514', 'Sonnet 4'),
+    ProviderModelInfo('claude-sonnet-4-6', 'Sonnet 4.6'),
     ProviderModelInfo('claude-haiku-4-5-20251001', 'Haiku 4.5'),
+    ProviderModelInfo('claude-sonnet-4-5-20250929', 'Sonnet 4.5'),
   ],
   AIProvider.openai: [
-    ProviderModelInfo('gpt-4o', 'GPT-4o'),
-    ProviderModelInfo('gpt-4o-mini', 'GPT-4o Mini'),
-    ProviderModelInfo('gpt-4.1', 'GPT-4.1'),
-    ProviderModelInfo('gpt-4.1-mini', 'GPT-4.1 Mini'),
-    ProviderModelInfo('gpt-4.1-nano', 'GPT-4.1 Nano'),
+    ProviderModelInfo('gpt-5.2', 'GPT-5.2'),
+    ProviderModelInfo('gpt-5.1', 'GPT-5.1'),
+    ProviderModelInfo('gpt-5', 'GPT-5'),
+    ProviderModelInfo('gpt-5-mini', 'GPT-5 Mini'),
+    ProviderModelInfo('gpt-5-nano', 'GPT-5 Nano'),
+    ProviderModelInfo('o3', 'o3'),
     ProviderModelInfo('o3-mini', 'o3-mini'),
     ProviderModelInfo('o4-mini', 'o4-mini'),
+    ProviderModelInfo('gpt-4o', 'GPT-4o'),
+    ProviderModelInfo('gpt-4o-mini', 'GPT-4o Mini'),
   ],
   AIProvider.gemini: [
+    ProviderModelInfo('gemini-3.1-pro-preview', 'Gemini 3.1 Pro'),
+    ProviderModelInfo('gemini-3-pro-preview', 'Gemini 3 Pro'),
+    ProviderModelInfo('gemini-3-flash-preview', 'Gemini 3 Flash'),
     ProviderModelInfo('gemini-2.5-pro', 'Gemini 2.5 Pro'),
     ProviderModelInfo('gemini-2.5-flash', 'Gemini 2.5 Flash'),
-    ProviderModelInfo('gemini-2.0-flash', 'Gemini 2.0 Flash'),
-    ProviderModelInfo('gemini-2.0-flash-lite', 'Gemini 2.0 Flash Lite'),
+    ProviderModelInfo('gemini-2.5-flash-lite', 'Gemini 2.5 Flash Lite'),
   ],
   AIProvider.ollama: [
     ProviderModelInfo('llama3.3', 'Llama 3.3'),
-    ProviderModelInfo('llama3.1', 'Llama 3.1'),
     ProviderModelInfo('qwen2.5-coder', 'Qwen 2.5 Coder'),
     ProviderModelInfo('deepseek-r1', 'DeepSeek R1'),
     ProviderModelInfo('mistral', 'Mistral'),
@@ -75,12 +79,14 @@ class ProviderDisplay {
 }
 
 const modelShortNames = <String, String>{
+  'claude-opus-4-6': 'Opus 4.6',
+  'claude-sonnet-4-6': 'Sonnet 4.6',
+  'claude-haiku-4-5-20251001': 'Haiku 4.5',
   'claude-sonnet-4-5-20250929': 'Sonnet 4.5',
+  'claude-opus-4-5-20251101': 'Opus 4.5',
+  'claude-opus-4-1-20250805': 'Opus 4.1',
   'claude-sonnet-4-20250514': 'Sonnet 4',
   'claude-opus-4-20250514': 'Opus 4',
-  'claude-opus-4-6': 'Opus 4.6',
-  'claude-haiku-3-5-20241022': 'Haiku 3.5',
-  'claude-3-5-sonnet-20241022': 'Sonnet 3.5',
 };
 
 String formatModelName(String raw) {
