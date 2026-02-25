@@ -43,6 +43,10 @@
 	</array>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Rain needs microphone access for voice input</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Rain needs camera access to take photos for analysis</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Rain needs photo library access to select images</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>

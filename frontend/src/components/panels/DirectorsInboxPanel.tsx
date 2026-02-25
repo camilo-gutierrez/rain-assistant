@@ -69,8 +69,8 @@ export default function DirectorsInboxPanel() {
       const data = await fetchInbox(authToken, params);
       setItems(data.items);
       setInboxUnreadCount(data.unread_count);
-    } catch {
-      // silent
+    } catch (err) {
+      console.error("[Inbox] load failed:", err);
     } finally {
       setLoading(false);
     }
@@ -84,12 +84,14 @@ export default function DirectorsInboxPanel() {
     if (!authToken) return;
     try {
       const data = await updateInboxItem(item.id, newStatus, item.user_comment, authToken);
-      setItems((prev) => prev.map((it) => it.id === item.id ? data.item : it));
-      // Update unread count
-      const unread = items.filter((it) => it.id === item.id ? newStatus === "unread" : it.status === "unread").length;
-      setInboxUnreadCount(unread);
-    } catch {
-      // silent
+      setItems((prev) => {
+        const updated = prev.map((it) => it.id === item.id ? data.item : it);
+        const unread = updated.filter((it) => it.status === "unread").length;
+        setInboxUnreadCount(unread);
+        return updated;
+      });
+    } catch (err) {
+      console.error("[Inbox] status change failed:", err);
     }
   }
 
@@ -186,10 +188,13 @@ const InboxCard = React.memo(function InboxCard({
     if (!authToken) return;
     setSaving(true);
     try {
-      await updateInboxItem(item.id, item.status, comment || null, authToken);
+      const data = await updateInboxItem(item.id, item.status, comment || null, authToken);
+      if (data.item) {
+        setComment(data.item.user_comment || "");
+      }
       setCommenting(false);
-    } catch {
-      // silent
+    } catch (err) {
+      console.error("[Inbox] save comment failed:", err);
     } finally {
       setSaving(false);
     }

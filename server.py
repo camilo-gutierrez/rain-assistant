@@ -3366,7 +3366,7 @@ def _start_server(cmd_args):
     if HOST == "0.0.0.0":
         print(f"  WARNING: Binding to 0.0.0.0 exposes the server to your entire network!", flush=True)
     if HOST not in ("127.0.0.1", "localhost", "::1"):
-        print(f"  \u26a0\ufe0f  TLS not enabled. Use a reverse proxy (nginx/Cloudflare Tunnel) for HTTPS.", flush=True)
+        print(f"  WARNING: TLS not enabled. Use a reverse proxy (nginx/Cloudflare Tunnel) for HTTPS.", flush=True)
     display_pin = config.pop("_display_pin", None)
     if display_pin:
         print(f"  PIN:     {display_pin}  (new — shown only once)", flush=True)
