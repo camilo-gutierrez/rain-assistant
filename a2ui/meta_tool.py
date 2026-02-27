@@ -73,6 +73,40 @@ RENDER_SURFACE_DEFINITION: dict[str, Any] = {
                         "components[], and optional title. "
                         "Required for 'render' action."
                     ),
+                    "properties": {
+                        "surface_id": {
+                            "type": "string",
+                            "description": "Unique identifier for this surface",
+                        },
+                        "title": {
+                            "type": "string",
+                            "description": "Optional display title",
+                        },
+                        "root": {
+                            "type": "string",
+                            "description": "ID of the root component",
+                        },
+                        "components": {
+                            "type": "array",
+                            "description": "Flat list of component definitions",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "id": {
+                                        "type": "string",
+                                        "description": "Unique component ID",
+                                    },
+                                    "type": {
+                                        "type": "string",
+                                        "description": "Component type",
+                                    },
+                                },
+                                "required": ["id", "type"],
+                                "additionalProperties": True,
+                            },
+                        },
+                    },
+                    "required": ["surface_id", "root", "components"],
                 },
                 "updates": {
                     "type": "array",
@@ -82,6 +116,19 @@ RENDER_SURFACE_DEFINITION: dict[str, Any] = {
                         "only the fields to change. "
                         "E.g. [{'id': 'status', 'text': 'Done!'}]"
                     ),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {
+                                "type": "string",
+                                "description": (
+                                    "ID of the component to update"
+                                ),
+                            },
+                        },
+                        "required": ["id"],
+                        "additionalProperties": True,
+                    },
                 },
                 "surface_id": {
                     "type": "string",

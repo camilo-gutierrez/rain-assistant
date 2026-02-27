@@ -722,14 +722,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   ),
           ),
 
-          // Mode switcher (computer use)
-          if (agent != null && agent.mode == AgentMode.computerUse)
+          // Mode switcher (coding ↔ computer use)
+          if (agent != null)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               child: ModeSwitcher(lang: lang),
-            )
-          else if (agent != null && agent.mode == AgentMode.coding && agent.messages.isNotEmpty)
-            const SizedBox.shrink(), // placeholder for mode toggle if needed
+            ),
 
           // Input bar
           ChatInputBar(
