@@ -18,6 +18,7 @@ class EndpointCategory(str, Enum):
     TTS_SYNTHESIS = "tts_synthesis"     # 50/min
     FILE_BROWSING = "file_browsing"     # 200/min
     GENERIC_API = "generic_api"         # 100/min
+    IMAGE_UPLOAD = "image_upload"       # 30/min
     WEBSOCKET_MSG = "websocket_msg"     # 60/min
 
 
@@ -25,6 +26,7 @@ class EndpointCategory(str, Enum):
 RATE_LIMITS: dict[EndpointCategory, int] = {
     EndpointCategory.AUTH: 10,
     EndpointCategory.AUDIO_UPLOAD: 30,
+    EndpointCategory.IMAGE_UPLOAD: 30,
     EndpointCategory.TTS_SYNTHESIS: 50,
     EndpointCategory.FILE_BROWSING: 200,
     EndpointCategory.GENERIC_API: 100,
@@ -139,6 +141,8 @@ def categorize_endpoint(path: str) -> EndpointCategory:
         return EndpointCategory.AUTH
     if path.startswith("/api/upload-audio"):
         return EndpointCategory.AUDIO_UPLOAD
+    if path.startswith("/api/upload-image"):
+        return EndpointCategory.IMAGE_UPLOAD
     if path.startswith("/api/synthesize"):
         return EndpointCategory.TTS_SYNTHESIS
     if path.startswith("/api/browse"):

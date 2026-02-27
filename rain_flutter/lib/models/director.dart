@@ -198,3 +198,84 @@ class DirectorTemplate {
         canDelegate: json['can_delegate'] == true,
       );
 }
+
+class DirectorStats {
+  final int pending;
+  final int running;
+  final int completed;
+  final int failed;
+  final int cancelled;
+  final int total;
+  final int inboxUnread;
+
+  const DirectorStats({
+    this.pending = 0,
+    this.running = 0,
+    this.completed = 0,
+    this.failed = 0,
+    this.cancelled = 0,
+    this.total = 0,
+    this.inboxUnread = 0,
+  });
+
+  factory DirectorStats.fromJson(Map<String, dynamic> json) {
+    final ts = json['task_stats'] as Map<String, dynamic>? ?? {};
+    return DirectorStats(
+      pending: (ts['pending'] as num?)?.toInt() ?? 0,
+      running: (ts['running'] as num?)?.toInt() ?? 0,
+      completed: (ts['completed'] as num?)?.toInt() ?? 0,
+      failed: (ts['failed'] as num?)?.toInt() ?? 0,
+      cancelled: (ts['cancelled'] as num?)?.toInt() ?? 0,
+      total: (ts['total'] as num?)?.toInt() ?? 0,
+      inboxUnread: (json['inbox_unread'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
+class ActivityItem {
+  final String type;
+  final String? directorId;
+  final String? directorName;
+  final String? emoji;
+  final String? title;
+  final String? preview;
+  final String? status;
+  final String? contentType;
+  final String? taskId;
+  final String? creatorId;
+  final String? assigneeId;
+  final double timestamp;
+  final bool? success;
+
+  const ActivityItem({
+    required this.type,
+    this.directorId,
+    this.directorName,
+    this.emoji,
+    this.title,
+    this.preview,
+    this.status,
+    this.contentType,
+    this.taskId,
+    this.creatorId,
+    this.assigneeId,
+    required this.timestamp,
+    this.success,
+  });
+
+  factory ActivityItem.fromJson(Map<String, dynamic> json) => ActivityItem(
+        type: json['type'] as String,
+        directorId: json['director_id'] as String?,
+        directorName: json['director_name'] as String?,
+        emoji: json['emoji'] as String?,
+        title: json['title'] as String?,
+        preview: json['preview'] as String?,
+        status: json['status'] as String?,
+        contentType: json['content_type'] as String?,
+        taskId: json['task_id'] as String?,
+        creatorId: json['creator_id'] as String?,
+        assigneeId: json['assignee_id'] as String?,
+        timestamp: (json['timestamp'] as num?)?.toDouble() ?? 0.0,
+        success: json['success'] as bool?,
+      );
+}

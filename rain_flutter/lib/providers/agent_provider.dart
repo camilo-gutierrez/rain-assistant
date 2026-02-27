@@ -273,6 +273,7 @@ class AgentNotifier extends StateNotifier<AgentState> {
   void updateLastScreenshot(String agentId, String image) {
     final agent = state.agents[agentId];
     if (agent == null) return;
+    agent.previousScreenshot = agent.lastScreenshot;
     agent.lastScreenshot = image;
     _notify();
   }

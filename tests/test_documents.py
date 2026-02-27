@@ -40,8 +40,8 @@ class TestParser:
             parse_file("/nonexistent/path/file.txt")
 
     def test_parse_unsupported_format(self, tmp_path):
-        f = tmp_path / "data.csv"
-        f.write_text("a,b,c", encoding="utf-8")
+        f = tmp_path / "data.xyz"
+        f.write_text("random binary", encoding="utf-8")
         from documents.parser import parse_file
         with pytest.raises(ValueError, match="Unsupported"):
             parse_file(str(f))

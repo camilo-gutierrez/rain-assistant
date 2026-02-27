@@ -83,6 +83,7 @@ function createAgentObject(id: string, label: string): Agent {
     displayInfo: null,
     lastScreenshot: null,
     computerIteration: 0,
+    monitors: [],
     // Sub-agents
     subAgents: [],
     // Auto-approve permissions (ephemeral)

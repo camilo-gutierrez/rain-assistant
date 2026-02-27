@@ -166,6 +166,15 @@ class L10n {
     'cu.iterationProgress': 'Step {current}',
     'cu.noScreenshot': 'Waiting for screenshot...',
     'cu.tapToExpand': 'Tap to expand',
+    'cu.longPressExpand': 'Long-press to expand',
+    'cu.pausedTitle': 'Iteration Limit Reached',
+    'cu.pausedBody': 'Completed {current} of {max} steps.',
+    'cu.pausedExtra': 'Additional steps: {n}',
+    'cu.continue': 'Continue',
+    'cu.stop': 'Stop',
+    'cu.clickHint': 'Hint sent at ({x}, {y})',
+    'cu.monitor': 'Monitor {n}',
+    'cu.diffToggle': 'Show changes',
 
     // A2UI Surfaces
     'a2ui.surfaceTitle': 'Interactive Surface',
@@ -275,6 +284,13 @@ class L10n {
     'voice.startTalkMode': 'Talk Mode',
     'voice.endConversation': 'End Conversation',
 
+    // Call
+    'call.connecting': 'Connecting...',
+    'call.mute': 'Mute',
+    'call.unmute': 'Unmute',
+    'call.speaker': 'Speaker',
+    'call.endCall': 'End Call',
+
     // Memories
     'memories.title': 'Memories',
     'memories.empty': 'No memories saved',
@@ -354,6 +370,23 @@ class L10n {
     'directors.manual': 'Manual',
     'directors.lastRun': 'Last run',
     'directors.install': 'Install',
+    'directors.activity': 'Activity',
+    'directors.activityEmpty': 'No recent activity',
+    'directors.statsPending': 'Pending',
+    'directors.statsRunning': 'Running',
+    'directors.statsCompleted': 'Completed',
+    'directors.statsFailed': 'Failed',
+    'directors.detail': 'Details',
+    'directors.lastResult': 'Last Result',
+    'directors.lastError': 'Last Error',
+    'directors.noResult': 'No results yet',
+    'directors.relatedInbox': 'Deliverables',
+    'directors.edit': 'Edit',
+    'directors.permLevel': 'Permission',
+    'directors.nextRun': 'Next Run',
+    'directors.cronError': 'Invalid cron (expected: min hour dom month dow)',
+    'directors.cronErrorRange': 'Cron value out of range',
+    'directors.newInboxItem': 'New deliverable from {name}',
 
     // Inbox
     'inbox.title': 'Inbox',
@@ -558,6 +591,15 @@ class L10n {
     'cu.iterationProgress': 'Paso {current}',
     'cu.noScreenshot': 'Esperando captura...',
     'cu.tapToExpand': 'Toca para expandir',
+    'cu.longPressExpand': 'Mantener para expandir',
+    'cu.pausedTitle': 'Limite de iteraciones alcanzado',
+    'cu.pausedBody': 'Se completaron {current} de {max} pasos.',
+    'cu.pausedExtra': 'Pasos adicionales: {n}',
+    'cu.continue': 'Continuar',
+    'cu.stop': 'Detener',
+    'cu.clickHint': 'Hint enviado en ({x}, {y})',
+    'cu.monitor': 'Monitor {n}',
+    'cu.diffToggle': 'Mostrar cambios',
 
     // A2UI Surfaces
     'a2ui.surfaceTitle': 'Superficie Interactiva',
@@ -667,6 +709,13 @@ class L10n {
     'voice.startTalkMode': 'Modo Conversación',
     'voice.endConversation': 'Terminar Conversación',
 
+    // Call
+    'call.connecting': 'Conectando...',
+    'call.mute': 'Silenciar',
+    'call.unmute': 'Activar mic',
+    'call.speaker': 'Altavoz',
+    'call.endCall': 'Colgar',
+
     // Memories
     'memories.title': 'Memorias',
     'memories.empty': 'No hay memorias guardadas',
@@ -746,6 +795,23 @@ class L10n {
     'directors.manual': 'Manual',
     'directors.lastRun': 'Última ejecución',
     'directors.install': 'Instalar',
+    'directors.activity': 'Actividad',
+    'directors.activityEmpty': 'Sin actividad reciente',
+    'directors.statsPending': 'Pendientes',
+    'directors.statsRunning': 'Ejecutando',
+    'directors.statsCompleted': 'Completadas',
+    'directors.statsFailed': 'Fallidas',
+    'directors.detail': 'Detalles',
+    'directors.lastResult': 'Último Resultado',
+    'directors.lastError': 'Último Error',
+    'directors.noResult': 'Sin resultados aún',
+    'directors.relatedInbox': 'Entregables',
+    'directors.edit': 'Editar',
+    'directors.permLevel': 'Permiso',
+    'directors.nextRun': 'Próxima Ejecución',
+    'directors.cronError': 'Cron inválido (esperado: min hora dom mes dow)',
+    'directors.cronErrorRange': 'Valor cron fuera de rango',
+    'directors.newInboxItem': 'Nuevo entregable de {name}',
 
     // Inbox
     'inbox.title': 'Bandeja de Entrada',

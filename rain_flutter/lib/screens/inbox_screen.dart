@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../app/l10n.dart';
 import '../models/director.dart';
 import '../providers/connection_provider.dart';
+import '../providers/directors_provider.dart';
 import '../providers/settings_provider.dart';
 import '../widgets/toast.dart';
 
@@ -15,11 +16,7 @@ class InboxScreen extends ConsumerStatefulWidget {
 }
 
 class _InboxScreenState extends ConsumerState<InboxScreen> {
-  List<InboxItem>? _items;
-  bool _loading = true;
-  String? _error;
-  int _unreadCount = 0;
-  String _filter = 'all'; // all | unread | approved | archived
+  String _filter = 'all';
 
   @override
   void initState() {
@@ -28,49 +25,21 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
   }
 
   Future<void> _loadInbox() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      final dio = ref.read(authServiceProvider).authenticatedDio;
-
-      // Load items with filter
-      final params = <String, String>{};
-      if (_filter != 'all') params['status'] = _filter;
-      final res = await dio.get('/api/directors/inbox', queryParameters: params);
-      if (!mounted) return;
-
-      final list = (res.data['items'] as List? ?? [])
-          .map((e) => InboxItem.fromJson(e as Map<String, dynamic>))
-          .toList();
-      final unread = (res.data['unread_count'] as num?)?.toInt() ?? 0;
-
-      setState(() {
-        _items = list;
-        _unreadCount = unread;
-        _loading = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _error = e.toString();
-        _loading = false;
-      });
-    }
+    final dio = ref.read(authServiceProvider).authenticatedDio;
+    await ref
+        .read(directorsProvider.notifier)
+        .loadInbox(dio, filter: _filter);
   }
 
   Future<void> _updateStatus(InboxItem item, String newStatus,
       {String? comment}) async {
     final lang = ref.read(settingsProvider).language;
-    try {
-      final dio = ref.read(authServiceProvider).authenticatedDio;
-      final body = <String, dynamic>{'status': newStatus};
-      if (comment != null && comment.isNotEmpty) {
-        body['user_comment'] = comment;
-      }
-      await dio.patch('/api/directors/inbox/${item.id}', data: body);
-      if (!mounted) return;
+    final dio = ref.read(authServiceProvider).authenticatedDio;
+    final ok = await ref
+        .read(directorsProvider.notifier)
+        .updateInboxStatus(dio, item, newStatus, comment: comment);
+    if (!mounted) return;
+    if (ok) {
       showToast(
         context,
         newStatus == 'approved'
@@ -81,9 +50,8 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
         type: ToastType.success,
       );
       await _loadInbox();
-    } catch (e) {
-      if (!mounted) return;
-      showToast(context, e.toString(), type: ToastType.error);
+    } else {
+      showToast(context, 'Error', type: ToastType.error);
     }
   }
 
@@ -91,16 +59,11 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
     if (item.status != 'unread') return;
     try {
       final dio = ref.read(authServiceProvider).authenticatedDio;
-      await dio.patch('/api/directors/inbox/${item.id}',
+      await dio.patch('/directors/inbox/${item.id}',
           data: {'status': 'read'});
       if (!mounted) return;
-      // Silently update unread count
-      setState(() {
-        if (_unreadCount > 0) _unreadCount--;
-      });
-    } catch (_) {
-      // Silently ignore read-mark failures
-    }
+      ref.read(directorsProvider.notifier).markAsRead(item.id);
+    } catch (_) {}
   }
 
   void _setFilter(String filter) {
@@ -113,6 +76,7 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final lang = ref.watch(settingsProvider).language;
+    final s = ref.watch(directorsProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -120,7 +84,7 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(L10n.t('inbox.title', lang)),
-            if (_unreadCount > 0) ...[
+            if (s.unreadCount > 0) ...[
               const SizedBox(width: 8),
               Container(
                 padding:
@@ -130,7 +94,7 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Text(
-                  '$_unreadCount',
+                  '${s.unreadCount}',
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.bold,
@@ -182,26 +146,24 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
               ],
             ),
           ),
-
-          // Content
-          Expanded(child: _buildContent(cs, lang)),
+          Expanded(child: _buildContent(cs, lang, s)),
         ],
       ),
     );
   }
 
-  Widget _buildContent(ColorScheme cs, String lang) {
-    if (_loading) {
+  Widget _buildContent(ColorScheme cs, String lang, DirectorsState s) {
+    if (s.inboxLoading && s.inboxItems.isEmpty) {
       return const Center(child: CircularProgressIndicator());
     }
-    if (_error != null) {
+    if (s.inboxError != null && s.inboxItems.isEmpty) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(Icons.error_outline, size: 48, color: cs.error),
             const SizedBox(height: 16),
-            Text(_error!,
+            Text(s.inboxError!,
                 textAlign: TextAlign.center,
                 style: TextStyle(color: cs.onSurfaceVariant)),
             const SizedBox(height: 16),
@@ -214,13 +176,14 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
         ),
       );
     }
-    if (_items == null || _items!.isEmpty) {
+    if (s.inboxItems.isEmpty) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(Icons.inbox_outlined,
-                size: 48, color: cs.onSurfaceVariant.withValues(alpha: 0.3)),
+                size: 48,
+                color: cs.onSurfaceVariant.withValues(alpha: 0.3)),
             const SizedBox(height: 16),
             Text(L10n.t('inbox.empty', lang),
                 style: TextStyle(color: cs.onSurfaceVariant)),
@@ -238,26 +201,24 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
       onRefresh: _loadInbox,
       child: ListView.separated(
         padding: const EdgeInsets.only(top: 4, bottom: 16),
-        itemCount: _items!.length,
+        itemCount: s.inboxItems.length,
         separatorBuilder: (_, __) => const SizedBox(height: 4),
         itemBuilder: (_, i) => _InboxCard(
-          item: _items![i],
+          item: s.inboxItems[i],
           lang: lang,
-          onMarkRead: () => _markAsRead(_items![i]),
-          onApprove: () => _updateStatus(_items![i], 'approved'),
-          onReject: () => _updateStatus(_items![i], 'rejected'),
-          onArchive: () => _updateStatus(_items![i], 'archived'),
+          onMarkRead: () => _markAsRead(s.inboxItems[i]),
+          onApprove: () => _updateStatus(s.inboxItems[i], 'approved'),
+          onReject: () => _updateStatus(s.inboxItems[i], 'rejected'),
+          onArchive: () => _updateStatus(s.inboxItems[i], 'archived'),
           onComment: (c) =>
-              _updateStatus(_items![i], _items![i].status, comment: c),
+              _updateStatus(s.inboxItems[i], s.inboxItems[i].status, comment: c),
         ),
       ),
     );
   }
 }
 
-// ---------------------------------------------------------------------------
-// Filter chip
-// ---------------------------------------------------------------------------
+// ── Filter chip ──
 
 class _FilterChip extends StatelessWidget {
   final String label;
@@ -294,9 +255,7 @@ class _FilterChip extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Inbox card
-// ---------------------------------------------------------------------------
+// ── Inbox card ──
 
 class _InboxCard extends StatefulWidget {
   final InboxItem item;
@@ -392,8 +351,10 @@ class _InboxCardState extends State<_InboxCard> {
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
           side: item.status == 'unread'
-              ? BorderSide(color: cs.primary.withValues(alpha: 0.4), width: 1)
-              : BorderSide(color: cs.outlineVariant.withValues(alpha: 0.3)),
+              ? BorderSide(
+                  color: cs.primary.withValues(alpha: 0.4), width: 1)
+              : BorderSide(
+                  color: cs.outlineVariant.withValues(alpha: 0.3)),
         ),
         child: InkWell(
           onTap: _toggleExpand,
@@ -406,7 +367,6 @@ class _InboxCardState extends State<_InboxCard> {
                 // Header
                 Row(
                   children: [
-                    // Status dot
                     Container(
                       width: 10,
                       height: 10,
@@ -416,8 +376,6 @@ class _InboxCardState extends State<_InboxCard> {
                       ),
                     ),
                     const SizedBox(width: 10),
-
-                    // Title + director
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -438,17 +396,12 @@ class _InboxCardState extends State<_InboxCard> {
                           Text(
                             '${item.directorName} • ${_formatTimestamp(item.createdAt)}',
                             style: TextStyle(
-                              fontSize: 12,
-                              color: cs.onSurfaceVariant,
-                            ),
+                                fontSize: 12, color: cs.onSurfaceVariant),
                           ),
                         ],
                       ),
                     ),
-
                     const SizedBox(width: 8),
-
-                    // Content type chip
                     Container(
                       padding: const EdgeInsets.symmetric(
                           horizontal: 8, vertical: 3),
@@ -465,9 +418,7 @@ class _InboxCardState extends State<_InboxCard> {
                           Text(
                             _contentTypeLabel(item.contentType),
                             style: TextStyle(
-                              fontSize: 11,
-                              color: cs.onSurfaceVariant,
-                            ),
+                                fontSize: 11, color: cs.onSurfaceVariant),
                           ),
                         ],
                       ),
@@ -481,7 +432,6 @@ class _InboxCardState extends State<_InboxCard> {
                   const Divider(height: 1),
                   const SizedBox(height: 12),
 
-                  // Markdown content
                   Container(
                     width: double.infinity,
                     constraints: const BoxConstraints(maxHeight: 400),
@@ -506,7 +456,6 @@ class _InboxCardState extends State<_InboxCard> {
                     ),
                   ),
 
-                  // User comment if exists
                   if (item.userComment != null &&
                       item.userComment!.isNotEmpty) ...[
                     const SizedBox(height: 8),
@@ -514,7 +463,8 @@ class _InboxCardState extends State<_InboxCard> {
                       width: double.infinity,
                       padding: const EdgeInsets.all(10),
                       decoration: BoxDecoration(
-                        color: cs.primaryContainer.withValues(alpha: 0.3),
+                        color:
+                            cs.primaryContainer.withValues(alpha: 0.3),
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Text(
@@ -528,7 +478,6 @@ class _InboxCardState extends State<_InboxCard> {
                     ),
                   ],
 
-                  // Comment input
                   const SizedBox(height: 12),
                   TextField(
                     controller: _commentCtrl,
@@ -551,7 +500,6 @@ class _InboxCardState extends State<_InboxCard> {
                     style: const TextStyle(fontSize: 13),
                   ),
 
-                  // Action buttons
                   if (item.status != 'approved' &&
                       item.status != 'rejected' &&
                       item.status != 'archived') ...[
@@ -565,15 +513,15 @@ class _InboxCardState extends State<_InboxCard> {
                             label: Text(L10n.t('inbox.approve', lang),
                                 style: const TextStyle(fontSize: 13)),
                             style: FilledButton.styleFrom(
-                              backgroundColor: Colors.green,
-                            ),
+                                backgroundColor: Colors.green),
                           ),
                         ),
                         const SizedBox(width: 8),
                         Expanded(
                           child: OutlinedButton.icon(
                             onPressed: widget.onReject,
-                            icon: Icon(Icons.close, size: 16, color: cs.error),
+                            icon: Icon(Icons.close,
+                                size: 16, color: cs.error),
                             label: Text(L10n.t('inbox.reject', lang),
                                 style: TextStyle(
                                     fontSize: 13, color: cs.error)),

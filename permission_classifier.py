@@ -146,7 +146,7 @@ def classify(tool_name: str, tool_input: dict[str, Any]) -> PermissionLevel:
     # manage_documents: read-only actions are GREEN, write actions are YELLOW
     if tool_name == "manage_documents":
         action = str(tool_input.get("action", ""))
-        if action in ("search", "list", "show"):
+        if action in ("search", "list", "show", "stats"):
             return PermissionLevel.GREEN
         return PermissionLevel.YELLOW
 

@@ -1,11 +1,12 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, ImagePlus, X } from "lucide-react";
+import { Send, ImagePlus, X, Loader2 } from "lucide-react";
 import { useAgentStore } from "@/stores/useAgentStore";
 import { useConnectionStore } from "@/stores/useConnectionStore";
 import { useToastStore } from "@/stores/useToastStore";
 import { useTranslation } from "@/hooks/useTranslation";
+import { uploadImages } from "@/lib/api";
 import type { ImageAttachment } from "@/lib/types";
 
 const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
@@ -24,7 +25,9 @@ export default function ChatInput() {
   const setProcessing = useAgentStore((s) => s.setProcessing);
   const setAgentStatus = useAgentStore((s) => s.setAgentStatus);
   const send = useConnectionStore((s) => s.send);
+  const authToken = useConnectionStore((s) => s.authToken);
   const { t } = useTranslation();
+  const [isUploading, setIsUploading] = useState(false);
 
   const activeAgent = activeAgentId ? agents[activeAgentId] : null;
   const isProcessing = activeAgent?.isProcessing || false;
@@ -76,7 +79,7 @@ export default function ChatInput() {
         const dataUrl = reader.result as string;
         // Strip "data:image/png;base64," prefix
         const base64 = dataUrl.split(",")[1];
-        resolve({ base64, mediaType: file.type });
+        resolve({ file, base64, mediaType: file.type });
       };
       reader.onerror = () => resolve(null);
       reader.readAsDataURL(file);
@@ -134,32 +137,60 @@ export default function ChatInput() {
     setImages((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const handleSend = () => {
+  const handleSend = async () => {
     const trimmed = text.trim();
-    if ((!trimmed && images.length === 0) || !activeAgentId || !hasCwd || isProcessing) return;
+    if ((!trimmed && images.length === 0) || !activeAgentId || !hasCwd || isProcessing || isUploading) return;
 
+    const currentImages = [...images];
+
+    // Clear input immediately for responsive UX
+    setText("");
+    setImages([]);
+
+    // Show optimistic user message
     appendMessage(activeAgentId, {
       id: crypto.randomUUID(),
       type: "user",
       text: trimmed,
       timestamp: Date.now(),
       animate: true,
-      ...(images.length > 0 ? { images: [...images] } : {}),
+      ...(currentImages.length > 0 ? { images: currentImages } : {}),
     });
+    setProcessing(activeAgentId, true);
+    setAgentStatus(activeAgentId, "working");
+
+    // Upload images via HTTP if present
+    let imageIds: string[] | undefined;
+    const filesToUpload = currentImages.filter((img) => img.file).map((img) => img.file!);
+    if (filesToUpload.length > 0) {
+      setIsUploading(true);
+      try {
+        imageIds = await uploadImages(filesToUpload, authToken);
+        if (imageIds.length === 0) {
+          useToastStore.getState().addToast({ type: "error", message: t("toast.sendFailed") });
+          setProcessing(activeAgentId, false);
+          setAgentStatus(activeAgentId, "idle");
+          setIsUploading(false);
+          return;
+        }
+      } catch {
+        useToastStore.getState().addToast({ type: "error", message: t("toast.sendFailed") });
+        setProcessing(activeAgentId, false);
+        setAgentStatus(activeAgentId, "idle");
+        setIsUploading(false);
+        return;
+      }
+      setIsUploading(false);
+    }
 
     const sent = send({
       type: "send_message",
       text: trimmed,
       agent_id: activeAgentId,
-      ...(images.length > 0 ? { images: [...images] } : {}),
+      ...(imageIds && imageIds.length > 0 ? { image_ids: imageIds } : {}),
     });
 
-    if (sent) {
-      setProcessing(activeAgentId, true);
-      setAgentStatus(activeAgentId, "working");
-      setText("");
-      setImages([]);
-    } else {
+    if (!sent) {
       appendMessage(activeAgentId, {
         id: crypto.randomUUID(),
         type: "system",
@@ -167,11 +198,9 @@ export default function ChatInput() {
         timestamp: Date.now(),
         animate: true,
       });
-
-      useToastStore.getState().addToast({
-        type: "error",
-        message: t("toast.sendFailed"),
-      });
+      useToastStore.getState().addToast({ type: "error", message: t("toast.sendFailed") });
+      setProcessing(activeAgentId, false);
+      setAgentStatus(activeAgentId, "idle");
     }
 
     textareaRef.current?.focus();
@@ -249,10 +278,10 @@ export default function ChatInput() {
         />
         <button
           onClick={handleSend}
-          disabled={(!text.trim() && images.length === 0) || isProcessing || !hasCwd}
+          disabled={(!text.trim() && images.length === 0) || isProcessing || isUploading || !hasCwd}
           className="min-w-[44px] min-h-[44px] w-11 h-11 flex items-center justify-center rounded-full bg-primary text-on-primary transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:bg-primary-dark shrink-0"
         >
-          <Send size={18} />
+          {isUploading ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
         </button>
       </div>
     </div>

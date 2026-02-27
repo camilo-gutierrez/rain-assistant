@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -10,12 +9,15 @@ import '../models/agent.dart';
 import '../models/message.dart';
 import '../providers/agent_provider.dart';
 import '../providers/audio_provider.dart';
+import '../providers/call_provider.dart';
 import '../providers/connection_provider.dart';
 import '../providers/settings_provider.dart';
-import '../services/voice_mode_service.dart';
+import '../services/call_service.dart';
+import '../services/image_service.dart';
 import '../services/websocket_service.dart';
 import '../widgets/agent_manager_sheet.dart';
 import '../widgets/animated_message.dart';
+import '../widgets/call_overlay.dart';
 import '../widgets/chat_input_bar.dart';
 import '../widgets/chat_messages.dart';
 import '../widgets/computer_live_display.dart';
@@ -23,7 +25,6 @@ import '../widgets/cwd_picker_sheet.dart';
 import '../widgets/mode_switcher.dart';
 import '../widgets/model_switcher.dart';
 import '../widgets/rate_limit_badge.dart';
-import '../widgets/talk_mode_overlay.dart';
 import 'alter_egos_screen.dart';
 import 'directors_screen.dart';
 import 'history_screen.dart';
@@ -50,17 +51,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   final _imagePicker = ImagePicker();
   final List<ImageAttachment> _pendingImages = [];
 
-  // Voice mode
-  final _voiceService = VoiceModeService();
-  bool _talkModeActive = false;
-  String _voiceStateLabel = '';
-  StreamSubscription<Map<String, dynamic>>? _voiceMsgSub;
+  // Call system
+  int _lastMessageCountForTts = 0;
+  StreamSubscription<Map<String, dynamic>>? _callResponseSub;
 
   @override
   void initState() {
     super.initState();
     _scrollController.addListener(_onScroll);
-    _voiceService.voiceState.addListener(_onVoiceStateChanged);
   }
 
   @override
@@ -68,74 +66,71 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     _inputController.dispose();
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
-    _voiceMsgSub?.cancel();
-    _voiceService.voiceState.removeListener(_onVoiceStateChanged);
-    _voiceService.dispose();
+    _callResponseSub?.cancel();
     super.dispose();
   }
 
-  void _onVoiceStateChanged() {
-    final state = _voiceService.voiceState.value;
-    final lang = ref.read(settingsProvider).language;
-    final label = switch (state) {
-      VoiceState.listening => L10n.t('voice.listening', lang),
-      VoiceState.wakeListening => L10n.t('voice.wakeListening', lang),
-      VoiceState.recording => L10n.t('voice.recording', lang),
-      VoiceState.transcribing => L10n.t('voice.transcribing', lang),
-      VoiceState.processing => L10n.t('voice.processing', lang),
-      VoiceState.speaking => L10n.t('voice.speaking', lang),
-      VoiceState.idle => '',
+  /// Start or end a voice call.
+  Future<void> _toggleCall() async {
+    final callService = ref.read(callServiceProvider);
+
+    if (callService.isInCall) {
+      await callService.endCall();
+      _callResponseSub?.cancel();
+      _callResponseSub = null;
+      if (mounted) setState(() {});
+      return;
+    }
+
+    final agentId = ref.read(agentProvider).activeAgentId;
+    if (agentId.isEmpty) return;
+    final settings = ref.read(settingsProvider);
+
+    // Wire up transcription → auto-send
+    callService.onTranscriptionReady = (text) {
+      _inputController.text = text;
+      _sendMessage();
     };
-    if (mounted) setState(() => _voiceStateLabel = label);
+
+    // Listen for assistant responses to auto-TTS
+    _startCallResponseListener(callService);
+
+    await callService.startCall(
+      agentId: agentId,
+      voiceMode: settings.voiceMode,
+      vadSensitivity: settings.vadSensitivity,
+      silenceTimeout: settings.silenceTimeout,
+      ttsVoice: settings.ttsVoice,
+      ttsEnabled: true, // always enable TTS during calls
+    );
+
+    if (mounted) setState(() {});
   }
 
-  void _startListeningVoiceMessages() {
-    _voiceMsgSub?.cancel();
+  /// Listen for assistant messages during a call to auto-play TTS.
+  void _startCallResponseListener(CallService callService) {
+    _callResponseSub?.cancel();
     final ws = ref.read(webSocketServiceProvider);
-    _voiceMsgSub = ws.messageStream.listen((msg) {
-      if (_voiceService.handleMessage(msg)) {
-        // Voice transcription auto-send
-        final text = _voiceService.lastTranscription.value;
-        if (msg['type'] == 'voice_transcription' &&
-            msg['is_final'] == true &&
-            text.isNotEmpty) {
-          _inputController.text = text;
-          _sendMessage();
-          _voiceService.lastTranscription.value = '';
+    _lastMessageCountForTts = ref.read(agentProvider).activeAgent?.messages.length ?? 0;
+
+    _callResponseSub = ws.messageStream.listen((msg) {
+      if (!callService.isActive) return;
+
+      final type = msg['type'] as String?;
+      // When assistant finishes streaming a response
+      if (type == 'stream_end' || type == 'response_complete') {
+        final agent = ref.read(agentProvider).activeAgent;
+        if (agent == null) return;
+        final messages = agent.messages;
+        if (messages.length > _lastMessageCountForTts) {
+          final lastMsg = messages.last;
+          if (lastMsg is AssistantMessage && lastMsg.text.isNotEmpty) {
+            callService.speakResponse(lastMsg.text);
+          }
+          _lastMessageCountForTts = messages.length;
         }
       }
     });
-  }
-
-  void _toggleTalkMode() {
-    final agentId = ref.read(agentProvider).activeAgentId;
-    if (agentId.isEmpty) return;
-    final ws = ref.read(webSocketServiceProvider);
-    final settings = ref.read(settingsProvider);
-
-    if (_talkModeActive) {
-      ws.send({'type': 'talk_mode_stop', 'agent_id': agentId});
-      ws.send({'type': 'voice_mode_set', 'mode': 'push-to-talk', 'agent_id': agentId});
-      _voiceService.deactivate();
-      _voiceMsgSub?.cancel();
-      setState(() => _talkModeActive = false);
-    } else {
-      ws.send({
-        'type': 'voice_mode_set',
-        'mode': settings.voiceMode,
-        'agent_id': agentId,
-        'vad_threshold': settings.vadSensitivity,
-        'silence_timeout': settings.silenceTimeout,
-      });
-      if (settings.voiceMode == 'talk-mode') {
-        ws.send({'type': 'talk_mode_start', 'agent_id': agentId});
-      }
-      _voiceService.activate(
-        settings.voiceMode == 'wake-word' ? VoiceMode.wakeWord : VoiceMode.talkMode,
-      );
-      _startListeningVoiceMessages();
-      setState(() => _talkModeActive = true);
-    }
   }
 
   void _onScroll() {
@@ -226,7 +221,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     };
   }
 
-  void _sendMessage() {
+  Future<void> _sendMessage() async {
     final text = _inputController.text.trim();
     if (text.isEmpty && _pendingImages.isEmpty) return;
 
@@ -236,17 +231,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
     final images = _pendingImages.isNotEmpty ? List<ImageAttachment>.from(_pendingImages) : null;
 
-    final ws = ref.read(webSocketServiceProvider);
-    final payload = <String, dynamic>{
-      'type': 'send_message',
-      'text': text,
-      'agent_id': agentId,
-    };
-    if (images != null) {
-      payload['images'] = images.map((img) => img.toJson()).toList();
-    }
-    ws.send(payload);
+    // Clear input immediately for responsive UX
+    _inputController.clear();
+    _pendingImages.clear();
+    _userScrolledUp = false;
+    if (mounted) setState(() {});
 
+    // Show optimistic user message right away
     ref.read(agentProvider.notifier).appendMessage(
           agentId,
           UserMessage.create(text, images: images),
@@ -255,12 +246,46 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     ref
         .read(agentProvider.notifier)
         .setAgentStatus(agentId, AgentStatus.working);
-
-    _inputController.clear();
-    _pendingImages.clear();
-    _userScrolledUp = false;
     _scrollToBottom(force: true);
-    if (mounted) setState(() {});
+
+    // Upload images via HTTP, then send only IDs through WebSocket
+    List<String>? imageIds;
+    if (images != null && images.isNotEmpty) {
+      try {
+        final imageService = ImageService(
+          ref.read(authServiceProvider).authenticatedDio,
+        );
+        imageIds = await imageService.uploadImages(
+          images.map((img) => (
+            bytes: base64Decode(img.base64),
+            mediaType: img.mediaType,
+            filename: 'image.${img.mediaType.split("/").last}',
+          )).toList(),
+        );
+        if (imageIds.isEmpty) {
+          debugPrint('[Chat] All image uploads failed');
+          ref.read(agentProvider.notifier).setProcessing(agentId, false);
+          ref.read(agentProvider.notifier).setAgentStatus(agentId, AgentStatus.idle);
+          return;
+        }
+      } catch (e) {
+        debugPrint('[Chat] Image upload error: $e');
+        ref.read(agentProvider.notifier).setProcessing(agentId, false);
+        ref.read(agentProvider.notifier).setAgentStatus(agentId, AgentStatus.idle);
+        return;
+      }
+    }
+
+    final ws = ref.read(webSocketServiceProvider);
+    final payload = <String, dynamic>{
+      'type': 'send_message',
+      'text': text,
+      'agent_id': agentId,
+    };
+    if (imageIds != null && imageIds.isNotEmpty) {
+      payload['image_ids'] = imageIds;
+    }
+    ws.send(payload);
   }
 
   void _interrupt() {
@@ -706,45 +731,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           else if (agent != null && agent.mode == AgentMode.coding && agent.messages.isNotEmpty)
             const SizedBox.shrink(), // placeholder for mode toggle if needed
 
-          // Live transcription preview
-          ValueListenableBuilder<String>(
-            valueListenable: _voiceService.partialTranscription,
-            builder: (context, partial, _) {
-              if (!_talkModeActive || partial.isEmpty) {
-                return const SizedBox.shrink();
-              }
-              return Container(
-                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: cs.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: cs.primary.withValues(alpha: 0.3),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.mic, size: 16, color: cs.primary.withValues(alpha: 0.7)),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        partial,
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontStyle: FontStyle.italic,
-                          color: cs.onSurfaceVariant,
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            },
-          ),
-
           // Input bar
           ChatInputBar(
             controller: _inputController,
@@ -755,9 +741,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             onToggleRecording: _toggleRecording,
             lang: lang,
             voiceMode: ref.watch(settingsProvider).voiceMode,
-            talkModeActive: _talkModeActive,
-            onToggleTalkMode: _toggleTalkMode,
-            voiceStateLabel: _talkModeActive ? _voiceStateLabel : null,
+            isInCall: ref.read(callServiceProvider).isInCall,
+            onCall: _toggleCall,
             pendingImages: _pendingImages,
             onPickImage: _pickImages,
             onTakePhoto: _takePhoto,
@@ -790,12 +775,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               ),
             ),
 
-          // Talk Mode overlay (covers screen when active in talk-mode)
-          if (_talkModeActive && ref.watch(settingsProvider).voiceMode == 'talk-mode')
+          // Call overlay (covers screen when call is active)
+          if (ref.read(callServiceProvider).isInCall)
             Positioned.fill(
-              child: TalkModeOverlay(
-                voiceService: _voiceService,
-                onEnd: _toggleTalkMode,
+              child: CallOverlay(
+                callService: ref.read(callServiceProvider),
+                onEnd: _toggleCall,
                 lang: lang,
               ),
             ),

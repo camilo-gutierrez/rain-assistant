@@ -83,6 +83,7 @@ from shared_state import (
     CONFIG_FILE,
     _AGENT_ID_RE,
     WS_MAX_MESSAGE_BYTES,
+    WS_MAX_IMAGE_MESSAGE_BYTES,
     WS_MAX_TEXT_LENGTH,
     WS_MAX_PATH_LENGTH,
     WS_MAX_KEY_LENGTH,
@@ -101,10 +102,11 @@ from shared_state import (
     _VALID_PROVIDERS,
     MAX_PIN_ATTEMPTS,
     LOCKOUT_SECONDS,
+    IMAGE_PENDING_TTL_SECONDS,
 )
 
 # Route modules
-from routes import auth_router, agents_router, files_router, settings_router, directors_router
+from routes import auth_router, agents_router, files_router, settings_router, directors_router, images_router
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -471,6 +473,21 @@ async def _cleanup_expired_tokens():
             print(f"  [AUTH] Cleaned up {db_cleaned} expired session(s) from DB", flush=True)
 
 
+async def _cleanup_expired_images():
+    """Periodically remove expired pending images from memory."""
+    while True:
+        await asyncio.sleep(60)
+        now = time.time()
+        expired = [
+            img_id for img_id, img in shared_state.pending_images.items()
+            if now - img["uploaded_at"] > IMAGE_PENDING_TTL_SECONDS
+        ]
+        for img_id in expired:
+            shared_state.pending_images.pop(img_id, None)
+        if expired:
+            _logger.info("Cleaned up %d expired pending image(s)", len(expired))
+
+
 async def _scheduler_execute_ai_prompt(task_name: str, prompt: str) -> tuple[str | None, str | None]:
     """Execute an ai_prompt scheduled task using a temporary provider instance.
 
@@ -737,6 +754,13 @@ async def _scheduler_loop():
                     )
                     mark_director_run(director_id, result=result_text, error=error_text, cost=cost)
                     _sched_logger.info("[DIRECTORS] %s completed (schedule)", director_id)
+                    await shared_state.notify_user(director_user, {
+                        "type": "director_event",
+                        "event": "run_complete",
+                        "director_id": director_id,
+                        "director_name": director.get("name", ""),
+                        "success": not bool(error_text),
+                    })
                 except asyncio.TimeoutError:
                     mark_director_run(director_id, error="Execution timed out after 300s")
                     _sched_logger.error("[DIRECTORS] %s timed out", director_id)
@@ -776,6 +800,14 @@ async def _scheduler_loop():
                     else:
                         complete_task(dtask["id"], {"result": result_text, "cost": cost}, task_user)
                     _sched_logger.info("[DIRECTORS] Task %s for %s completed", dtask["id"], assignee_id)
+                    await shared_state.notify_user(task_user, {
+                        "type": "director_event",
+                        "event": "task_complete",
+                        "director_id": assignee_id,
+                        "director_name": director.get("name", ""),
+                        "task_id": dtask["id"],
+                        "success": not bool(error_text),
+                    })
                 except asyncio.TimeoutError:
                     fail_task(dtask["id"], "Task execution timed out after 300s", task_user)
                     _sched_logger.error("[DIRECTORS] Task %s timed out", dtask["id"])
@@ -830,15 +862,21 @@ async def lifespan(application: FastAPI):
     await loop.run_in_executor(None, transcriber.load_model)
     cleanup_task = asyncio.create_task(_cleanup_expired_tokens())
     scheduler_task = asyncio.create_task(_scheduler_loop())
+    image_cleanup_task = asyncio.create_task(_cleanup_expired_images())
     yield
     cleanup_task.cancel()
     scheduler_task.cancel()
+    image_cleanup_task.cancel()
     try:
         await cleanup_task
     except asyncio.CancelledError:
         pass
     try:
         await scheduler_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await image_cleanup_task
     except asyncio.CancelledError:
         pass
 
@@ -1211,6 +1249,7 @@ app.include_router(agents_router)
 app.include_router(files_router)
 app.include_router(settings_router)
 app.include_router(directors_router)
+app.include_router(images_router)
 
 # Inject transcriber/synthesizer into settings routes (avoids circular imports)
 from routes.settings import init_settings_deps
@@ -1375,6 +1414,9 @@ async def websocket_endpoint(ws: WebSocket):
             await send({"type": "ping", "ts": time.time()})
 
     heartbeat_task = asyncio.create_task(heartbeat_loop())
+
+    # Register send function for WebSocket push notifications (directors, etc.)
+    shared_state._active_user_senders.setdefault(user_id, []).append(send)
 
     # Notify frontend if API key or OAuth was pre-loaded from config
     if api_key is not None and (_cfg_auth_mode == "oauth" or api_key):
@@ -1759,6 +1801,95 @@ async def websocket_endpoint(ws: WebSocket):
             except Exception:
                 pass
 
+    # ── Computer Use tool executor (shared by main loop + continuation) ──
+    async def _execute_cu_tool(
+        tool_name, tool_input, executor, agent_id, agents_ref,
+        send_ws, pending_perms, perm_responses, action_desc, iterations,
+    ):
+        """Execute a single computer use tool call with permissions. Returns result_content."""
+        level = classify(tool_name, tool_input)
+        if tool_name == "computer" and tool_input.get("action") != "screenshot":
+            if level == PermissionLevel.GREEN:
+                level = PermissionLevel.YELLOW
+
+        if agents.get(agent_id, {}).get("auto_approve", False):
+            if level != PermissionLevel.GREEN:
+                database.log_permission_decision(agent_id, tool_name, tool_input, level.value, "auto_approved")
+        elif level != PermissionLevel.GREEN:
+            request_id = f"perm_{secrets.token_hex(8)}"
+            event = asyncio.Event()
+            pending_perms[request_id] = event
+            await send_ws({
+                "type": "permission_request", "request_id": request_id, "agent_id": agent_id,
+                "tool": f"computer:{tool_input.get('action', tool_name)}" if tool_name == "computer" else tool_name,
+                "input": tool_input, "level": level.value,
+                "reason": action_desc if level == PermissionLevel.RED else "",
+            })
+            try:
+                await asyncio.wait_for(event.wait(), timeout=300)
+            except asyncio.TimeoutError:
+                pending_perms.pop(request_id, None)
+                perm_responses.pop(request_id, None)
+                database.log_permission_decision(agent_id, tool_name, tool_input, level.value, "timeout")
+                return [{"type": "text", "text": "Permission request timed out."}]
+
+            resp = perm_responses.pop(request_id, {})
+            pending_perms.pop(request_id, None)
+            approved = resp.get("approved", False)
+            if level == PermissionLevel.RED and approved:
+                pin_val = resp.get("pin", "")
+                pin_hash = config.get("pin_hash", "")
+                try:
+                    pin_valid = bool(pin_val) and bcrypt.checkpw(pin_val.encode("utf-8"), pin_hash.encode("utf-8"))
+                except Exception:
+                    pin_valid = False
+                if not pin_valid:
+                    approved = False
+            if not approved:
+                database.log_permission_decision(agent_id, tool_name, tool_input, level.value, "denied")
+                return [{"type": "text", "text": "Action denied by user."}]
+            database.log_permission_decision(agent_id, tool_name, tool_input, level.value, "approved")
+
+        if tool_name == "computer":
+            action = tool_input.get("action", "screenshot")
+            result_content = await executor.execute_action(action, tool_input)
+            for item in result_content:
+                if item.get("type") == "image":
+                    await send_ws({
+                        "type": "computer_screenshot",
+                        "agent_id": agent_id,
+                        "image": item["source"]["data"],
+                        "action": action,
+                        "description": action_desc,
+                        "iteration": iterations,
+                        "media_type": item["source"].get("media_type", "image/png"),
+                        "changed": not any(
+                            t.get("type") == "text" and t.get("text") == "[screenshot unchanged]"
+                            for t in result_content
+                        ),
+                    })
+        elif tool_name == "bash":
+            cmd = tool_input.get("command", "")
+            if cmd and not _is_safe_scheduled_command(cmd):
+                result_content = [{"type": "text", "text": "Command blocked: contains dangerous pattern."}]
+            else:
+                try:
+                    proc = await asyncio.create_subprocess_shell(cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+                    output = (stdout or b"").decode(errors="replace") + (stderr or b"").decode(errors="replace")
+                    result_content = [{"type": "text", "text": output[:10000]}]
+                except asyncio.TimeoutError:
+                    result_content = [{"type": "text", "text": "Command timed out (30s)."}]
+                except Exception as e:
+                    result_content = [{"type": "text", "text": f"Error: {e}"}]
+        elif tool_name == "str_replace_based_edit_tool":
+            from computer_use import handle_text_editor
+            agent_cwd = agents_ref.get(agent_id, {}).get("cwd", ".")
+            result_content = await handle_text_editor(tool_input, agent_cwd)
+        else:
+            result_content = [{"type": "text", "text": f"Unknown tool: {tool_name}"}]
+        return result_content
+
     # ── Computer Use agent loop ─────────────────────────────────────
     async def _computer_use_loop(
         agent_id: str,
@@ -1816,10 +1947,20 @@ async def websocket_endpoint(ws: WebSocket):
         total_input_tokens = 0
         total_output_tokens = 0
         start_time = time.time()
+        max_iterations = COMPUTER_USE_MAX_ITERATIONS
 
         try:
-            while iterations < COMPUTER_USE_MAX_ITERATIONS:
+            while iterations < max_iterations:
                 iterations += 1
+
+                # Phase 5: inject pending hints from interactive screenshots
+                agent_data = agents_ref.get(agent_id, {})
+                pending_hints = agent_data.pop("pending_hints", [])
+                for hint in pending_hints:
+                    hint_msg = hint.get("text", "")
+                    if hint.get("x") is not None:
+                        hint_msg += f" (at coordinates {hint['x']}, {hint['y']})"
+                    messages.append({"role": "user", "content": [{"type": "text", "text": f"[User hint]: {hint_msg}"}]})
 
                 response = await client.beta.messages.create(
                     model=COMPUTER_USE_MODEL,
@@ -1855,10 +1996,8 @@ async def websocket_endpoint(ws: WebSocket):
                     elif block.type == "tool_use":
                         tool_name = block.name
                         tool_input = block.input if hasattr(block, "input") else {}
-
                         action_desc = describe_action(tool_name, tool_input)
 
-                        # Send action preview to frontend
                         await send_ws({
                             "type": "computer_action",
                             "agent_id": agent_id,
@@ -1869,133 +2008,23 @@ async def websocket_endpoint(ws: WebSocket):
                             "iteration": iterations,
                         })
 
-                        # ── Permission check via existing system ──
-                        level = classify(tool_name, tool_input)
+                        result_content = await _execute_cu_tool(
+                            tool_name, tool_input, executor, agent_id, agents_ref,
+                            send_ws, pending_perms, perm_responses, action_desc, iterations,
+                        )
 
-                        # For computer tool, always request permission unless screenshot
-                        if tool_name == "computer" and tool_input.get("action") != "screenshot":
-                            if level == PermissionLevel.GREEN:
-                                level = PermissionLevel.YELLOW
-
-                        # AUTO-APPROVE: skip permission UI if agent has auto-approve
-                        if agents.get(agent_id, {}).get("auto_approve", False):
-                            if level != PermissionLevel.GREEN:
-                                database.log_permission_decision(
-                                    agent_id, tool_name, tool_input, level.value, "auto_approved",
-                                )
-                        elif level != PermissionLevel.GREEN:
-                            request_id = f"perm_{secrets.token_hex(8)}"
-                            event = asyncio.Event()
-                            pending_perms[request_id] = event
-
-                            await send_ws({
-                                "type": "permission_request",
-                                "request_id": request_id,
-                                "agent_id": agent_id,
-                                "tool": f"computer:{tool_input.get('action', tool_name)}" if tool_name == "computer" else tool_name,
-                                "input": tool_input,
-                                "level": level.value,
-                                "reason": action_desc if level == PermissionLevel.RED else "",
-                            })
-
-                            try:
-                                await asyncio.wait_for(event.wait(), timeout=300)
-                            except asyncio.TimeoutError:
-                                pending_perms.pop(request_id, None)
-                                perm_responses.pop(request_id, None)
-                                tool_results.append({
-                                    "type": "tool_result",
-                                    "tool_use_id": block.id,
-                                    "content": "Permission request timed out.",
-                                    "is_error": True,
-                                })
-                                database.log_permission_decision(
-                                    agent_id, tool_name, tool_input, level.value, "timeout",
-                                )
-                                continue
-
-                            resp = perm_responses.pop(request_id, {})
-                            pending_perms.pop(request_id, None)
-                            approved = resp.get("approved", False)
-
-                            # PIN check for RED level
-                            if level == PermissionLevel.RED and approved:
-                                pin_val = resp.get("pin", "")
-                                pin_hash = config.get("pin_hash", "")
-                                try:
-                                    pin_valid = bool(pin_val) and bcrypt.checkpw(
-                                        pin_val.encode("utf-8"), pin_hash.encode("utf-8")
-                                    )
-                                except Exception:
-                                    pin_valid = False
-                                if not pin_valid:
-                                    approved = False
-
-                            if not approved:
-                                tool_results.append({
-                                    "type": "tool_result",
-                                    "tool_use_id": block.id,
-                                    "content": "Action denied by user.",
-                                    "is_error": True,
-                                })
-                                database.log_permission_decision(
-                                    agent_id, tool_name, tool_input, level.value, "denied",
-                                )
-                                continue
-
-                            database.log_permission_decision(
-                                agent_id, tool_name, tool_input, level.value, "approved",
-                            )
-
-                        # ── Execute the action ──
-                        if tool_name == "computer":
-                            action = tool_input.get("action", "screenshot")
-                            result_content = await executor.execute_action(action, tool_input)
-
-                            # Send screenshot to frontend
-                            for item in result_content:
-                                if item.get("type") == "image":
-                                    await send_ws({
-                                        "type": "computer_screenshot",
-                                        "agent_id": agent_id,
-                                        "image": item["source"]["data"],
-                                        "action": action,
-                                        "description": action_desc,
-                                        "iteration": iterations,
-                                    })
-
-                        elif tool_name == "bash":
-                            cmd = tool_input.get("command", "")
-                            if cmd and not _is_safe_scheduled_command(cmd):
-                                result_content = [{"type": "text", "text": "Command blocked: contains dangerous pattern. Use the permission-controlled bash tool instead."}]
-                            else:
-                                try:
-                                    proc = await asyncio.create_subprocess_shell(
-                                        cmd,
-                                        stdout=asyncio.subprocess.PIPE,
-                                        stderr=asyncio.subprocess.PIPE,
-                                    )
-                                    stdout, stderr = await asyncio.wait_for(
-                                        proc.communicate(), timeout=30,
-                                    )
-                                    output = (stdout or b"").decode(errors="replace") + (stderr or b"").decode(errors="replace")
-                                    result_content = [{"type": "text", "text": output[:10000]}]
-                                except asyncio.TimeoutError:
-                                    result_content = [{"type": "text", "text": "Command timed out (30s)."}]
-                                except Exception as e:
-                                    result_content = [{"type": "text", "text": f"Error: {e}"}]
-
-                        elif tool_name == "str_replace_based_edit_tool":
-                            # Text editor tool — not yet implemented in computer use mode
-                            result_content = [{"type": "text", "text": "Text editor tool not yet implemented in computer use mode. Use Bash instead."}]
-
-                        else:
-                            result_content = [{"type": "text", "text": f"Unknown tool: {tool_name}"}]
+                        # Check if permission was denied/timed out
+                        is_error = (
+                            len(result_content) == 1
+                            and result_content[0].get("type") == "text"
+                            and result_content[0]["text"] in ("Permission request timed out.", "Action denied by user.")
+                        )
 
                         tool_results.append({
                             "type": "tool_result",
                             "tool_use_id": block.id,
                             "content": result_content,
+                            **({"is_error": True} if is_error else {}),
                         })
 
                 # If no tools were used, Claude is done
@@ -2003,6 +2032,67 @@ async def websocket_endpoint(ws: WebSocket):
                     break
 
                 messages.append({"role": "user", "content": tool_results})
+
+            # ── Iteration limit reached: offer continuation ──
+            if iterations >= max_iterations and tool_results:
+                cont_request_id = f"cu_cont_{secrets.token_hex(8)}"
+                cont_event = asyncio.Event()
+                pending_perms[cont_request_id] = cont_event
+
+                await send_ws({
+                    "type": "computer_use_paused",
+                    "agent_id": agent_id,
+                    "request_id": cont_request_id,
+                    "reason": "iteration_limit",
+                    "iterations": iterations,
+                    "max_iterations": max_iterations,
+                })
+
+                try:
+                    await asyncio.wait_for(cont_event.wait(), timeout=300)
+                except asyncio.TimeoutError:
+                    pending_perms.pop(cont_request_id, None)
+                    perm_responses.pop(cont_request_id, None)
+                else:
+                    resp = perm_responses.pop(cont_request_id, {})
+                    pending_perms.pop(cont_request_id, None)
+                    if resp.get("approved", False):
+                        extra = min(resp.get("extra_iterations", 50), 150)
+                        max_iterations = iterations + extra
+                        # Continue the loop — don't send final result yet
+                        await send_ws({
+                            "type": "status",
+                            "agent_id": agent_id,
+                            "text": f"Continuing... ({extra} more iterations allowed)",
+                        })
+                        while iterations < max_iterations:
+                            iterations += 1
+                            response = await client.beta.messages.create(
+                                model=COMPUTER_USE_MODEL,
+                                max_tokens=COMPUTER_USE_MAX_TOKENS,
+                                system=COMPUTER_USE_SYSTEM_PROMPT,
+                                tools=tools,
+                                messages=messages,
+                                betas=[COMPUTER_USE_BETA],
+                            )
+                            total_input_tokens += response.usage.input_tokens
+                            total_output_tokens += response.usage.output_tokens
+                            messages.append({"role": "assistant", "content": response.content})
+                            tool_results = []
+                            for block in response.content:
+                                if hasattr(block, "text") and block.type == "text":
+                                    await send_ws({"type": "assistant_text", "agent_id": agent_id, "text": block.text})
+                                elif block.type == "tool_use":
+                                    tool_name = block.name
+                                    tool_input = block.input if hasattr(block, "input") else {}
+                                    action_desc = describe_action(tool_name, tool_input)
+                                    await send_ws({"type": "computer_action", "agent_id": agent_id, "tool": tool_name, "action": tool_input.get("action", tool_name), "input": tool_input, "description": action_desc, "iteration": iterations})
+                                    # Reuse same permission + execution logic
+                                    result_content = await _execute_cu_tool(tool_name, tool_input, executor, agent_id, agents_ref, send_ws, pending_perms, perm_responses, action_desc, iterations)
+                                    tool_results.append({"type": "tool_result", "tool_use_id": block.id, "content": result_content})
+                            if not tool_results:
+                                break
+                            messages.append({"role": "user", "content": tool_results})
 
             # ── Send final result ──
             elapsed_ms = int((time.time() - start_time) * 1000)
@@ -2065,12 +2155,16 @@ async def websocket_endpoint(ws: WebSocket):
                 break
             last_activity = time.time()
 
-            # ── 6a. Message size limit (16 KB) ──
-            if len(raw) > WS_MAX_MESSAGE_BYTES:
+            # ── 6a. Message size limit ──
+            # Use higher limit for messages carrying base64 image data
+            _msg_limit = WS_MAX_IMAGE_MESSAGE_BYTES if (
+                len(raw) > WS_MAX_MESSAGE_BYTES and '"images"' in raw[:500]
+            ) else WS_MAX_MESSAGE_BYTES
+            if len(raw) > _msg_limit:
                 database.log_security_event(
                     "ws_message_too_large", "warning",
                     token_prefix=token[:8] if token else "",
-                    details=f"size={len(raw)}, limit={WS_MAX_MESSAGE_BYTES}",
+                    details=f"size={len(raw)}, limit={_msg_limit}",
                 )
                 await send({"type": "error", "agent_id": "default", "text": "Message too large"})
                 continue
@@ -2395,20 +2489,34 @@ async def websocket_endpoint(ws: WebSocket):
             # ---- Send message to a specific agent ----
             elif msg_type == "send_message":
                 text = data.get("text", "").strip()
-                images = data.get("images") or []  # list of {base64, mediaType}
-                if not text and not images:
+                images = data.get("images") or []  # list of {base64, mediaType} — legacy/web
+                image_ids = data.get("image_ids") or []  # list of image_id strings — HTTP upload
+                if not text and not images and not image_ids:
                     continue
                 if len(text) > WS_MAX_TEXT_LENGTH:
                     await send({"type": "error", "agent_id": agent_id, "text": f"Message too long (max {WS_MAX_TEXT_LENGTH} chars)."})
                     continue
 
-                # Validate images (max 10 images, each ≤ 20MB base64)
+                # Validate legacy base64 images (max 10, each ≤ 20MB base64)
                 _VALID_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
                 valid_images = []
                 for img in images[:10]:
                     if isinstance(img, dict) and img.get("base64") and img.get("mediaType") in _VALID_IMAGE_TYPES:
                         if len(img["base64"]) <= 20 * 1024 * 1024 * 4 // 3:  # ~20MB in base64
                             valid_images.append(img)
+
+                # Resolve image_ids from HTTP upload → same {base64, mediaType} format
+                import base64 as _b64
+                for img_id in image_ids[:10]:
+                    if not isinstance(img_id, str) or len(img_id) > 50:
+                        continue
+                    pending = shared_state.pending_images.pop(img_id, None)
+                    if pending:
+                        valid_images.append({
+                            "base64": _b64.b64encode(pending["data"]).decode("ascii"),
+                            "mediaType": pending["media_type"],
+                        })
+                valid_images = valid_images[:10]
 
                 agent = agents.get(agent_id)
                 if not agent or not agent.get("provider"):
@@ -2563,6 +2671,47 @@ async def websocket_endpoint(ws: WebSocket):
                         token_prefix=token[:8] if token else "",
                         details=f"Emergency stop for agent {agent_id}",
                     )
+
+            # ---- Computer use continuation ----
+            elif msg_type == "computer_use_continue":
+                req_id = data.get("request_id", "")
+                if req_id in pending_permissions:
+                    permission_responses[req_id] = {
+                        "approved": True,
+                        "extra_iterations": data.get("extra_iterations", 50),
+                    }
+                    pending_permissions[req_id].set()
+
+            elif msg_type == "computer_use_deny_continue":
+                req_id = data.get("request_id", "")
+                if req_id in pending_permissions:
+                    permission_responses[req_id] = {"approved": False}
+                    pending_permissions[req_id].set()
+
+            # ---- Computer use hint (Phase 5: interactive screenshots) ----
+            elif msg_type == "computer_use_hint":
+                agent = agents.get(agent_id)
+                if agent:
+                    hints = agent.setdefault("pending_hints", [])
+                    hint_text = data.get("text", "")
+                    hint_x = data.get("x")
+                    hint_y = data.get("y")
+                    if hint_text:
+                        hints.append({"text": hint_text, "x": hint_x, "y": hint_y})
+
+            # ---- Set monitor (Phase 7: multi-monitor) ----
+            elif msg_type == "set_monitor":
+                monitor_index = data.get("monitor_index", 1)
+                agent = agents.get(agent_id)
+                if agent and agent.get("computer_executor"):
+                    executor = agent["computer_executor"]
+                    executor.recalculate_for_resolution(monitor_index)
+                    await send({
+                        "type": "mode_changed",
+                        "agent_id": agent_id,
+                        "mode": "computer_use",
+                        "display_info": executor.get_display_info(),
+                    })
 
             # ---- Switch alter ego ----
             elif msg_type == "set_alter_ego":
@@ -3009,6 +3158,14 @@ async def websocket_endpoint(ws: WebSocket):
                     except Exception:
                         pass
         agents.clear()
+
+        # Unregister WebSocket push sender
+        try:
+            senders = shared_state._active_user_senders.get(user_id, [])
+            if send in senders:
+                senders.remove(send)
+        except (ValueError, KeyError):
+            pass
 
         # Unregister device from WS registry
         if _ws_device_id:

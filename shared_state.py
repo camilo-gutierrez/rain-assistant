@@ -36,8 +36,16 @@ DAILY_AUDIO_SECONDS_LIMIT = 3_600    # 60 minutes/day
 MAX_AUDIO_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB
 AUDIO_READ_CHUNK_SIZE = 64 * 1024          # 64 KB chunks
 
+# Image upload constants
+MAX_IMAGE_UPLOAD_BYTES = 10 * 1024 * 1024       # 10 MB per image
+IMAGE_READ_CHUNK_SIZE = 64 * 1024               # 64 KB chunks
+IMAGE_PENDING_TTL_SECONDS = 300                 # 5 minutes
+MAX_PENDING_IMAGES_PER_TOKEN = 20               # prevent memory abuse
+_VALID_IMAGE_MEDIA_TYPES = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp"})
+
 # WebSocket field limits
 WS_MAX_MESSAGE_BYTES = 16 * 1024        # 16 KB raw message
+WS_MAX_IMAGE_MESSAGE_BYTES = 5 * 1024 * 1024  # 5 MB safety net (legacy base64 path)
 WS_MAX_TEXT_LENGTH = 10_000              # send_message text
 WS_MAX_PATH_LENGTH = 500                 # set_cwd path
 WS_MAX_KEY_LENGTH = 500                  # set_api_key key
@@ -99,6 +107,26 @@ mcp_server_status: dict[str, dict] = {}
 # Maps MCP tool name prefixes to server names
 # Example: { "mcp__rain-email": "rain-email", "mcp__rain-browser": "rain-browser" }
 mcp_tool_server_map: dict[str, str] = {}
+
+# Pending image uploads: { image_id: { "data": bytes, "media_type": str, "token_prefix": str, "uploaded_at": float } }
+pending_images: dict[str, dict] = {}
+
+# WebSocket push: map user_id -> list of async send callables for real-time notifications
+_active_user_senders: dict[str, list] = {}
+
+
+async def notify_user(user_id: str, message: dict):
+    """Send a push message to all active WebSocket connections for a user."""
+    senders = _active_user_senders.get(user_id, [])
+    for send_fn in list(senders):
+        try:
+            await send_fn(message)
+        except Exception:
+            # Remove stale sender
+            try:
+                senders.remove(send_fn)
+            except ValueError:
+                pass
 
 # ---------------------------------------------------------------------------
 # JSON parsing helper

@@ -88,8 +88,7 @@ def compose_system_prompt(
     # Inject relevant document chunks (RAG)
     if user_message:
         try:
-            from documents.storage import search_documents
-            doc_results = search_documents(user_message, user_id=user_id, top_k=5)
+            doc_results = _search_documents_for_prompt(user_message, user_id)
             if doc_results:
                 prompt += "\n\n## Relevant Document Context\n"
                 prompt += "IMPORTANT: The following are excerpts from user-uploaded documents. "
@@ -109,3 +108,32 @@ def compose_system_prompt(
             logger.warning("Document search failed: %s", e)
 
     return prompt
+
+
+# ---------------------------------------------------------------------------
+# RAG helpers
+# ---------------------------------------------------------------------------
+
+import re as _re
+
+_COMPLEX_QUERY_RE = _re.compile(
+    r"\b(compare|versus|vs\.?|difference|between|how does .+ relate|contrast|"
+    r"comparar|diferencia|entre|versus)\b",
+    _re.IGNORECASE,
+)
+
+
+def _is_complex_query(query: str) -> bool:
+    """Heuristic: query likely benefits from multi-hop search."""
+    return len(query) > 60 or bool(_COMPLEX_QUERY_RE.search(query))
+
+
+def _search_documents_for_prompt(user_message: str, user_id: str) -> list[dict]:
+    """Search documents using the best strategy for the query complexity."""
+    if _is_complex_query(user_message):
+        from documents.storage import search_documents_multihop
+        return search_documents_multihop(
+            user_message, user_id=user_id, top_k=5, expand=True, hops=2,
+        )
+    from documents.storage import search_documents
+    return search_documents(user_message, user_id=user_id, top_k=5)

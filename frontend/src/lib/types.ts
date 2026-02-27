@@ -11,6 +11,20 @@ export interface DisplayInfo {
   scaled_width: number;
   scaled_height: number;
   scale_factor: number;
+  // Phase 7: Multi-monitor
+  monitor_index?: number;
+  monitor_count?: number;
+  monitor_offset?: { left: number; top: number };
+}
+
+// === Monitor Info (Phase 7) ===
+export interface MonitorInfo {
+  index: number;
+  width: number;
+  height: number;
+  left: number;
+  top: number;
+  primary: boolean;
 }
 
 // === Chat Messages ===
@@ -21,7 +35,8 @@ export interface BaseMessage {
 }
 
 export interface ImageAttachment {
-  base64: string;      // raw base64 data (no data: prefix)
+  file?: File;         // original File for HTTP upload
+  base64: string;      // raw base64 data (no data: prefix) — used for preview
   mediaType: string;   // "image/png", "image/jpeg", "image/gif", "image/webp"
 }
 
@@ -69,9 +84,11 @@ export interface PermissionRequestMessage extends BaseMessage {
 // === Computer Use Messages ===
 export interface ComputerScreenshotMessage extends BaseMessage {
   type: "computer_screenshot";
-  image: string;        // base64 PNG
+  image: string;        // base64 data
   action: string;       // "left_click", "type", "initial", etc.
   description: string;  // Human-readable description
+  mediaType?: string;   // Phase 3: "image/png" or "image/jpeg"
+  changed?: boolean;    // Phase 3: false if screenshot was reused from cache
   iteration: number;
 }
 
@@ -140,6 +157,7 @@ export interface Agent {
   displayInfo: DisplayInfo | null;
   lastScreenshot: string | null;
   computerIteration: number;
+  monitors: MonitorInfo[];
   // Sub-agents
   subAgents: SubAgentInfo[];
   // Auto-approve permissions (ephemeral, per-agent)
@@ -185,7 +203,7 @@ export interface MetricsData {
 
 // === WebSocket Send Messages ===
 export type WSSendMessage =
-  | { type: "send_message"; text: string; agent_id: string; images?: ImageAttachment[] }
+  | { type: "send_message"; text: string; agent_id: string; images?: ImageAttachment[]; image_ids?: string[] }
   | { type: "interrupt"; agent_id: string }
   | { type: "set_cwd"; path: string; agent_id: string; session_id?: string }
   | { type: "destroy_agent"; agent_id: string }
@@ -202,7 +220,10 @@ export type WSSendMessage =
   | { type: "talk_mode_start"; agent_id: string }
   | { type: "talk_mode_stop"; agent_id: string }
   | { type: "talk_interruption"; agent_id: string }
-  | { type: "set_auto_approve"; agent_id: string; enabled: boolean };
+  | { type: "set_auto_approve"; agent_id: string; enabled: boolean }
+  // Computer Use Phase 5+7
+  | { type: "computer_use_hint"; agent_id: string; text: string; x?: number; y?: number }
+  | { type: "set_monitor"; agent_id: string; monitor_index: number };
 
 // === WebSocket Receive Messages ===
 export type WSReceiveMessage =
@@ -235,7 +256,7 @@ export type WSReceiveMessage =
       reason: string;
     }
   | { type: "mode_changed"; agent_id: string; mode: AgentMode; display_info?: DisplayInfo }
-  | { type: "computer_screenshot"; agent_id: string; image: string; action: string; description: string; iteration: number }
+  | { type: "computer_screenshot"; agent_id: string; image: string; action: string; description: string; iteration: number; media_type?: string; changed?: boolean }
   | { type: "computer_action"; agent_id: string; tool: string; action: string; input: Record<string, unknown>; description: string; iteration: number }
   | { type: "ping"; ts: number }
   | { type: "api_key_loaded"; provider: AIProvider }

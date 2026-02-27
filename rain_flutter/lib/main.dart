@@ -15,6 +15,7 @@ import 'providers/agent_provider.dart';
 import 'providers/audio_provider.dart';
 import 'providers/connection_provider.dart';
 import 'providers/metrics_provider.dart';
+import 'providers/directors_provider.dart';
 import 'providers/notification_provider.dart';
 import 'providers/settings_provider.dart';
 import 'services/lifecycle_observer.dart';
@@ -516,6 +517,15 @@ class _AppShellState extends ConsumerState<_AppShell> {
         );
         agentNotifier.incrementComputerIteration(agentId);
 
+      case 'computer_use_paused':
+        if (agentId.isEmpty) break;
+        final requestId = msg['request_id'] as String? ?? '';
+        final iterations = msg['iterations'] as int? ?? 0;
+        final maxIterations = msg['max_iterations'] as int? ?? 50;
+        if (mounted && requestId.isNotEmpty) {
+          _showComputerUsePausedDialog(agentId, requestId, iterations, maxIterations);
+        }
+
       case 'subagent_spawned':
         final subAgentId = msg['agent_id'] as String? ?? '';
         final parentId = msg['parent_agent_id'] as String? ?? agentId;
@@ -630,6 +640,17 @@ class _AppShellState extends ConsumerState<_AppShell> {
           ref.read(rateLimitsProvider.notifier).state =
               RateLimits.fromJson(Map<String, dynamic>.from(msg['limits']));
         }
+
+      case 'director_event':
+        final directorsNotifier = ref.read(directorsProvider.notifier);
+        final event = msg['event'] as String? ?? '';
+        if (event == 'run_complete' || event == 'task_complete') {
+          directorsNotifier.incrementUnread();
+          final directorId = msg['director_id'] as String? ?? '';
+          if (directorId.isNotEmpty) {
+            directorsNotifier.onDirectorRunComplete(directorId);
+          }
+        }
     }
   }
 
@@ -685,6 +706,70 @@ class _AppShellState extends ConsumerState<_AppShell> {
     } catch (_) {
       // Silent fail for auto-save — non-critical
     }
+  }
+
+  void _showComputerUsePausedDialog(
+      String agentId, String requestId, int iterations, int maxIterations) {
+    final lang = ref.read(settingsProvider).language;
+    var extraIterations = 50.0;
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          icon: Icon(Icons.pause_circle, size: 40, color: Theme.of(ctx).colorScheme.primary),
+          title: Text(L10n.t('cu.pausedTitle', lang)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(L10n.t('cu.pausedBody', lang, {
+                'current': '$iterations',
+                'max': '$maxIterations',
+              })),
+              const SizedBox(height: 16),
+              Text(
+                L10n.t('cu.pausedExtra', lang, {'n': '${extraIterations.round()}'}),
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+              Slider(
+                value: extraIterations,
+                min: 10,
+                max: 150,
+                divisions: 14,
+                label: '${extraIterations.round()}',
+                onChanged: (v) => setDialogState(() => extraIterations = v),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(ctx).pop();
+                ref.read(webSocketServiceProvider).send({
+                  'type': 'computer_use_deny_continue',
+                  'request_id': requestId,
+                  'agent_id': agentId,
+                });
+              },
+              child: Text(L10n.t('cu.stop', lang)),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.of(ctx).pop();
+                ref.read(webSocketServiceProvider).send({
+                  'type': 'computer_use_continue',
+                  'request_id': requestId,
+                  'agent_id': agentId,
+                  'extra_iterations': extraIterations.round(),
+                });
+              },
+              child: Text(L10n.t('cu.continue', lang)),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   void _onNotificationTap(NotificationPayload payload) {

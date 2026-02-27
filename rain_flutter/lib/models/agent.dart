@@ -13,6 +13,10 @@ class DisplayInfo {
   final int scaledWidth;
   final int scaledHeight;
   final double scaleFactor;
+  final int monitorIndex;
+  final int monitorCount;
+  final int monitorLeft;
+  final int monitorTop;
 
   const DisplayInfo({
     required this.screenWidth,
@@ -20,15 +24,26 @@ class DisplayInfo {
     required this.scaledWidth,
     required this.scaledHeight,
     required this.scaleFactor,
+    this.monitorIndex = 1,
+    this.monitorCount = 1,
+    this.monitorLeft = 0,
+    this.monitorTop = 0,
   });
 
-  factory DisplayInfo.fromJson(Map<String, dynamic> json) => DisplayInfo(
-        screenWidth: json['screen_width'] ?? 0,
-        screenHeight: json['screen_height'] ?? 0,
-        scaledWidth: json['scaled_width'] ?? 0,
-        scaledHeight: json['scaled_height'] ?? 0,
-        scaleFactor: (json['scale_factor'] ?? 1.0).toDouble(),
-      );
+  factory DisplayInfo.fromJson(Map<String, dynamic> json) {
+    final offset = json['monitor_offset'] as Map<String, dynamic>?;
+    return DisplayInfo(
+      screenWidth: json['screen_width'] ?? 0,
+      screenHeight: json['screen_height'] ?? 0,
+      scaledWidth: json['scaled_width'] ?? 0,
+      scaledHeight: json['scaled_height'] ?? 0,
+      scaleFactor: (json['scale_factor'] ?? 1.0).toDouble(),
+      monitorIndex: json['monitor_index'] ?? 1,
+      monitorCount: json['monitor_count'] ?? 1,
+      monitorLeft: offset?['left'] ?? 0,
+      monitorTop: offset?['top'] ?? 0,
+    );
+  }
 }
 
 class Agent {
@@ -50,6 +65,7 @@ class Agent {
   AgentMode mode;
   DisplayInfo? displayInfo;
   String? lastScreenshot;
+  String? previousScreenshot;
   int computerIteration;
   bool autoApprove;
   List<SubAgentInfo> subAgents;
@@ -73,6 +89,7 @@ class Agent {
     this.mode = AgentMode.coding,
     this.displayInfo,
     this.lastScreenshot,
+    this.previousScreenshot,
     this.computerIteration = 0,
     this.autoApprove = false,
     List<SubAgentInfo>? subAgents,

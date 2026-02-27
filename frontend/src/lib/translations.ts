@@ -177,6 +177,13 @@ const translations: Record<Language, Record<string, string>> = {
     "cu.emergencyStop": "EMERGENCY STOP",
     "cu.iteration": "Step",
     "cu.permLevel": "COMPUTER ACCESS",
+    "cu.screenshotUnchanged": "unchanged",
+    "cu.zoomIn": "+",
+    "cu.zoomOut": "-",
+    "cu.clickHint": "Click hint sent",
+    "cu.monitor": "Monitor",
+    "cu.primaryMonitor": "Primary",
+    "cu.monitorSelector": "Select monitor",
 
     // Model Switcher
     "modelSwitcher.keyConfigured": "Key configured",
@@ -531,6 +538,13 @@ const translations: Record<Language, Record<string, string>> = {
     "cu.emergencyStop": "PARADA DE EMERGENCIA",
     "cu.iteration": "Paso",
     "cu.permLevel": "ACCESO A COMPUTADORA",
+    "cu.screenshotUnchanged": "sin cambios",
+    "cu.zoomIn": "+",
+    "cu.zoomOut": "-",
+    "cu.clickHint": "Pista de click enviada",
+    "cu.monitor": "Monitor",
+    "cu.primaryMonitor": "Principal",
+    "cu.monitorSelector": "Seleccionar monitor",
 
     // Model Switcher
     "modelSwitcher.keyConfigured": "Key configurada",

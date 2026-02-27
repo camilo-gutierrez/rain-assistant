@@ -8,10 +8,12 @@ Per-user isolation: each user_id gets its own memories.db file
 under ~/.rain-assistant/users/{user_id}/memories.db.
 """
 
+import hashlib
 import math
 import sqlite3
 import struct
 import logging
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -20,6 +22,14 @@ from database import encrypt_field, decrypt_field
 from utils.sanitize import sanitize_user_id, secure_chmod
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Embedding cache (Phase 6)
+# ---------------------------------------------------------------------------
+
+_EMBEDDING_CACHE: dict[str, tuple[list[float], float]] = {}
+_CACHE_TTL_SECONDS = 3600  # 1 hour
+_CACHE_MAX_ENTRIES = 1000
 
 CONFIG_DIR = Path.home() / ".rain-assistant"
 MEMORIES_DB = CONFIG_DIR / "memories.db"  # Legacy path (kept for backward compat)
@@ -88,17 +98,56 @@ def get_embedding(text: str) -> Optional[list[float]]:
     """Generate an embedding vector for the given text.
 
     Returns None if sentence-transformers is not available.
+    Uses an in-memory cache (1hr TTL, max 1000 entries) to avoid recomputing.
     """
+    # Check cache first
+    cached = _get_cached_embedding(text)
+    if cached is not None:
+        return cached
+
     model = _get_model()
     if model is None:
         return None
 
     try:
         embedding = model.encode(text, convert_to_numpy=True)
-        return embedding.tolist()
+        result = embedding.tolist()
+        _cache_embedding(text, result)
+        return result
     except Exception as e:
         logger.error("Failed to generate embedding: %s", e)
         return None
+
+
+def _cache_key(text: str) -> str:
+    """Generate a cache key from text hash."""
+    return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+
+def _get_cached_embedding(text: str) -> Optional[list[float]]:
+    """Look up an embedding in the in-memory cache."""
+    key = _cache_key(text)
+    entry = _EMBEDDING_CACHE.get(key)
+    if entry is None:
+        return None
+    embedding, timestamp = entry
+    if time.time() - timestamp > _CACHE_TTL_SECONDS:
+        del _EMBEDDING_CACHE[key]
+        return None
+    return embedding
+
+
+def _cache_embedding(text: str, embedding: list[float]) -> None:
+    """Store an embedding in the in-memory cache."""
+    if len(_EMBEDDING_CACHE) >= _CACHE_MAX_ENTRIES:
+        # Evict oldest quarter
+        sorted_keys = sorted(
+            _EMBEDDING_CACHE.keys(),
+            key=lambda k: _EMBEDDING_CACHE[k][1],
+        )
+        for k in sorted_keys[:len(sorted_keys) // 4]:
+            del _EMBEDDING_CACHE[k]
+    _EMBEDDING_CACHE[_cache_key(text)] = (embedding, time.time())
 
 
 def _serialize_embedding(embedding: list[float]) -> bytes:

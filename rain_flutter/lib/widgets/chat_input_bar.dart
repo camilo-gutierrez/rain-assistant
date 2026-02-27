@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import '../app/l10n.dart';
@@ -20,6 +19,9 @@ class ChatInputBar extends StatelessWidget {
   final bool talkModeActive;
   final VoidCallback? onToggleTalkMode;
   final String? voiceStateLabel;
+  // Call support
+  final bool isInCall;
+  final VoidCallback? onCall;
   // Image support
   final List<ImageAttachment> pendingImages;
   final VoidCallback? onPickImage;
@@ -39,6 +41,8 @@ class ChatInputBar extends StatelessWidget {
     this.talkModeActive = false,
     this.onToggleTalkMode,
     this.voiceStateLabel,
+    this.isInCall = false,
+    this.onCall,
     this.pendingImages = const [],
     this.onPickImage,
     this.onTakePhoto,
@@ -220,23 +224,13 @@ class ChatInputBar extends StatelessWidget {
                             )
                           : null,
                     ),
-              // Talk Mode button (only shown for non-push-to-talk modes)
-              if (voiceMode != 'push-to-talk' && onToggleTalkMode != null)
-                IconButton(
-                  onPressed: onToggleTalkMode,
-                  icon: Icon(
-                    talkModeActive ? Icons.phone_disabled : Icons.phone_in_talk,
-                    color: talkModeActive ? cs.error : cs.primary,
-                  ),
-                  style: talkModeActive
-                      ? IconButton.styleFrom(
-                          backgroundColor:
-                              cs.errorContainer.withValues(alpha: 0.3),
-                        )
-                      : null,
-                  tooltip: talkModeActive
-                      ? L10n.t('voice.endConversation', lang)
-                      : L10n.t('voice.startTalkMode', lang),
+              // Call button — always visible, premium style
+              if (onCall != null)
+                _CallButton(
+                  isInCall: isInCall,
+                  isProcessing: isProcessing,
+                  lang: lang,
+                  onTap: onCall!,
                 ),
               const SizedBox(width: 4),
               // Text field
@@ -283,6 +277,61 @@ class ChatInputBar extends StatelessWidget {
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Animated call button with gradient glow effect.
+class _CallButton extends StatelessWidget {
+  final bool isInCall;
+  final bool isProcessing;
+  final String lang;
+  final VoidCallback onTap;
+
+  const _CallButton({
+    required this.isInCall,
+    required this.isProcessing,
+    required this.lang,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return GestureDetector(
+      onTap: isProcessing ? null : onTap,
+      child: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: isInCall
+              ? null
+              : LinearGradient(
+                  colors: [cs.primary, cs.tertiary],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+          color: isInCall ? cs.error : null,
+          boxShadow: isProcessing
+              ? null
+              : [
+                  BoxShadow(
+                    color: (isInCall ? cs.error : cs.primary)
+                        .withValues(alpha: 0.3),
+                    blurRadius: 8,
+                    spreadRadius: 1,
+                  ),
+                ],
+        ),
+        child: Icon(
+          isInCall ? Icons.call_end : Icons.phone_in_talk,
+          size: 20,
+          color: isProcessing
+              ? Colors.white.withValues(alpha: 0.4)
+              : Colors.white,
+        ),
       ),
     );
   }

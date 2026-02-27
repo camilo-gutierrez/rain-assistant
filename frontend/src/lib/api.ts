@@ -182,6 +182,36 @@ export async function uploadAudio(
   return res.json();
 }
 
+export async function uploadImage(
+  file: File,
+  token: string | null
+): Promise<{ image_id: string; media_type: string; size: number }> {
+  const form = new FormData();
+  form.append("image", file);
+  const res = await fetchWithRetry(`${getApiUrl()}/upload-image`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: form,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `Upload failed: ${res.status}` }));
+    throw new Error(err.error || `Upload failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function uploadImages(
+  files: File[],
+  token: string | null
+): Promise<string[]> {
+  const results = await Promise.allSettled(
+    files.map((f) => uploadImage(f, token))
+  );
+  return results
+    .filter((r): r is PromiseFulfilledResult<{ image_id: string; media_type: string; size: number }> => r.status === "fulfilled")
+    .map((r) => r.value.image_id);
+}
+
 export async function loadMessages(
   cwd: string,
   agentId: string,
