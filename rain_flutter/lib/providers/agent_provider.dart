@@ -324,6 +324,7 @@ class AgentNotifier extends StateNotifier<AgentState> {
           'label': a.label,
           'cwd': a.cwd,
           'sessionId': a.sessionId,
+          'isProcessing': a.isProcessing,
         }).toList(),
       };
       await prefs.setString(_kSessionKey, jsonEncode(data));
@@ -345,12 +346,14 @@ class AgentNotifier extends StateNotifier<AgentState> {
       for (final a in agentList) {
         final map = a as Map<String, dynamic>;
         final id = map['id'] as String;
-        agents[id] = Agent(
+        final agent = Agent(
           id: id,
           label: map['label'] as String? ?? 'Rain',
           cwd: map['cwd'] as String?,
           sessionId: map['sessionId'] as String?,
         );
+        agent.isProcessing = map['isProcessing'] as bool? ?? false;
+        agents[id] = agent;
       }
 
       final activeId = data['activeAgentId'] as String? ?? '';

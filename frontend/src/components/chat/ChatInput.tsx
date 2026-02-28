@@ -245,7 +245,7 @@ export default function ChatInput() {
         <button
           onClick={() => fileInputRef.current?.click()}
           disabled={isDisabled || images.length >= MAX_IMAGES}
-          className="min-w-[44px] min-h-[44px] w-11 h-11 flex items-center justify-center rounded-full text-subtext hover:text-primary hover:bg-surface2 transition-all disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+          className="min-w-[44px] min-h-[44px] w-12 h-12 flex items-center justify-center rounded-xl text-subtext hover:text-primary hover:bg-surface2/70 active:scale-[0.95] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
           aria-label="Attach image"
         >
           <ImagePlus size={20} />
@@ -274,12 +274,12 @@ export default function ChatInput() {
           disabled={isDisabled}
           enterKeyHint="send"
           autoComplete="off"
-          className={`flex-1 bg-surface2 text-text border border-overlay rounded-2xl px-4 py-2.5 text-base sm:text-sm min-h-[44px] max-h-[200px] resize-none overflow-y-hidden placeholder:text-subtext focus-ring transition-all disabled:opacity-50 disabled:cursor-not-allowed`}
+          className={`flex-1 bg-surface2/60 text-text border border-transparent rounded-2xl px-4 py-3 text-base sm:text-sm min-h-[48px] max-h-[200px] resize-none overflow-y-hidden placeholder:text-subtext focus-ring focus:border-primary/40 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed`}
         />
         <button
           onClick={handleSend}
           disabled={(!text.trim() && images.length === 0) || isProcessing || isUploading || !hasCwd}
-          className="min-w-[44px] min-h-[44px] w-11 h-11 flex items-center justify-center rounded-full bg-primary text-on-primary transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:bg-primary-dark shrink-0"
+          className="min-w-[44px] min-h-[44px] w-12 h-12 flex items-center justify-center rounded-xl bg-primary text-on-primary transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-primary-dark hover:shadow-[0_0_12px_rgba(var(--primary-rgb),0.3)] active:scale-[0.95] shrink-0"
         >
           {isUploading ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
         </button>

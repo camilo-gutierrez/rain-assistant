@@ -211,6 +211,16 @@ class L10n {
     'toast.sessionExpired': 'Session expired. Please sign in again.',
     'toast.connectionFailed': 'Could not connect to server. Retrying...',
 
+    // Background task
+    'bg.working': 'Rain is working...',
+    'bg.processing': '{agent} is processing',
+    'bg.tool': '{agent}: {tool}',
+    'bg.responding': '{agent}: responding...',
+    'bg.batteryTitle': 'Battery optimization',
+    'bg.batteryBody': 'Disable battery optimization for Rain to keep background tasks running reliably',
+    'bg.interruptedTitle': '{agent} — task interrupted',
+    'bg.interruptedBody': 'Task was interrupted. Check the result.',
+
     // Agent
     'agent.new': 'New agent',
     'agent.delete': 'Delete agent',
@@ -635,6 +645,16 @@ class L10n {
     'toast.deletedConversation': 'Conversación eliminada',
     'toast.sessionExpired': 'Sesión expirada. Inicia sesión de nuevo.',
     'toast.connectionFailed': 'No se pudo conectar al servidor. Reintentando...',
+
+    // Background task
+    'bg.working': 'Rain está trabajando...',
+    'bg.processing': '{agent} está procesando',
+    'bg.tool': '{agent}: {tool}',
+    'bg.responding': '{agent}: respondiendo...',
+    'bg.batteryTitle': 'Optimización de batería',
+    'bg.batteryBody': 'Desactiva la optimización de batería para Rain para mantener tareas en segundo plano',
+    'bg.interruptedTitle': '{agent} — tarea interrumpida',
+    'bg.interruptedBody': 'La tarea fue interrumpida. Verifica el resultado.',
 
     // Agent
     'agent.new': 'Nuevo agente',

@@ -74,7 +74,7 @@ export default function TabBar() {
   };
 
   return (
-    <nav className="relative flex items-center bg-surface border-b border-overlay">
+    <nav className="relative flex items-center bg-surface/80 backdrop-blur-sm border-b border-overlay/40">
       {/* Left scroll fade indicator */}
       {canScrollLeft && (
         <div className="absolute left-0 top-0 bottom-0 w-8 bg-gradient-to-r from-surface to-transparent z-10 pointer-events-none" />
@@ -91,10 +91,10 @@ export default function TabBar() {
             <div
               key={agent.id}
               onClick={() => switchToAgent(agent.id)}
-              className={`group relative flex items-center gap-2 px-4 py-2.5 cursor-pointer transition-colors select-none shrink-0 border-b-2 ${
+              className={`group relative flex items-center gap-2 px-5 py-3 cursor-pointer transition-all duration-200 select-none shrink-0 mx-0.5 ${
                 isActive
-                  ? "border-b-primary text-text bg-surface2/50"
-                  : "border-b-transparent text-text2 hover:bg-surface2/30 hover:text-text"
+                  ? "bg-primary/10 text-primary rounded-lg"
+                  : "text-text2 hover:bg-surface2/50 hover:text-text rounded-lg"
               }`}
             >
               {/* Status dot */}
@@ -133,7 +133,7 @@ export default function TabBar() {
                     e.stopPropagation();
                     closeAgent(agent.id, send);
                   }}
-                  className="ml-0.5 min-w-[36px] min-h-[36px] flex items-center justify-center rounded-full text-subtext hover:text-red hover:bg-red/10 opacity-60 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
+                  className="ml-0.5 min-w-[36px] min-h-[36px] flex items-center justify-center rounded-lg text-subtext hover:text-red hover:bg-red/10 opacity-60 sm:opacity-0 sm:group-hover:opacity-100 transition-all duration-200"
                   title={t("a11y.close")}
                 >
                   <X size={14} />
@@ -155,7 +155,7 @@ export default function TabBar() {
       {/* New agent button */}
       <button
         onClick={handleNewAgent}
-        className="shrink-0 min-w-[44px] min-h-[44px] mx-1 flex items-center justify-center rounded-full text-subtext hover:bg-primary/10 hover:text-primary transition-colors"
+        className="shrink-0 min-w-[44px] min-h-[44px] mx-1 flex items-center justify-center rounded-xl text-subtext hover:bg-primary/10 hover:text-primary active:scale-[0.95] transition-all duration-200"
         title={t("btn.newAgent.title")}
       >
         <Plus size={18} />

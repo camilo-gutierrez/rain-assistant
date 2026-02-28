@@ -1,6 +1,7 @@
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../services/background_task_service.dart';
 import '../services/notification_service.dart';
 
 class NotificationSettings {
@@ -94,4 +95,9 @@ final notificationServiceProvider = Provider<NotificationService>((ref) {
 /// Tracks whether the app is in the foreground or background.
 final appLifecycleProvider = StateProvider<AppLifecycleState>((ref) {
   return AppLifecycleState.resumed;
+});
+
+/// Singleton provider for the background task (foreground service) manager.
+final backgroundTaskServiceProvider = Provider<BackgroundTaskService>((ref) {
+  return BackgroundTaskService();
 });

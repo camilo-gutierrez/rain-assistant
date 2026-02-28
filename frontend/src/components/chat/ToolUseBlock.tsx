@@ -45,7 +45,7 @@ const ToolUseBlock = React.memo(function ToolUseBlock({ message }: Props) {
 
   return (
     <div
-      className={`self-start max-w-[85%] border-l-[3px] border-l-primary rounded-r-lg px-3 py-2 bg-primary/5 ${
+      className={`self-start max-w-[85%] border-l-2 border-l-primary rounded-r-lg px-3 py-2 bg-primary/5 ${
         message.animate ? "animate-msg-appear" : ""
       }`}
     >
@@ -63,7 +63,7 @@ const ToolUseBlock = React.memo(function ToolUseBlock({ message }: Props) {
         {hasInput && (
           <button
             onClick={() => setExpanded((v) => !v)}
-            className="min-w-[32px] min-h-[32px] flex items-center justify-center text-subtext hover:text-primary transition-colors shrink-0 rounded-md hover:bg-surface2/60"
+            className="min-w-[32px] min-h-[32px] flex items-center justify-center text-subtext hover:text-primary transition-all duration-200 shrink-0 rounded-lg hover:bg-surface2/60"
             aria-label={expanded ? "Collapse" : "Expand"}
           >
             {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}

@@ -81,7 +81,7 @@ export default function SidebarNav() {
     <div className="flex flex-col gap-1 px-3 pt-4 pb-2">
       {/* Brand mark */}
       <div className="flex items-center gap-2.5 px-2 mb-3">
-        <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center shadow-sm">
+        <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center shadow-[0_0_12px_rgba(var(--primary-rgb),0.3)]">
           <Sparkles size={16} className="text-on-primary" />
         </div>
         <div className="flex flex-col">
@@ -93,7 +93,7 @@ export default function SidebarNav() {
       {/* New conversation button */}
       <button
         onClick={handleNewChat}
-        className="group flex items-center gap-2.5 px-3 py-2.5 rounded-xl border border-overlay/80 bg-surface2/40 text-text text-sm font-medium transition-all duration-200 hover:bg-primary hover:text-on-primary hover:border-primary hover:shadow-md active:scale-[0.98] mb-1"
+        className="group flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-primary text-on-primary text-sm font-medium transition-all duration-200 hover:shadow-[0_4px_12px_rgba(var(--primary-rgb),0.3)] active:scale-[0.97] mb-1"
       >
         <Plus size={16} strokeWidth={2.5} className="transition-transform duration-200 group-hover:rotate-90" />
         <span>{t("sidebar.newChat")}</span>
@@ -105,9 +105,9 @@ export default function SidebarNav() {
           <button
             key={item.id}
             onClick={item.action}
-            className={`group flex items-center gap-3 px-3 py-2 rounded-xl transition-all duration-150 text-sm ${
+            className={`group relative flex items-center gap-3 px-3 py-2 rounded-xl transition-all duration-200 text-sm ${
               item.active
-                ? "bg-primary/10 text-primary font-semibold shadow-[inset_0_0_0_1px_rgba(var(--primary-rgb),0.15)]"
+                ? "bg-primary/10 text-primary font-semibold before:content-[''] before:absolute before:left-0 before:top-1/2 before:-translate-y-1/2 before:w-[3px] before:h-5 before:rounded-full before:bg-primary"
                 : "text-text2 hover:bg-surface2/70 hover:text-text"
             }`}
             title={item.label}

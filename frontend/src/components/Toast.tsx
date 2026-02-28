@@ -58,8 +58,8 @@ function ToastItem({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }
     <div
       role="alert"
       className={`
-        flex items-start gap-2.5 px-3.5 py-3 rounded-xl border backdrop-blur-sm
-        shadow-lg max-w-sm w-full pointer-events-auto
+        flex items-start gap-2.5 px-3.5 py-3 rounded-2xl border backdrop-blur-xl
+        shadow-2xl max-w-sm w-full pointer-events-auto
         ${colors.bg}
         ${exiting ? "animate-toast-exit" : "animate-toast-enter"}
       `}

@@ -87,9 +87,9 @@ export default function EgoSwitcher() {
 
       {/* Popover */}
       {isOpen && (
-        <div className="absolute top-full mt-1.5 left-0 w-72 max-w-[calc(100vw-2rem)] bg-surface border border-overlay rounded-xl shadow-xl z-30 overflow-hidden">
+        <div className="absolute top-full mt-1.5 left-0 w-72 max-w-[calc(100vw-2rem)] bg-surface/95 backdrop-blur-xl border border-overlay/40 rounded-2xl shadow-2xl z-30 overflow-hidden animate-scale-in">
           {/* Header */}
-          <div className="px-3 py-2 border-b border-overlay bg-surface2/50">
+          <div className="px-3 py-2 border-b border-overlay/40 bg-surface2/50">
             <span className="text-xs font-medium text-text2">
               {t("alterEgo.title")}
             </span>

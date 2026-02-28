@@ -58,7 +58,7 @@ export default function DrawerOverlay({ open, onClose, title, children }: Drawer
       {/* Backdrop */}
       {open && (
         <div
-          className="fixed inset-0 bg-black/40 z-40 transition-opacity backdrop-blur-overlay"
+          className="fixed inset-0 bg-black/50 z-40 transition-opacity backdrop-blur-overlay"
           onClick={onClose}
         />
       )}
@@ -69,18 +69,18 @@ export default function DrawerOverlay({ open, onClose, title, children }: Drawer
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className={`fixed top-0 right-0 h-full w-[85vw] sm:w-[400px] bg-surface z-50 flex flex-col shadow-lg transition-transform duration-300 pr-[env(safe-area-inset-right)] ${
+        className={`fixed top-0 right-0 h-full w-[85vw] sm:w-[420px] bg-surface z-50 flex flex-col shadow-2xl rounded-l-2xl transition-transform duration-300 pr-[env(safe-area-inset-right)] ${
           open ? "translate-x-0" : "translate-x-full"
         }`}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-overlay">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-overlay/40">
           <h2 className="text-base font-semibold text-text">
             {title}
           </h2>
           <button
             onClick={onClose}
-            className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full hover:bg-surface2 transition-colors text-text2 hover:text-text focus-ring"
+            className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl hover:bg-surface2/70 active:scale-[0.95] transition-all duration-200 text-text2 hover:text-text focus-ring"
             aria-label={t("a11y.close")}
           >
             <X size={18} />

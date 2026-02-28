@@ -18,6 +18,7 @@ import 'providers/metrics_provider.dart';
 import 'providers/directors_provider.dart';
 import 'providers/notification_provider.dart';
 import 'providers/settings_provider.dart';
+import 'services/crash_reporting_service.dart';
 import 'services/lifecycle_observer.dart';
 import 'services/notification_service.dart';
 import 'widgets/permission_alert_dialog.dart';
@@ -29,8 +30,11 @@ import 'screens/pin_screen.dart';
 import 'screens/server_url_screen.dart';
 import 'services/websocket_service.dart';
 
-void main() {
-  runApp(const ProviderScope(child: RainApp()));
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await CrashReportingService.instance.init(
+    appRunner: () => runApp(const ProviderScope(child: RainApp())),
+  );
 }
 
 class RainApp extends ConsumerWidget {
@@ -99,6 +103,16 @@ class _AppShellState extends ConsumerState<_AppShell> {
         print('[Rain] Notification init failed (non-critical): $e');
       }
 
+      // Initialize background task service (foreground service for keep-alive)
+      ref.read(backgroundTaskServiceProvider).init();
+
+      // Configure audio session for background playback (non-critical)
+      try {
+        await ref.read(audioServiceProvider).initAudioSession();
+      } catch (e) {
+        print('[Rain] Audio session init failed (non-critical): $e');
+      }
+
       // Load persisted auth state
       final auth = ref.read(authServiceProvider);
       await auth.init();
@@ -125,9 +139,14 @@ class _AppShellState extends ConsumerState<_AppShell> {
       }
 
       setState(() => _screen = _AppScreen.pin);
-    } catch (e) {
+    } catch (e, stack) {
       _initTimeout?.cancel();
       print('[Rain] Init failed: $e');
+      CrashReportingService.instance.captureException(
+        e,
+        stackTrace: stack,
+        context: 'app_init',
+      );
       if (mounted) {
         setState(() => _screen = _AppScreen.serverUrl);
       }
@@ -137,6 +156,11 @@ class _AppShellState extends ConsumerState<_AppShell> {
   void _connectWebSocket() {
     final auth = ref.read(authServiceProvider);
     final ws = ref.read(webSocketServiceProvider);
+
+    CrashReportingService.instance.addBreadcrumb(
+      message: 'WebSocket connecting',
+      category: 'connection',
+    );
 
     // Show loading while WebSocket connects
     setState(() => _screen = _AppScreen.loading);
@@ -191,6 +215,7 @@ class _AppShellState extends ConsumerState<_AppShell> {
 
   bool _wasConnected = false;
   StreamSubscription<ConnectionStatus>? _statusSub;
+  DateTime _lastBgNotifUpdate = DateTime(0);
 
   void _handleConnectionStatus(ConnectionStatus status) {
     if (status == ConnectionStatus.connected && !_wasConnected) {
@@ -218,6 +243,9 @@ class _AppShellState extends ConsumerState<_AppShell> {
           });
         }
       }
+
+      // Reload messages from server in case tasks completed while disconnected
+      _checkPendingTasks();
     } else if ((status == ConnectionStatus.disconnected ||
                 status == ConnectionStatus.error) &&
         _wasConnected) {
@@ -247,6 +275,9 @@ class _AppShellState extends ConsumerState<_AppShell> {
     final ws = ref.read(webSocketServiceProvider);
     final settings = ref.read(settingsProvider);
 
+    final agentNotifier = ref.read(agentProvider.notifier);
+    final lang = settings.language;
+
     for (final agent in agents.values) {
       if (agent.cwd != null) {
         ws.send({
@@ -261,6 +292,18 @@ class _AppShellState extends ConsumerState<_AppShell> {
       }
       // Load messages from server history
       _restoreMessagesFromHistory(agent.id);
+
+      // Detect interrupted tasks (agent was processing when app was killed)
+      if (agent.isProcessing) {
+        final notifService = ref.read(notificationServiceProvider);
+        notifService.showInfoNotification(
+          agentId: agent.id,
+          title: L10n.t('bg.interruptedTitle', lang, {'agent': agent.label}),
+          body: L10n.t('bg.interruptedBody', lang),
+        );
+        agentNotifier.setProcessing(agent.id, false);
+        agentNotifier.setAgentStatus(agent.id, AgentStatus.idle);
+      }
     }
   }
 
@@ -322,6 +365,7 @@ class _AppShellState extends ConsumerState<_AppShell> {
         ref.read(apiKeyLoadedProvider.notifier).state = true;
         ref.read(currentProviderProvider.notifier).state =
             msg['provider'] ?? 'claude';
+        CrashReportingService.instance.setTag('provider', msg['provider'] ?? 'claude');
         if (_screen == _AppScreen.apiKey) {
           if (_hasRestoredSession) {
             _resumeRestoredSession();
@@ -337,16 +381,44 @@ class _AppShellState extends ConsumerState<_AppShell> {
           agentNotifier.setAgentCwd(agentId, msg['cwd']);
           agentNotifier.persistSession();
         }
+        // Propagate status text to persistent notification (throttled)
+        if ((msg['text'] as String?)?.isNotEmpty == true) {
+          final statusAgent = ref.read(agentProvider).agents[agentId];
+          _updateBgNotificationThrottled(
+            title: L10n.t('bg.working', ref.read(settingsProvider).language),
+            body: '${statusAgent?.label ?? agentId}: ${msg['text']}',
+          );
+        }
 
       case 'assistant_text':
         if (agentId.isEmpty) break;
         agentNotifier.updateStreamingMessage(agentId, msg['text'] ?? '');
         agentNotifier.incrementUnread(agentId);
+        // Update persistent notification when agent starts responding (throttled)
+        final textAgent = ref.read(agentProvider).agents[agentId];
+        final textLang = ref.read(settingsProvider).language;
+        _updateBgNotificationThrottled(
+          title: L10n.t('bg.working', textLang),
+          body: L10n.t('bg.responding', textLang, {
+            'agent': textAgent?.label ?? agentId,
+          }),
+        );
 
       case 'tool_use':
         if (agentId.isEmpty) break;
         agentNotifier.finalizeStreaming(agentId);
         agentNotifier.incrementUnread(agentId);
+        // Update foreground service notification with current tool (throttled)
+        final agent = ref.read(agentProvider).agents[agentId];
+        final lang = ref.read(settingsProvider).language;
+        final toolName = msg['tool'] ?? '';
+        _updateBgNotificationThrottled(
+          title: L10n.t('bg.working', lang),
+          body: L10n.t('bg.tool', lang, {
+            'agent': agent?.label ?? agentId,
+            'tool': toolName,
+          }),
+        );
         agentNotifier.appendMessage(
           agentId,
           ToolUseMessage(
@@ -397,6 +469,7 @@ class _AppShellState extends ConsumerState<_AppShell> {
         agentNotifier.setProcessing(agentId, false);
         agentNotifier.setInterruptPending(agentId, false);
         agentNotifier.setAgentStatus(agentId, AgentStatus.done);
+        _checkStopBackgroundTask();
 
         // TTS auto-play
         final settings = ref.read(settingsProvider);
@@ -429,6 +502,7 @@ class _AppShellState extends ConsumerState<_AppShell> {
         );
         agentNotifier.setProcessing(agentId, false);
         agentNotifier.setAgentStatus(agentId, AgentStatus.error);
+        _checkStopBackgroundTask();
         _dispatchNotification('error', agentId, msg);
 
       case 'permission_request':
@@ -626,6 +700,7 @@ class _AppShellState extends ConsumerState<_AppShell> {
       case 'model_info':
         if (msg['model'] != null) {
           ref.read(currentModelProvider.notifier).state = msg['model'];
+          CrashReportingService.instance.setTag('model', msg['model']);
         }
 
       case '_reconnecting':
@@ -772,6 +847,39 @@ class _AppShellState extends ConsumerState<_AppShell> {
     );
   }
 
+  /// Reload messages from server for all agents (after reconnect).
+  Future<void> _checkPendingTasks() async {
+    final agents = ref.read(agentProvider).agents;
+    for (final agent in agents.values) {
+      if (agent.sessionId != null && agent.sessionId!.isNotEmpty) {
+        _restoreMessagesFromHistory(agent.id);
+      }
+    }
+  }
+
+  /// Throttled update of the persistent background notification (max once per 2s).
+  void _updateBgNotificationThrottled({
+    required String title,
+    required String body,
+  }) {
+    final now = DateTime.now();
+    if (now.difference(_lastBgNotifUpdate).inMilliseconds < 2000) return;
+    _lastBgNotifUpdate = now;
+    final bg = ref.read(backgroundTaskServiceProvider);
+    if (bg.isRunning) {
+      bg.updateNotification(title: title, body: body);
+    }
+  }
+
+  /// Stop the foreground service if no agents are still processing.
+  void _checkStopBackgroundTask() {
+    final agents = ref.read(agentProvider).agents;
+    final anyProcessing = agents.values.any((a) => a.isProcessing);
+    if (!anyProcessing) {
+      ref.read(backgroundTaskServiceProvider).stop();
+    }
+  }
+
   void _onNotificationTap(NotificationPayload payload) {
     if (_screen != _AppScreen.chat) {
       setState(() => _screen = _AppScreen.chat);
@@ -844,19 +952,46 @@ class _AppShellState extends ConsumerState<_AppShell> {
       case 'result':
         if (!notifSettings.resultNotifications) return;
         if (!isBackground && !isOnDifferentAgent) return;
-        final title = lang == 'es'
+        final resultTitle = lang == 'es'
             ? '$agentLabel completado'
             : '$agentLabel completed';
-        final cost = msg['cost'];
-        final body = cost != null
-            ? (lang == 'es'
-                ? 'Costo: \$${cost.toStringAsFixed(4)}'
-                : 'Cost: \$${cost.toStringAsFixed(4)}')
-            : (lang == 'es' ? 'Tarea terminada' : 'Task finished');
+
+        // Build rich body: metrics + response preview
+        final resultCost = msg['cost'];
+        final resultDuration = msg['duration_ms'];
+        final resultTurns = msg['num_turns'];
+        final metricParts = <String>[];
+        if (resultDuration != null) {
+          metricParts.add('${(resultDuration / 1000).toStringAsFixed(1)}s');
+        }
+        if (resultTurns != null) metricParts.add('$resultTurns turns');
+        if (resultCost != null) {
+          metricParts.add('\$${resultCost.toStringAsFixed(4)}');
+        }
+
+        // Preview of the last assistant message
+        final lastAssistantMsg = agent?.messages.reversed
+            .whereType<AssistantMessage>()
+            .firstOrNull;
+        final preview = lastAssistantMsg?.text ?? '';
+        final previewTruncated = preview.length > 100
+            ? '${preview.substring(0, 100)}...'
+            : preview;
+
+        var resultBody = metricParts.isNotEmpty ? metricParts.join(' | ') : '';
+        if (previewTruncated.isNotEmpty) {
+          resultBody = resultBody.isEmpty
+              ? previewTruncated
+              : '$resultBody\n$previewTruncated';
+        }
+        if (resultBody.isEmpty) {
+          resultBody = lang == 'es' ? 'Tarea terminada' : 'Task finished';
+        }
+
         notifService.showInfoNotification(
           agentId: agentId,
-          title: title,
-          body: body,
+          title: resultTitle,
+          body: resultBody,
         );
 
       case 'error':

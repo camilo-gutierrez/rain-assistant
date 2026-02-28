@@ -57,7 +57,7 @@ export default function MobileBottomNav() {
   ];
 
   return (
-    <nav className="md:hidden flex items-center justify-around bg-surface border-t border-overlay py-1.5 pb-[max(0.375rem,env(safe-area-inset-bottom))]">
+    <nav className="md:hidden flex items-center justify-around bg-surface/95 backdrop-blur-md border-t border-overlay/30 py-1.5 pb-[max(0.375rem,env(safe-area-inset-bottom))]">
       {items.map((item) => (
         <button
           key={item.id}
@@ -69,7 +69,7 @@ export default function MobileBottomNav() {
           <span className="relative">
             {item.icon}
             {item.badge > 0 && (
-              <span className="absolute -top-1 -right-1.5 min-w-[14px] h-[14px] flex items-center justify-center px-0.5 rounded-full bg-primary text-on-primary text-[10px] font-bold">
+              <span className="absolute -top-1 -right-1.5 min-w-[14px] h-[14px] flex items-center justify-center px-0.5 rounded-full bg-primary text-on-primary text-xs font-bold">
                 {item.badge > 9 ? "9+" : item.badge}
               </span>
             )}
@@ -77,7 +77,7 @@ export default function MobileBottomNav() {
           <span className="text-xs leading-tight">{item.label}</span>
           {/* Active indicator bar */}
           {item.active && (
-            <span className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 w-5 h-[3px] rounded-full bg-primary" />
+            <span className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 w-6 h-[2px] rounded-full bg-primary" />
           )}
         </button>
       ))}

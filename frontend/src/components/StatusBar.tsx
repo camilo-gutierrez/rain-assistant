@@ -28,11 +28,11 @@ export default function StatusBar() {
       : "bg-subtext";
 
   return (
-    <header className="flex items-center gap-2 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))] bg-surface shadow-sm">
+    <header className="flex items-center gap-2 px-4 py-3.5 pt-[max(0.875rem,env(safe-area-inset-top))] bg-surface/90 backdrop-blur-sm border-b border-overlay/40">
       {/* Mobile hamburger */}
       <button
         onClick={toggleMobileSidebar}
-        className="md:hidden min-w-[44px] min-h-[44px] flex items-center justify-center -ml-2 rounded-full hover:bg-surface2 transition-colors text-text2 focus-ring"
+        className="md:hidden min-w-[44px] min-h-[44px] flex items-center justify-center -ml-2 rounded-xl hover:bg-surface2/70 active:scale-[0.95] transition-all duration-200 text-text2 focus-ring"
         aria-label={t("a11y.menu")}
         title={t("a11y.menu")}
       >
@@ -40,7 +40,7 @@ export default function StatusBar() {
       </button>
 
       {/* Connection indicator */}
-      <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${dotClass}`} />
+      <div className={`w-2 h-2 rounded-full shrink-0 ${dotClass} ${connectionStatus === "connected" ? "shadow-[0_0_6px_rgba(34,197,94,0.4)]" : ""}`} />
 
       {/* Ego Switcher (replaces static "Rain Assistant" title) */}
       <EgoSwitcher />
@@ -59,7 +59,7 @@ export default function StatusBar() {
       {/* Memories toggle */}
       <button
         onClick={toggleMemories}
-        className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full hover:bg-surface2 transition-colors text-text2 hover:text-primary focus-ring"
+        className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl hover:bg-surface2/70 active:scale-[0.95] transition-all duration-200 text-text2 hover:text-primary focus-ring"
         aria-label={t("memories.title")}
         title={t("memories.title")}
       >
@@ -69,7 +69,7 @@ export default function StatusBar() {
       {/* Marketplace toggle */}
       <button
         onClick={toggleMarketplace}
-        className="hidden md:flex min-w-[44px] min-h-[44px] items-center justify-center rounded-full hover:bg-surface2 transition-colors text-text2 hover:text-primary focus-ring"
+        className="hidden md:flex min-w-[44px] min-h-[44px] items-center justify-center rounded-xl hover:bg-surface2/70 active:scale-[0.95] transition-all duration-200 text-text2 hover:text-primary focus-ring"
         aria-label={t("marketplace.title")}
         title={t("marketplace.title")}
       >
@@ -79,7 +79,7 @@ export default function StatusBar() {
       {/* Metrics toggle — hidden on mobile (available in bottom nav) */}
       <button
         onClick={toggleMetrics}
-        className="hidden md:flex min-w-[44px] min-h-[44px] items-center justify-center rounded-full hover:bg-surface2 transition-colors text-text2 hover:text-primary focus-ring"
+        className="hidden md:flex min-w-[44px] min-h-[44px] items-center justify-center rounded-xl hover:bg-surface2/70 active:scale-[0.95] transition-all duration-200 text-text2 hover:text-primary focus-ring"
         aria-label={t("btn.metricsToggle.title")}
         title={t("btn.metricsToggle.title")}
       >
@@ -89,7 +89,7 @@ export default function StatusBar() {
       {/* Settings toggle — hidden on mobile (available in bottom nav) */}
       <button
         onClick={toggleSettings}
-        className="hidden md:flex min-w-[44px] min-h-[44px] items-center justify-center rounded-full hover:bg-surface2 transition-colors text-text2 hover:text-primary focus-ring"
+        className="hidden md:flex min-w-[44px] min-h-[44px] items-center justify-center rounded-xl hover:bg-surface2/70 active:scale-[0.95] transition-all duration-200 text-text2 hover:text-primary focus-ring"
         aria-label={t("btn.settings.title")}
         title={t("btn.settings.title")}
       >

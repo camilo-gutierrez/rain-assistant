@@ -90,7 +90,7 @@ const MessageBubble = React.memo(function MessageBubble({ message }: Props) {
     const hasImages = userMsg.images && userMsg.images.length > 0;
     return (
       <div
-        className={`self-end max-w-[85%] rounded-2xl rounded-br-sm px-4 py-2.5 bg-primary text-on-primary ${
+        className={`self-end max-w-[80%] rounded-2xl px-4 py-2.5 bg-primary text-on-primary shadow-[var(--shadow-1)] ${
           message.animate ? "animate-msg-appear" : ""
         }`}
       >
@@ -131,7 +131,7 @@ const MessageBubble = React.memo(function MessageBubble({ message }: Props) {
 
   return (
     <div
-      className={`group relative self-start max-w-[85%] bg-surface rounded-2xl rounded-bl-sm px-4 py-2.5 shadow-sm ${
+      className={`group relative self-start max-w-[80%] bg-surface2/40 rounded-2xl px-4 py-2.5 ${
         message.animate ? "animate-msg-appear" : ""
       }`}
     >
@@ -139,7 +139,7 @@ const MessageBubble = React.memo(function MessageBubble({ message }: Props) {
       {!assistantMsg.isStreaming && assistantMsg.text.trim() && (
         <button
           onClick={handleCopy}
-          className="absolute top-1.5 right-1.5 min-w-[32px] min-h-[32px] flex items-center justify-center rounded-md border border-overlay bg-surface text-subtext hover:text-primary hover:border-primary transition-all opacity-0 group-hover:opacity-100 touch-visible"
+          className="absolute top-1.5 right-1.5 min-w-[32px] min-h-[32px] flex items-center justify-center rounded-lg bg-surface2/80 text-subtext hover:text-primary hover:bg-primary/10 transition-all duration-200 opacity-0 group-hover:opacity-100 touch-visible"
           aria-label={t("a11y.copy")}
         >
           {copied ? <Check size={14} /> : <Copy size={14} />}

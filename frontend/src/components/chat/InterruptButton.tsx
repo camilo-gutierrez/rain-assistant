@@ -74,7 +74,7 @@ export default function InterruptButton() {
       <button
         onClick={handleClick}
         disabled={isStopping}
-        className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-full text-sm font-medium border transition-all focus-ring ${buttonClass}`}
+        className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium border transition-all duration-200 active:scale-[0.97] focus-ring animate-scale-in ${buttonClass}`}
       >
         {isForceMode ? <OctagonX size={16} /> : <Square size={14} fill="currentColor" />}
         {buttonText}

@@ -154,7 +154,7 @@ export default function ChatPanel() {
       <LiveTranscription />
 
       {/* Unified input area */}
-      <div className="shrink-0 bg-surface border-t border-overlay">
+      <div className="shrink-0 bg-surface border-t border-overlay/30 pt-1">
         <div className="max-w-3xl mx-auto px-4">
           {/* Voice mode indicator (above input when active) */}
           {voiceState !== "idle" && (

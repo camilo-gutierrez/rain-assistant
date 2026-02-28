@@ -128,7 +128,7 @@ export default function ModelSwitcher() {
 
       {/* Popover */}
       {isOpen && (
-        <div className="absolute top-full mt-1.5 right-0 w-72 max-w-[calc(100vw-2rem)] bg-surface border border-overlay rounded-xl shadow-xl z-30 overflow-hidden">
+        <div className="absolute top-full mt-1.5 right-0 w-72 max-w-[calc(100vw-2rem)] bg-surface/95 backdrop-blur-xl border border-overlay/40 rounded-2xl shadow-2xl z-30 overflow-hidden animate-scale-in">
           {/* Provider tabs */}
           <div className="flex gap-0.5 p-1.5 bg-surface2/50">
             {PROVIDERS.map((p) => (
@@ -137,7 +137,7 @@ export default function ModelSwitcher() {
                 onClick={() => setPopoverProvider(p)}
                 className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-xs font-medium transition-all ${
                   activePopoverProvider === p
-                    ? "bg-primary text-on-primary shadow-sm"
+                    ? "bg-primary/15 text-primary"
                     : "text-text2 hover:text-text hover:bg-overlay/50"
                 }`}
               >
@@ -160,7 +160,7 @@ export default function ModelSwitcher() {
                   onClick={() => handleModelSelect(activePopoverProvider, model.id)}
                   role="option"
                   aria-selected={isActive}
-                  className={`w-full flex items-center gap-2 px-3 py-2 text-sm transition-colors ${
+                  className={`w-full flex items-center gap-2 px-4 py-2.5 text-sm transition-all duration-200 ${
                     isActive
                       ? "bg-primary/10 text-primary font-medium"
                       : "text-text hover:bg-surface2"
@@ -177,7 +177,7 @@ export default function ModelSwitcher() {
           </div>
 
           {/* Footer */}
-          <div className="border-t border-overlay px-3 py-2 flex items-center justify-between">
+          <div className="border-t border-overlay/40 px-3 py-2 flex items-center justify-between">
             <div className="flex items-center gap-1.5 text-xs">
               {hasStoredKey(activePopoverProvider, providerKeys) ? (
                 <>

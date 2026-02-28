@@ -40,7 +40,7 @@ const ToolResultBlock = React.memo(function ToolResultBlock({ message }: Props) 
 
   return (
     <div
-      className={`group relative self-start max-w-[85%] border-l-[3px] ${borderColor} rounded-r-lg px-3 py-2 ${bgClass} ${
+      className={`group relative self-start max-w-[85%] border-l-2 ${borderColor} rounded-r-lg px-3 py-2 ${bgClass} ${
         message.animate ? "animate-msg-appear" : ""
       }`}
     >
@@ -60,7 +60,7 @@ const ToolResultBlock = React.memo(function ToolResultBlock({ message }: Props) 
         {message.content.trim() && (
           <button
             onClick={handleCopy}
-            className="min-w-[32px] min-h-[32px] flex items-center justify-center rounded-md border border-overlay bg-surface text-subtext hover:text-primary hover:border-primary transition-all opacity-0 group-hover:opacity-100 touch-visible"
+            className="min-w-[32px] min-h-[32px] flex items-center justify-center rounded-lg bg-surface2/80 text-subtext hover:text-primary hover:bg-primary/10 transition-all duration-200 opacity-0 group-hover:opacity-100 touch-visible"
             aria-label={t("a11y.copy")}
           >
             {copied ? <Check size={12} /> : <Copy size={12} />}

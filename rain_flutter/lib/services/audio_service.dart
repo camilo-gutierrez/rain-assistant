@@ -1,8 +1,11 @@
+import 'package:audio_session/audio_session.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
+
+import 'crash_reporting_service.dart';
 
 enum TtsPlaybackState { idle, loading, playing, error }
 
@@ -22,6 +25,24 @@ class AudioService {
         playbackState.value = TtsPlaybackState.idle;
       }
     });
+  }
+
+  /// Configure the audio session for background playback and recording.
+  /// Call once during app startup.
+  Future<void> initAudioSession() async {
+    final session = await AudioSession.instance;
+    await session.configure(AudioSessionConfiguration(
+      avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
+      avAudioSessionCategoryOptions:
+          AVAudioSessionCategoryOptions.defaultToSpeaker |
+          AVAudioSessionCategoryOptions.allowBluetooth,
+      avAudioSessionMode: AVAudioSessionMode.spokenAudio,
+      androidAudioAttributes: const AndroidAudioAttributes(
+        contentType: AndroidAudioContentType.speech,
+        usage: AndroidAudioUsage.assistant,
+      ),
+      androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
+    ));
   }
 
   /// Start recording audio to a temporary .m4a file.
@@ -63,7 +84,14 @@ class AudioService {
       if (response.statusCode == 200 && response.data is Map) {
         return response.data['text'] as String?;
       }
-    } catch (_) {} // TODO(audit#6): Log or surface transcription errors instead of silently swallowing
+    } catch (e, stack) {
+      debugPrint('[Audio] Transcription upload failed: $e');
+      CrashReportingService.instance.captureException(
+        e,
+        stackTrace: stack,
+        context: 'audio_transcription',
+      );
+    }
 
     return null;
   }

@@ -26,12 +26,12 @@ function Toggle({ enabled, onChange }: { enabled: boolean; onChange: () => void 
       role="switch"
       aria-checked={enabled}
       onClick={onChange}
-      className={`relative w-11 h-6 rounded-full transition-colors duration-200 focus-ring ${
+      className={`relative w-12 h-7 rounded-full transition-colors duration-200 focus-ring ${
         enabled ? "bg-primary" : "bg-overlay"
       }`}
     >
       <span
-        className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+        className={`absolute top-0.5 left-0.5 w-6 h-6 rounded-full bg-white shadow-sm transition-transform duration-200 ${
           enabled ? "translate-x-5" : "translate-x-0"
         }`}
       />
@@ -63,7 +63,7 @@ function SelectField({ value, onChange, options, label }: {
         <select
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          className="w-full appearance-none bg-surface2 border border-overlay rounded-lg px-3.5 py-2.5 pr-9 text-sm text-text focus-ring transition-colors cursor-pointer"
+          className="w-full appearance-none bg-surface2/60 border border-transparent rounded-xl px-3.5 py-3 pr-9 text-sm text-text focus-ring focus:border-primary/40 transition-all duration-200 cursor-pointer"
         >
           {options.map((opt) => (
             <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -92,19 +92,19 @@ const themes: ThemeOption[] = [
     id: "light",
     labelKey: "settings.theme.light",
     icon: <Sun size={20} />,
-    bg: "#f5f5f5",
-    surface: "#ffffff",
-    accent: "#1976d2",
-    text: "#212121",
+    bg: "#F8F8FC",
+    surface: "#FFFFFF",
+    accent: "#6366F1",
+    text: "#1A1A2E",
   },
   {
     id: "dark",
     labelKey: "settings.theme.dark",
     icon: <Moon size={20} />,
-    bg: "#121212",
-    surface: "#1e1e1e",
-    accent: "#90caf9",
-    text: "#e0e0e0",
+    bg: "#0B0B10",
+    surface: "#15151E",
+    accent: "#818CF8",
+    text: "#E4E4E7",
   },
 ];
 

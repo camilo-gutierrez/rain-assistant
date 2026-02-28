@@ -188,9 +188,9 @@ function ConversationEntry({
 }) {
   return (
     <div
-      className={`group relative px-3 py-2.5 cursor-pointer rounded-xl transition-all duration-150 ${
+      className={`group relative px-3 py-2.5 cursor-pointer rounded-xl transition-all duration-200 ${
         isActive
-          ? "bg-primary/10 shadow-[inset_0_0_0_1px_rgba(var(--primary-rgb),0.2)]"
+          ? "bg-primary/10 inner-glow-primary"
           : "hover:bg-surface2/60"
       }`}
       onClick={onLoad}

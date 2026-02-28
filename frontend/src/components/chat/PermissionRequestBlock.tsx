@@ -108,7 +108,7 @@ const PermissionRequestBlock = React.memo(function PermissionRequestBlock({
 
     return (
       <div
-        className={`self-start max-w-[85%] border-l-[3px] ${borderColor} rounded-r-lg px-3 py-2 ${bgClass} opacity-70`}
+        className={`self-start max-w-[85%] border-l-2 ${borderColor} rounded-r-lg px-3 py-2 ${bgClass} opacity-70`}
       >
         <div className="flex items-center gap-2">
           <span className={`text-xs font-semibold px-1.5 py-0.5 rounded ${badgeBg}`}>
@@ -133,7 +133,7 @@ const PermissionRequestBlock = React.memo(function PermissionRequestBlock({
   // Pending state — show action buttons
   return (
     <div
-      className={`self-start max-w-[85%] border-l-[3px] ${borderColor} rounded-r-lg px-3 py-2.5 ${bgClass} ${
+      className={`self-start max-w-[85%] border-l-2 ${borderColor} rounded-r-lg px-3 py-2.5 ${bgClass} ${
         message.animate ? "animate-msg-appear" : ""
       }`}
     >
@@ -175,7 +175,7 @@ const PermissionRequestBlock = React.memo(function PermissionRequestBlock({
             }}
             placeholder={t("perm.enterPin")}
             disabled={isSubmitting}
-            className="w-full px-3 h-10 text-base rounded border border-border bg-bg text-text placeholder:text-text2/50 focus-ring"
+            className="w-full px-3 h-10 text-base rounded-xl bg-surface2/60 border border-transparent text-text placeholder:text-text2/50 focus-ring focus:border-primary/40"
             autoFocus
           />
         </div>
@@ -186,7 +186,7 @@ const PermissionRequestBlock = React.memo(function PermissionRequestBlock({
         <button
           onClick={handleApprove}
           disabled={isSubmitting || (isRed && !pin.trim())}
-          className="inline-flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium rounded bg-green/15 text-green hover:bg-green/25 disabled:opacity-40 disabled:cursor-not-allowed transition-colors focus-ring min-h-[44px]"
+          className="inline-flex items-center gap-1.5 px-4 py-3 text-sm font-medium rounded-xl bg-green/15 text-green hover:bg-green/25 active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 focus-ring min-h-[44px]"
         >
           <ShieldCheck size={16} className="shrink-0" />
           {isSubmitting ? t("perm.processing") : t("perm.approve")}
@@ -194,7 +194,7 @@ const PermissionRequestBlock = React.memo(function PermissionRequestBlock({
         <button
           onClick={handleDeny}
           disabled={isSubmitting}
-          className="inline-flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium rounded bg-red/15 text-red hover:bg-red/25 disabled:opacity-40 disabled:cursor-not-allowed transition-colors focus-ring min-h-[44px]"
+          className="inline-flex items-center gap-1.5 px-4 py-3 text-sm font-medium rounded-xl bg-red/15 text-red hover:bg-red/25 active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 focus-ring min-h-[44px]"
         >
           <ShieldX size={16} className="shrink-0" />
           {t("perm.deny")}

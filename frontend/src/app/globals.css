@@ -4,60 +4,62 @@
    THEME VARIABLES — Material Design
    ========================================================================= */
 
-/* Light theme (default) */
+/* Light theme (default) — Indigo seed palette */
 :root {
-  --bg: #f5f5f5;
-  --surface: #ffffff;
-  --surface2: #f0f0f0;
-  --overlay: #e0e0e0;
-  --text: #212121;
-  --text2: #616161;
-  --subtext: #9e9e9e;
-  --blue: #1976d2;
-  --green: #2e7d32;
-  --red: #d32f2f;
-  --yellow: #f9a825;
-  --mauve: #7b1fa2;
-  --cyan: #1976d2;
-  --magenta: #7b1fa2;
-  /* Material tokens */
-  --primary: #1976d2;
-  --primary-light: #63a4ff;
-  --primary-dark: #004ba0;
-  --on-primary: #ffffff;
-  --primary-rgb: 25, 118, 210;
-  --shadow-1: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.24);
-  --shadow-2: 0 3px 6px rgba(0,0,0,0.16), 0 3px 6px rgba(0,0,0,0.23);
-  --shadow-3: 0 10px 20px rgba(0,0,0,0.19), 0 6px 6px rgba(0,0,0,0.23);
+  --bg: #F8F8FC;
+  --surface: #FFFFFF;
+  --surface2: #F1F1F8;
+  --overlay: #E4E4EC;
+  --text: #1A1A2E;
+  --text2: #5C5C72;
+  --subtext: #9494A8;
+  --blue: #4F46E5;
+  --green: #22C55E;
+  --red: #EF4444;
+  --yellow: #F59E0B;
+  --mauve: #8B5CF6;
+  --cyan: #06B6D4;
+  --magenta: #EC4899;
+  /* Indigo primary — matches Flutter seed #6366F1 */
+  --primary: #6366F1;
+  --primary-light: #818CF8;
+  --primary-dark: #4F46E5;
+  --on-primary: #FFFFFF;
+  --primary-rgb: 99, 102, 241;
+  --surface-rgb: 255, 255, 255;
+  --shadow-1: 0 1px 2px rgba(0,0,0,0.05), 0 1px 3px rgba(0,0,0,0.08);
+  --shadow-2: 0 4px 6px -1px rgba(0,0,0,0.08), 0 2px 4px -2px rgba(0,0,0,0.06);
+  --shadow-3: 0 10px 15px -3px rgba(0,0,0,0.08), 0 4px 6px -4px rgba(0,0,0,0.05);
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
 }
 
-/* Dark theme */
+/* Dark theme — deep premium dark */
 [data-theme="dark"] {
-  --bg: #121212;
-  --surface: #1e1e1e;
-  --surface2: #2c2c2c;
-  --overlay: #3a3a3a;
-  --text: #e0e0e0;
-  --text2: #a0a0a0;
-  --subtext: #757575;
-  --blue: #90caf9;
-  --green: #81c784;
-  --red: #ef5350;
-  --yellow: #fff176;
-  --mauve: #ce93d8;
-  --cyan: #90caf9;
-  --magenta: #ce93d8;
-  --primary: #90caf9;
-  --primary-light: #c3fdff;
-  --primary-dark: #5d99c6;
-  --on-primary: #121212;
-  --primary-rgb: 144, 202, 249;
-  --shadow-1: 0 1px 3px rgba(0,0,0,0.4), 0 1px 2px rgba(0,0,0,0.5);
-  --shadow-2: 0 3px 6px rgba(0,0,0,0.4), 0 3px 6px rgba(0,0,0,0.5);
-  --shadow-3: 0 10px 20px rgba(0,0,0,0.4), 0 6px 6px rgba(0,0,0,0.5);
+  --bg: #0B0B10;
+  --surface: #15151E;
+  --surface2: #1E1E2A;
+  --overlay: #2A2A3A;
+  --text: #E4E4E7;
+  --text2: #A1A1AA;
+  --subtext: #71717A;
+  --blue: #818CF8;
+  --green: #4ADE80;
+  --red: #F87171;
+  --yellow: #FBBF24;
+  --mauve: #A78BFA;
+  --cyan: #22D3EE;
+  --magenta: #F472B6;
+  --primary: #818CF8;
+  --primary-light: #A5B4FC;
+  --primary-dark: #6366F1;
+  --on-primary: #0B0B10;
+  --primary-rgb: 129, 140, 248;
+  --surface-rgb: 21, 21, 30;
+  --shadow-1: 0 1px 2px rgba(0,0,0,0.5), 0 0 1px rgba(99,102,241,0.05);
+  --shadow-2: 0 4px 8px rgba(0,0,0,0.5), 0 0 2px rgba(99,102,241,0.08);
+  --shadow-3: 0 10px 20px rgba(0,0,0,0.6), 0 0 4px rgba(99,102,241,0.1);
 }
 
 /* =========================================================================
@@ -87,14 +89,16 @@
   --font-inter: var(--font-inter);
   --font-jetbrains: var(--font-jetbrains);
 
-  --animate-msg-appear: msg-appear 0.2s ease-out;
-  --animate-fade-in: fade-in 0.15s ease-out;
-  --animate-slide-up: slide-up 0.2s ease-out;
+  --animate-msg-appear: msg-appear 0.25s ease-out;
+  --animate-fade-in: fade-in 0.2s ease-out;
+  --animate-slide-up: slide-up 0.25s ease-out;
   --animate-spin-slow: spin 1.5s linear infinite;
   --animate-toast-enter: toast-enter 0.2s ease-out;
   --animate-toast-exit: toast-exit 0.15s ease-in forwards;
-  --animate-shimmer: shimmer 1.5s infinite;
+  --animate-shimmer: shimmer 2s infinite;
   --animate-pulse-ring: pulse-ring 1.5s ease-out infinite;
+  --animate-scale-in: scale-in 0.2s ease-out;
+  --animate-slide-in-right: slide-in-right 0.25s ease-out;
 }
 
 /* =========================================================================
@@ -121,11 +125,11 @@ body {
    SCROLLBAR
    ========================================================================= */
 
-::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar { width: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
   background: var(--overlay);
-  border-radius: 3px;
+  border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--subtext);
@@ -144,13 +148,28 @@ body, .theme-transition {
    ========================================================================= */
 
 @keyframes msg-appear {
-  from { opacity: 0; transform: translateY(4px); }
+  from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes slide-up {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(12px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(var(--primary-rgb), 0); }
+  50% { box-shadow: 0 0 12px 2px rgba(var(--primary-rgb), 0.15); }
 }
 
 @keyframes slide-in-left {
@@ -229,13 +248,26 @@ body, .theme-transition {
   outline: none;
 }
 .focus-ring:focus-visible {
-  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px rgba(var(--primary-rgb), 0.4);
+  box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px rgba(var(--primary-rgb), 0.5);
+  transition: box-shadow 0.2s ease;
 }
 
 .shimmer-bg {
-  background: linear-gradient(90deg, var(--surface2) 25%, var(--overlay) 50%, var(--surface2) 75%);
+  background: linear-gradient(90deg, var(--surface2) 25%, var(--overlay) 37%, var(--surface2) 63%);
   background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
+  animation: shimmer 2s infinite;
+}
+
+/* Glass surface for premium overlays */
+.glass-surface {
+  background: rgba(var(--surface-rgb), 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* Subtle inner glow for active states */
+.inner-glow-primary {
+  box-shadow: inset 0 0 0 1px rgba(var(--primary-rgb), 0.15);
 }
 
 /* Touch device detection */

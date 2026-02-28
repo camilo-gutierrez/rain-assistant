@@ -1,6 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:web_socket_channel/web_socket_channel.dart';
+
+import 'crash_reporting_service.dart';
 
 enum ConnectionStatus { disconnected, connecting, connected, error }
 
@@ -9,6 +12,7 @@ class WebSocketService {
   WebSocketChannel? _channel;
   StreamSubscription? _subscription;
   Timer? _reconnectTimer;
+  Timer? _heartbeatTimer;
 
   ConnectionStatus _status = ConnectionStatus.disconnected;
   int _consecutiveFailures = 0;
@@ -65,8 +69,24 @@ class WebSocketService {
 
       _setStatus(ConnectionStatus.connected);
       _consecutiveFailures = 0;
-    } catch (e) {
+
+      // Start client-side heartbeat to keep the TCP connection alive
+      _heartbeatTimer?.cancel();
+      _heartbeatTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+        if (isConnected) send({'type': 'pong'});
+      });
+
+      CrashReportingService.instance.addBreadcrumb(
+        message: 'WebSocket connected',
+        category: 'connection',
+      );
+    } catch (e, stack) {
       print('[WS] Connection failed: $e');
+      CrashReportingService.instance.captureException(
+        e,
+        stackTrace: stack,
+        context: 'websocket_connect',
+      );
       _setStatus(ConnectionStatus.error);
       _scheduleReconnect();
     }
@@ -102,6 +122,12 @@ class WebSocketService {
   void _onDone() {
     final closeCode = _channel?.closeCode;
 
+    CrashReportingService.instance.addBreadcrumb(
+      message: 'WebSocket closed',
+      category: 'connection',
+      data: {'closeCode': closeCode},
+    );
+
     if (closeCode == 4001 || closeCode == 4003) {
       // Unauthorized or device revoked — don't reconnect, emit special status
       _setStatus(ConnectionStatus.disconnected);
@@ -129,13 +155,33 @@ class WebSocketService {
     // Exponential backoff: 2s, 4s, 6s, 8s, 10s... capped at 15s
     final delay = (_consecutiveFailures * 2).clamp(2, 15);
     _reconnectTimer?.cancel();
-    _reconnectTimer = Timer(Duration(seconds: delay), _doConnect);
+    _reconnectTimer = Timer(Duration(seconds: delay), () async {
+      // Check network availability before attempting reconnect
+      if (await _hasNetwork()) {
+        _doConnect();
+      } else {
+        // No network — retry later without burning through failure count
+        _consecutiveFailures--;
+        _scheduleReconnect();
+      }
+    });
     // Notify UI about reconnect attempts
     if (_consecutiveFailures >= 3) {
       _messageController.add({
         'type': '_reconnecting',
         'attempt': _consecutiveFailures,
       });
+    }
+  }
+
+  /// Quick DNS lookup to check network availability.
+  Future<bool> _hasNetwork() async {
+    try {
+      final result = await InternetAddress.lookup('example.com')
+          .timeout(const Duration(seconds: 3));
+      return result.isNotEmpty && result[0].rawAddress.isNotEmpty;
+    } catch (_) {
+      return false;
     }
   }
 
@@ -156,6 +202,8 @@ class WebSocketService {
   }
 
   void _cleanup() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
     final sub = _subscription;
     final ch = _channel;
     _subscription = null;
