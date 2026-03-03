@@ -91,7 +91,7 @@ class ToolExecutor:
         from marketplace import handle_manage_marketplace
         from documents import handle_manage_documents
         from a2ui import handle_render_surface
-        from directors import handle_manage_directors
+        from directors import handle_manage_directors, handle_manage_projects
 
         self._handlers["manage_plugins"] = handle_manage_plugins
         self._handlers["manage_memories"] = handle_manage_memories
@@ -101,6 +101,7 @@ class ToolExecutor:
         self._handlers["manage_documents"] = handle_manage_documents
         self._handlers["render_surface"] = handle_render_surface
         self._handlers["manage_directors"] = handle_manage_directors
+        self._handlers["manage_projects"] = handle_manage_projects
         # manage_subagents handler is injected at runtime from server.py
         # (it requires a bound SubAgentManager + caller agent_id)
         if "manage_subagents" not in self._handlers:

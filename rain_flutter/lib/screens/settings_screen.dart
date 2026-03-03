@@ -144,7 +144,13 @@ class SettingsScreen extends ConsumerWidget {
               leadingIcon: const Icon(Icons.translate),
               expandedInsets: EdgeInsets.zero,
               onSelected: (v) {
-                if (v != null) notifier.setVoiceLang(v);
+                if (v != null) {
+                  notifier.setVoiceLang(v);
+                  ref.read(webSocketServiceProvider).send({
+                    'type': 'set_transcription_lang',
+                    'lang': v,
+                  });
+                }
               },
               dropdownMenuEntries: const [
                 DropdownMenuEntry(value: 'auto', label: 'Auto'),

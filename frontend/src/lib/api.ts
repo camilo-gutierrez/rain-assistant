@@ -1,4 +1,4 @@
-import type { AuthResponse, BrowseResponse, ConversationFull, ConversationMeta, HistoryMessage, MetricsData, Memory, AlterEgo, MarketplaceSkill, MarketplaceCategory, InstalledMarketplaceSkill, SkillUpdate, DeviceInfo, Director, DirectorTask, InboxItem, DirectorTemplate, ActivityItem } from "./types";
+import type { AuthResponse, BrowseResponse, ConversationFull, ConversationMeta, HistoryMessage, MetricsData, Memory, AlterEgo, MarketplaceSkill, MarketplaceCategory, InstalledMarketplaceSkill, SkillUpdate, DeviceInfo, Director, DirectorTask, InboxItem, DirectorTemplate, ActivityItem, DirectorProject, TeamTemplate } from "./types";
 import { getApiUrl } from "./constants";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -502,9 +502,13 @@ export async function updateMarketplaceSkill(
 // === Autonomous Directors ===
 
 export async function fetchDirectors(
-  token: string | null
+  token: string | null,
+  projectId?: string
 ): Promise<{ directors: Director[] }> {
-  const res = await fetchWithTimeout(`${getApiUrl()}/directors`, {
+  const sp = new URLSearchParams();
+  if (projectId) sp.set("project_id", projectId);
+  const qs = sp.toString();
+  const res = await fetchWithTimeout(`${getApiUrl()}/directors${qs ? `?${qs}` : ""}`, {
     headers: authHeaders(token),
   });
   if (!res.ok) throw new Error(`Fetch directors failed: ${res.status}`);
@@ -565,6 +569,18 @@ export async function runDirector(
   return res.json();
 }
 
+export async function runProject(
+  projectId: string,
+  token: string | null
+): Promise<{ queued: boolean; directors: { id: string; name: string }[]; message: string }> {
+  const res = await fetchWithTimeout(
+    `${getApiUrl()}/directors/projects/${encodeURIComponent(projectId)}/run`,
+    { method: "POST", headers: authHeaders(token) }
+  );
+  if (!res.ok) throw new Error(`Run project failed: ${res.status}`);
+  return res.json();
+}
+
 export async function fetchDirectorTemplates(
   token: string | null
 ): Promise<{ templates: DirectorTemplate[] }> {
@@ -579,7 +595,7 @@ export async function fetchDirectorTemplates(
 
 export async function fetchInbox(
   token: string | null,
-  params: { status?: string; director_id?: string; content_type?: string; limit?: number; offset?: number } = {}
+  params: { status?: string; director_id?: string; content_type?: string; limit?: number; offset?: number; project_id?: string } = {}
 ): Promise<{ items: InboxItem[]; unread_count: number }> {
   const sp = new URLSearchParams();
   if (params.status) sp.set("status", params.status);
@@ -587,6 +603,7 @@ export async function fetchInbox(
   if (params.content_type) sp.set("content_type", params.content_type);
   if (params.limit) sp.set("limit", String(params.limit));
   if (params.offset) sp.set("offset", String(params.offset));
+  if (params.project_id) sp.set("project_id", params.project_id);
   const res = await fetchWithTimeout(`${getApiUrl()}/directors/inbox?${sp}`, {
     headers: authHeaders(token),
   });
@@ -595,9 +612,13 @@ export async function fetchInbox(
 }
 
 export async function fetchInboxUnread(
-  token: string | null
+  token: string | null,
+  projectId?: string
 ): Promise<{ count: number }> {
-  const res = await fetchWithTimeout(`${getApiUrl()}/directors/inbox/unread`, {
+  const sp = new URLSearchParams();
+  if (projectId) sp.set("project_id", projectId);
+  const qs = sp.toString();
+  const res = await fetchWithTimeout(`${getApiUrl()}/directors/inbox/unread${qs ? `?${qs}` : ""}`, {
     headers: authHeaders(token),
   });
   if (!res.ok) throw new Error(`Fetch unread failed: ${res.status}`);
@@ -626,11 +647,12 @@ export async function updateInboxItem(
 
 export async function fetchDirectorTasks(
   token: string | null,
-  params: { status?: string; assignee_id?: string } = {}
+  params: { status?: string; assignee_id?: string; project_id?: string } = {}
 ): Promise<{ tasks: DirectorTask[]; stats: Record<string, number> }> {
   const sp = new URLSearchParams();
   if (params.status) sp.set("status", params.status);
   if (params.assignee_id) sp.set("assignee_id", params.assignee_id);
+  if (params.project_id) sp.set("project_id", params.project_id);
   const res = await fetchWithTimeout(`${getApiUrl()}/directors/tasks?${sp}`, {
     headers: authHeaders(token),
   });
@@ -642,11 +664,65 @@ export async function fetchDirectorTasks(
 
 export async function fetchDirectorActivity(
   token: string | null,
-  limit = 20
+  limit = 20,
+  projectId?: string
 ): Promise<{ activity: ActivityItem[] }> {
-  const res = await fetchWithTimeout(`${getApiUrl()}/directors/activity?limit=${limit}`, {
+  const sp = new URLSearchParams();
+  sp.set("limit", String(limit));
+  if (projectId) sp.set("project_id", projectId);
+  const res = await fetchWithTimeout(`${getApiUrl()}/directors/activity?${sp}`, {
     headers: authHeaders(token),
   });
   if (!res.ok) throw new Error(`Fetch activity failed: ${res.status}`);
+  return res.json();
+}
+
+// === Director Projects ===
+
+export async function fetchProjects(
+  token: string | null
+): Promise<{ projects: DirectorProject[] }> {
+  const res = await fetchWithTimeout(`${getApiUrl()}/directors/projects`, {
+    headers: authHeaders(token),
+  });
+  if (!res.ok) throw new Error(`Fetch projects failed: ${res.status}`);
+  return res.json();
+}
+
+export async function createProject(
+  data: { name: string; emoji?: string; description?: string; color?: string; team_template?: string },
+  token: string | null
+): Promise<{ project: DirectorProject; installed_directors: Director[] }> {
+  const res = await fetchWithTimeout(`${getApiUrl()}/directors/projects`, {
+    method: "POST",
+    headers: { ...authHeaders(token), "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Create project failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function deleteProject(
+  projectId: string,
+  token: string | null
+): Promise<{ deleted: boolean }> {
+  const res = await fetchWithTimeout(
+    `${getApiUrl()}/directors/projects/${encodeURIComponent(projectId)}`,
+    { method: "DELETE", headers: authHeaders(token) }
+  );
+  if (!res.ok) throw new Error(`Delete project failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchTeamTemplates(
+  token: string | null
+): Promise<{ team_templates: TeamTemplate[] }> {
+  const res = await fetchWithTimeout(`${getApiUrl()}/directors/team-templates`, {
+    headers: authHeaders(token),
+  });
+  if (!res.ok) throw new Error(`Fetch team templates failed: ${res.status}`);
   return res.json();
 }

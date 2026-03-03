@@ -823,7 +823,7 @@ async def handle_voice(message: Message, bot: Bot) -> None:
         transcribing_msg = await message.reply("🎤 Transcribing...")
 
         from transcriber import Transcriber
-        transcriber = Transcriber(model_size="base", language="es")
+        transcriber = Transcriber(model_size="auto", language="es")
         text = transcriber.transcribe(tmp_path)
 
         if not text or not text.strip():

@@ -28,6 +28,7 @@ sealed class Message {
       'tool_use' => ToolUseMessage.fromJson(json),
       'tool_result' => ToolResultMessage.fromJson(json),
       'permission_request' => PermissionRequestMessage.fromJson(json),
+      'ask_question' => AskQuestionMessage.fromJson(json),
       'computer_screenshot' => ComputerScreenshotMessage.fromJson(json),
       'computer_action' => ComputerActionMessage.fromJson(json),
       'sub_agent' => SubAgentMessage.fromJson(json),
@@ -334,6 +335,71 @@ class PermissionRequestMessage extends Message {
         'level': level.name,
         'reason': reason,
         'status': status.name,
+        'timestamp': timestamp,
+        'animate': animate,
+      };
+}
+
+enum QuestionStatus { pending, answered, skipped, expired }
+
+class AskQuestionMessage extends Message {
+  final String requestId;
+  final List<Map<String, dynamic>> questions;
+  final QuestionStatus status;
+  final Map<String, String> answers;
+
+  const AskQuestionMessage({
+    required super.id,
+    required this.requestId,
+    required this.questions,
+    this.status = QuestionStatus.pending,
+    this.answers = const {},
+    required super.timestamp,
+    super.animate,
+  });
+
+  @override
+  String get type => 'ask_question';
+
+  AskQuestionMessage copyWith({
+    QuestionStatus? status,
+    Map<String, String>? answers,
+  }) =>
+      AskQuestionMessage(
+        id: id,
+        requestId: requestId,
+        questions: questions,
+        status: status ?? this.status,
+        answers: answers ?? this.answers,
+        timestamp: timestamp,
+        animate: animate,
+      );
+
+  factory AskQuestionMessage.fromJson(Map<String, dynamic> json) =>
+      AskQuestionMessage(
+        id: json['id'] ?? _uuid.v4(),
+        requestId: json['requestId'] ?? '',
+        questions: (json['questions'] as List?)
+                ?.map((q) => Map<String, dynamic>.from(q))
+                .toList() ??
+            [],
+        status: QuestionStatus.values.firstWhere(
+          (e) => e.name == json['status'],
+          orElse: () => QuestionStatus.pending,
+        ),
+        answers: Map<String, String>.from(json['answers'] ?? {}),
+        timestamp: json['timestamp'] ?? DateTime.now().millisecondsSinceEpoch,
+        animate: json['animate'] ?? false,
+      );
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'type': type,
+        'requestId': requestId,
+        'questions': questions,
+        'status': status.name,
+        'answers': answers,
         'timestamp': timestamp,
         'animate': animate,
       };

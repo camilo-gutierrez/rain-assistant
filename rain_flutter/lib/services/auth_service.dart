@@ -24,7 +24,7 @@ class AuthService {
   bool get isAuthenticated => _token != null;
   String get deviceId => _deviceId;
 
-  String get apiUrl => '$_serverUrl/api';
+  String get apiUrl => _serverUrl != null ? '$_serverUrl/api' : '';
   String get wsUrl {
     if (_serverUrl == null) return '';
     final uri = Uri.parse(_serverUrl!);

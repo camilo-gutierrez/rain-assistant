@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:typed_data';
+
 import 'package:audio_session/audio_session.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
@@ -183,5 +186,161 @@ class _BytesAudioSource extends StreamAudioSource {
       stream: Stream.value(_bytes.sublist(s, e)),
       contentType: 'audio/mpeg',
     );
+  }
+}
+
+/// Plays sentence-level TTS audio streamed from the backend via WebSocket.
+///
+/// The backend sends multiple small audio chunks per sentence (streaming=true),
+/// followed by a `tts_sentence_end` event. This player accumulates chunks for
+/// each sentence and plays them sequentially. For minimum latency, the first
+/// sentence starts playing as soon as enough data arrives (without waiting for
+/// sentence_end).
+class StreamingTtsPlayer {
+  final AudioPlayer _player = AudioPlayer();
+
+  /// Completed sentences ready to play.
+  final List<Uint8List> _readyQueue = [];
+
+  /// Chunks being accumulated for the current sentence.
+  final List<Uint8List> _pendingChunks = [];
+  int _pendingBytes = 0;
+
+  bool _isPlaying = false;
+  bool _cancelled = false;
+
+  /// Minimum bytes before starting playback of the first sentence
+  /// (to avoid choppy start). ~8KB ≈ ~0.5s of MP3 audio.
+  static const int _earlyPlayThreshold = 8192;
+  bool _firstSentencePlayed = false;
+
+  /// Called when all queued sentences have finished playing.
+  VoidCallback? onAllDone;
+
+  /// Called when playback starts (first sentence begins).
+  VoidCallback? onPlaybackStarted;
+
+  StreamingTtsPlayer() {
+    _player.playerStateStream.listen((state) {
+      if (state.processingState == ProcessingState.completed) {
+        _playNext();
+      }
+    });
+  }
+
+  /// Add a streaming audio chunk (part of a sentence).
+  void addChunk(Uint8List audioBytes) {
+    if (_cancelled) return;
+    _pendingChunks.add(audioBytes);
+    _pendingBytes += audioBytes.length;
+
+    // For the very first sentence: start playing early for minimum latency
+    if (!_firstSentencePlayed &&
+        !_isPlaying &&
+        _pendingBytes >= _earlyPlayThreshold) {
+      _flushPendingAndPlay();
+    }
+  }
+
+  /// Mark the current sentence as complete.
+  void sentenceEnd() {
+    if (_cancelled) return;
+    if (_pendingChunks.isEmpty) return;
+
+    final combined = _combinePending();
+    _readyQueue.add(combined);
+
+    if (!_isPlaying) {
+      _playNext();
+    }
+  }
+
+  /// Legacy: enqueue a complete sentence's audio (backward-compatible).
+  void enqueue(Uint8List audioBytes) {
+    if (_cancelled) return;
+    _readyQueue.add(audioBytes);
+    if (!_isPlaying) {
+      _playNext();
+    }
+  }
+
+  /// Cancel all pending playback and clear the queue.
+  Future<void> cancel() async {
+    _cancelled = true;
+    _readyQueue.clear();
+    _pendingChunks.clear();
+    _pendingBytes = 0;
+    _isPlaying = false;
+    _firstSentencePlayed = false;
+    await _player.stop();
+  }
+
+  /// Reset state for a new response cycle.
+  void reset() {
+    _cancelled = false;
+    _readyQueue.clear();
+    _pendingChunks.clear();
+    _pendingBytes = 0;
+    _isPlaying = false;
+    _firstSentencePlayed = false;
+  }
+
+  Uint8List _combinePending() {
+    if (_pendingChunks.length == 1) {
+      final result = _pendingChunks.first;
+      _pendingChunks.clear();
+      _pendingBytes = 0;
+      return result;
+    }
+    final builder = BytesBuilder(copy: false);
+    for (final c in _pendingChunks) {
+      builder.add(c);
+    }
+    _pendingChunks.clear();
+    _pendingBytes = 0;
+    return builder.takeBytes();
+  }
+
+  /// Flush pending chunks into ready queue and start playback immediately.
+  void _flushPendingAndPlay() {
+    if (_pendingChunks.isEmpty) return;
+    final combined = _combinePending();
+    _readyQueue.add(combined);
+    _firstSentencePlayed = true;
+    _playNext();
+  }
+
+  void _playNext() {
+    if (_cancelled || _readyQueue.isEmpty) {
+      _isPlaying = false;
+      if (!_cancelled) {
+        onAllDone?.call();
+      }
+      return;
+    }
+
+    final bytes = _readyQueue.removeAt(0);
+    _isPlaying = true;
+    _firstSentencePlayed = true;
+
+    if (!_cancelled) {
+      onPlaybackStarted?.call();
+    }
+
+    _player.setAudioSource(_BytesAudioSource(bytes)).then((_) {
+      if (!_cancelled) {
+        _player.play();
+      }
+    }).catchError((e) {
+      debugPrint('[StreamingTTS] Playback error: $e');
+      _playNext(); // Skip failed sentence, try next
+    });
+  }
+
+  void dispose() {
+    _cancelled = true;
+    _readyQueue.clear();
+    _pendingChunks.clear();
+    _player.dispose();
   }
 }

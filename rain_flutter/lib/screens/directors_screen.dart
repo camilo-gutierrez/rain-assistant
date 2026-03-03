@@ -81,6 +81,8 @@ class _DirectorsScreenState extends ConsumerState<DirectorsScreen>
     final notifier = ref.read(directorsProvider.notifier);
     notifier.loadDirectors(dio);
     notifier.loadStats(dio);
+    notifier.loadProjects(dio);
+    notifier.loadTeamTemplates(dio);
   }
 
   void _onTabChanged() {
@@ -91,6 +93,7 @@ class _DirectorsScreenState extends ConsumerState<DirectorsScreen>
       case 1:
         final s = ref.read(directorsProvider);
         if (s.templates.isEmpty) notifier.loadTemplates(dio);
+        if (s.teamTemplates.isEmpty) notifier.loadTeamTemplates(dio);
       case 2:
         notifier.loadTasks(dio);
       case 3:
@@ -121,6 +124,16 @@ class _DirectorsScreenState extends ConsumerState<DirectorsScreen>
       showToast(context, L10n.t('directors.running', lang),
           type: ToastType.success);
     } else if (mounted) {
+      showToast(context, 'Error', type: ToastType.error);
+    }
+  }
+
+  Future<void> _runTeam() async {
+    final dio = ref.read(authServiceProvider).authenticatedDio;
+    final projectId = ref.read(directorsProvider).activeProjectId;
+    if (projectId.isEmpty) return;
+    final ok = await ref.read(directorsProvider.notifier).runProject(dio, projectId);
+    if (mounted && !ok) {
       showToast(context, 'Error', type: ToastType.error);
     }
   }
@@ -174,6 +187,7 @@ class _DirectorsScreenState extends ConsumerState<DirectorsScreen>
 
   void _showCreateSheet({DirectorTemplate? template}) {
     final lang = ref.read(settingsProvider).language;
+    final ps = ref.read(directorsProvider);
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -184,12 +198,83 @@ class _DirectorsScreenState extends ConsumerState<DirectorsScreen>
       builder: (ctx) => _CreateDirectorSheet(
         lang: lang,
         template: template,
+        projects: ps.projects,
+        activeProjectId: ps.activeProjectId,
         onCreated: (data) async {
           Navigator.of(ctx).pop();
           await _createDirector(data);
         },
       ),
     );
+  }
+
+  void _showCreateProjectSheet() {
+    final lang = ref.read(settingsProvider).language;
+    final teamTemplates = ref.read(directorsProvider).teamTemplates;
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => _CreateProjectSheet(
+        lang: lang,
+        teamTemplates: teamTemplates,
+        onCreated: (data) async {
+          Navigator.of(ctx).pop();
+          await _createProject(data);
+        },
+      ),
+    );
+  }
+
+  Future<void> _createProject(Map<String, dynamic> data) async {
+    final lang = ref.read(settingsProvider).language;
+    final dio = ref.read(authServiceProvider).authenticatedDio;
+    final notifier = ref.read(directorsProvider.notifier);
+    final project = await notifier.createProject(dio, data);
+    if (mounted && project != null) {
+      showToast(context, L10n.t('projects.create', lang),
+          type: ToastType.success);
+      notifier.setActiveProject(dio, project.id);
+      _tabController.animateTo(0);
+    } else if (mounted) {
+      showToast(context, 'Error', type: ToastType.error);
+    }
+  }
+
+  Future<void> _deleteProject(DirectorProject project) async {
+    final lang = ref.read(settingsProvider).language;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(L10n.t('projects.delete', lang)),
+        content: Text(
+            L10n.t('projects.deleteConfirm', lang, {'name': project.name})),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(L10n.t('agent.cancel', lang)),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+            ),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(L10n.t('projects.delete', lang)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    final dio = ref.read(authServiceProvider).authenticatedDio;
+    final ok =
+        await ref.read(directorsProvider.notifier).deleteProject(dio, project.id);
+    if (!ok && mounted) {
+      showToast(context, 'Error', type: ToastType.error);
+    }
   }
 
   // ── Build ──
@@ -199,10 +284,101 @@ class _DirectorsScreenState extends ConsumerState<DirectorsScreen>
     final cs = Theme.of(context).colorScheme;
     final lang = ref.watch(settingsProvider).language;
 
+    final ps = ref.watch(directorsProvider);
+    final activeProject = ps.activeProjectId.isEmpty
+        ? null
+        : ps.projects.cast<DirectorProject?>().firstWhere(
+              (p) => p!.id == ps.activeProjectId,
+              orElse: () => null,
+            );
+
     return Scaffold(
       appBar: AppBar(
         title: Text(L10n.t('directors.title', lang)),
         actions: [
+          PopupMenuButton<String>(
+            tooltip: L10n.t('projects.title', lang),
+            offset: const Offset(0, 48),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(activeProject?.emoji ?? '📋',
+                      style: const TextStyle(fontSize: 18)),
+                  const SizedBox(width: 4),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 100),
+                    child: Text(
+                      activeProject?.name ??
+                          L10n.t('projects.allDirectors', lang),
+                      style: TextStyle(fontSize: 13, color: cs.onSurface),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  Icon(Icons.arrow_drop_down,
+                      size: 18, color: cs.onSurfaceVariant),
+                ],
+              ),
+            ),
+            onSelected: (value) {
+              if (value == '_create') {
+                _showCreateProjectSheet();
+              } else if (value == '_delete' && activeProject != null) {
+                _deleteProject(activeProject);
+              } else {
+                final dio = ref.read(authServiceProvider).authenticatedDio;
+                ref
+                    .read(directorsProvider.notifier)
+                    .setActiveProject(dio, value);
+              }
+            },
+            itemBuilder: (ctx) => [
+              PopupMenuItem(
+                value: '',
+                child: Row(children: [
+                  const Text('📋', style: TextStyle(fontSize: 16)),
+                  const SizedBox(width: 10),
+                  Text(L10n.t('projects.allDirectors', lang)),
+                ]),
+              ),
+              if (ps.projects.isNotEmpty) const PopupMenuDivider(),
+              ...ps.projects.map((p) => PopupMenuItem(
+                    value: p.id,
+                    child: Row(children: [
+                      Text(p.emoji, style: const TextStyle(fontSize: 16)),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(p.name,
+                            overflow: TextOverflow.ellipsis),
+                      ),
+                      if (p.id == ps.activeProjectId)
+                        Icon(Icons.check, size: 18, color: cs.primary),
+                    ]),
+                  )),
+              const PopupMenuDivider(),
+              PopupMenuItem(
+                value: '_create',
+                child: Row(children: [
+                  Icon(Icons.add_circle_outline,
+                      size: 18, color: cs.primary),
+                  const SizedBox(width: 10),
+                  Text(L10n.t('projects.create', lang),
+                      style: TextStyle(color: cs.primary)),
+                ]),
+              ),
+              if (activeProject != null)
+                PopupMenuItem(
+                  value: '_delete',
+                  child: Row(children: [
+                    Icon(Icons.delete_outline, size: 18, color: cs.error),
+                    const SizedBox(width: 10),
+                    Text(L10n.t('projects.delete', lang),
+                        style: TextStyle(color: cs.error)),
+                  ]),
+                ),
+            ],
+          ),
           IconButton(onPressed: _refresh, icon: const Icon(Icons.refresh)),
         ],
         bottom: TabBar(
@@ -287,6 +463,40 @@ class _DirectorsScreenState extends ConsumerState<DirectorsScreen>
       child: ListView(
         padding: const EdgeInsets.only(top: 8, bottom: 80),
         children: [
+          // Run Team button + progress
+          if (s.activeProjectId.isNotEmpty && s.directors.isNotEmpty) ...[
+            if (s.activeTeamRun == null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                child: FilledButton.tonalIcon(
+                  onPressed: s.teamRunning ? null : _runTeam,
+                  icon: s.teamRunning
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.play_circle_outline, size: 20),
+                  label: Text(
+                    s.teamRunning
+                        ? L10n.t('directors.teamRunning', lang)
+                        : L10n.t('directors.runTeam', lang),
+                  ),
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size(double.infinity, 44),
+                  ),
+                ),
+              ),
+            if (s.activeTeamRun != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                child: _TeamRunProgress(
+                  run: s.activeTeamRun!,
+                  lang: lang,
+                  onDismiss: () =>
+                      ref.read(directorsProvider.notifier).clearTeamRun(),
+                ),
+              ),
+          ],
           if (s.stats != null) _StatsHeader(stats: s.stats!, lang: lang),
           ...s.directors.map((d) => Padding(
                 padding: const EdgeInsets.only(bottom: 4),
@@ -314,26 +524,128 @@ class _DirectorsScreenState extends ConsumerState<DirectorsScreen>
   Widget _buildTemplatesTab(ColorScheme cs, String lang) {
     final s = ref.watch(directorsProvider);
 
-    if (s.templatesLoading && s.templates.isEmpty) {
+    if (s.templatesLoading && s.templates.isEmpty && s.teamTemplates.isEmpty) {
       return const Center(child: CircularProgressIndicator());
     }
-    if (s.templates.isEmpty) {
+    if (s.templates.isEmpty && s.teamTemplates.isEmpty) {
       return Center(
         child: Text(L10n.t('directors.empty', lang),
             style: TextStyle(color: cs.onSurfaceVariant)),
       );
     }
 
-    return ListView.separated(
-      padding: const EdgeInsets.only(top: 8, bottom: 80),
-      itemCount: s.templates.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 4),
-      itemBuilder: (_, i) => _TemplateCard(
-        template: s.templates[i],
-        lang: lang,
-        onInstall: () => _showCreateSheet(template: s.templates[i]),
+    final visibleTeams =
+        s.teamTemplates.where((t) => t.directors.isNotEmpty).toList();
+
+    return DefaultTabController(
+      length: 2,
+      child: Column(
+        children: [
+          // Inner segmented tab bar
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: Container(
+              height: 36,
+              decoration: BoxDecoration(
+                color: cs.surfaceContainerHighest.withValues(alpha: 0.5),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: TabBar(
+                indicatorSize: TabBarIndicatorSize.tab,
+                dividerColor: Colors.transparent,
+                indicator: BoxDecoration(
+                  color: cs.surface,
+                  borderRadius: BorderRadius.circular(8),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.08),
+                      blurRadius: 2,
+                      offset: const Offset(0, 1),
+                    ),
+                  ],
+                ),
+                indicatorPadding: const EdgeInsets.all(3),
+                labelColor: cs.onSurface,
+                unselectedLabelColor: cs.onSurfaceVariant,
+                labelStyle: const TextStyle(
+                    fontSize: 13, fontWeight: FontWeight.w600),
+                unselectedLabelStyle: const TextStyle(
+                    fontSize: 13, fontWeight: FontWeight.w500),
+                tabs: [
+                  Tab(text: L10n.t('directors.individualTemplates', lang)),
+                  Tab(text: L10n.t('directors.teamTemplates', lang)),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          // Tab content
+          Expanded(
+            child: TabBarView(
+              children: [
+                // Individual directors list
+                s.templates.isEmpty
+                    ? Center(
+                        child: Text(L10n.t('directors.empty', lang),
+                            style: TextStyle(color: cs.onSurfaceVariant)))
+                    : ListView.builder(
+                        padding: const EdgeInsets.only(bottom: 80),
+                        itemCount: s.templates.length,
+                        itemBuilder: (_, i) => Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: _TemplateCard(
+                            template: s.templates[i],
+                            lang: lang,
+                            onInstall: () =>
+                                _showCreateSheet(template: s.templates[i]),
+                          ),
+                        ),
+                      ),
+                // Teams list
+                visibleTeams.isEmpty
+                    ? Center(
+                        child: Text(L10n.t('directors.empty', lang),
+                            style: TextStyle(color: cs.onSurfaceVariant)))
+                    : ListView.builder(
+                        padding: const EdgeInsets.only(bottom: 80),
+                        itemCount: visibleTeams.length,
+                        itemBuilder: (_, i) => Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: _TeamTemplateCard(
+                            team: visibleTeams[i],
+                            lang: lang,
+                            onCreateProject: () =>
+                                _createProjectFromTeam(visibleTeams[i]),
+                          ),
+                        ),
+                      ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
+  }
+
+  Future<void> _createProjectFromTeam(TeamTemplate team) async {
+    final lang = ref.read(settingsProvider).language;
+    final dio = ref.read(authServiceProvider).authenticatedDio;
+    final notifier = ref.read(directorsProvider.notifier);
+    final project = await notifier.createProject(dio, {
+      'name': team.name,
+      'emoji': team.emoji,
+      'description': team.description,
+      'color': team.color,
+      'team_template': team.id,
+    });
+    if (mounted && project != null) {
+      showToast(context, L10n.t('projects.create', lang),
+          type: ToastType.success);
+      notifier.setActiveProject(dio, project.id);
+      _tabController.animateTo(0);
+    } else if (mounted) {
+      showToast(context, 'Error', type: ToastType.error);
+    }
   }
 
   // ── Tasks tab ──
@@ -848,6 +1160,205 @@ class _TemplateCard extends StatelessWidget {
   }
 }
 
+// ── Team template card ──
+
+class _TeamTemplateCard extends StatefulWidget {
+  final TeamTemplate team;
+  final String lang;
+  final VoidCallback onCreateProject;
+
+  const _TeamTemplateCard({
+    required this.team,
+    required this.lang,
+    required this.onCreateProject,
+  });
+
+  @override
+  State<_TeamTemplateCard> createState() => _TeamTemplateCardState();
+}
+
+class _TeamTemplateCardState extends State<_TeamTemplateCard> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final team = widget.team;
+    final lang = widget.lang;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: Card(
+        elevation: 1,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16)),
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(14),
+              child: Row(
+                children: [
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: cs.tertiaryContainer,
+                    ),
+                    alignment: Alignment.center,
+                    child: Text(team.emoji,
+                        style: const TextStyle(fontSize: 24)),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Flexible(
+                              child: Text(team.name,
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 15,
+                                    color: cs.onSurface,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis),
+                            ),
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: cs.tertiaryContainer,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.group, size: 12,
+                                      color: cs.onTertiaryContainer),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    L10n.t('directors.teamDirectors', lang,
+                                        {'count': '${team.directors.length}'}),
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w600,
+                                      color: cs.onTertiaryContainer,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (team.description.isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text(team.description,
+                              style: TextStyle(
+                                  fontSize: 12, color: cs.onSurfaceVariant),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // Action buttons
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
+              child: Row(
+                children: [
+                  TextButton.icon(
+                    onPressed: () => setState(() => _expanded = !_expanded),
+                    icon: Icon(
+                      _expanded
+                          ? Icons.expand_less
+                          : Icons.expand_more,
+                      size: 18,
+                    ),
+                    label: Text(
+                      _expanded
+                          ? L10n.t('agent.hide', lang)
+                          : L10n.t('agent.details', lang),
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+                  const Spacer(),
+                  FilledButton.icon(
+                    onPressed: widget.onCreateProject,
+                    icon: const Icon(Icons.create_new_folder_outlined, size: 18),
+                    label: Text(L10n.t('directors.createProject', lang)),
+                  ),
+                ],
+              ),
+            ),
+            // Expanded director details
+            if (_expanded && team.directorDetails.isNotEmpty)
+              Container(
+                decoration: BoxDecoration(
+                  color: cs.surfaceContainerHighest.withValues(alpha: 0.3),
+                  borderRadius: const BorderRadius.vertical(
+                      bottom: Radius.circular(16)),
+                ),
+                child: Column(
+                  children: [
+                    const Divider(height: 1),
+                    ...team.directorDetails.map((dir) => Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 6),
+                          child: Row(
+                            children: [
+                              Text(dir.emoji,
+                                  style: const TextStyle(fontSize: 18)),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                  children: [
+                                    Text(dir.name,
+                                        style: TextStyle(
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w500,
+                                            color: cs.onSurface)),
+                                    if (dir.description.isNotEmpty)
+                                      Text(dir.description,
+                                          style: TextStyle(
+                                              fontSize: 11,
+                                              color: cs.onSurfaceVariant),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis),
+                                  ],
+                                ),
+                              ),
+                              if (dir.defaultSchedule.isNotEmpty) ...[
+                                Icon(Icons.schedule,
+                                    size: 12, color: cs.onSurfaceVariant),
+                                const SizedBox(width: 4),
+                                Text(dir.defaultSchedule,
+                                    style: TextStyle(
+                                        fontSize: 11,
+                                        color: cs.onSurfaceVariant)),
+                              ],
+                            ],
+                          ),
+                        )),
+                    const SizedBox(height: 6),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 // ── Task row ──
 
 class _TaskRow extends StatelessWidget {
@@ -931,16 +1442,212 @@ class _TaskRow extends StatelessWidget {
   }
 }
 
+// ── Team run progress widget ──
+
+class _TeamRunProgress extends StatelessWidget {
+  final ActiveTeamRun run;
+  final String lang;
+  final VoidCallback onDismiss;
+
+  const _TeamRunProgress({
+    required this.run,
+    required this.lang,
+    required this.onDismiss,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final entries = run.directors.values.toList();
+    final pct = run.total > 0 ? run.doneCount / run.total : 0.0;
+
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: cs.primary.withValues(alpha: 0.3)),
+      ),
+      color: cs.primary.withValues(alpha: 0.05),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Header
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 12, 8, 0),
+            child: Row(
+              children: [
+                if (run.allDone)
+                  Icon(Icons.check_circle, size: 18, color: Colors.green)
+                else
+                  SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: cs.primary,
+                    ),
+                  ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    run.allDone
+                        ? L10n.t('directors.teamRunFinished', lang, {
+                            'name': run.projectName,
+                            'success':
+                                '${entries.where((d) => d.status == DirectorRunStatus.completed).length}',
+                            'failed':
+                                '${entries.where((d) => d.status == DirectorRunStatus.failed).length}',
+                          })
+                        : L10n.t('directors.teamRunning', lang),
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: cs.onSurface,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (run.allDone)
+                  IconButton(
+                    onPressed: onDismiss,
+                    icon: Icon(Icons.close, size: 18, color: cs.onSurfaceVariant),
+                    tooltip: L10n.t('directors.dismissProgress', lang),
+                    visualDensity: VisualDensity.compact,
+                  ),
+              ],
+            ),
+          ),
+
+          // Progress bar
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 8, 14, 0),
+            child: Column(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                    value: pct,
+                    minHeight: 6,
+                    backgroundColor: cs.surfaceContainerHighest,
+                    color: cs.primary,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      L10n.t('directors.teamProgress', lang, {
+                        'completed': '${run.doneCount}',
+                        'total': '${run.total}',
+                      }),
+                      style: TextStyle(
+                          fontSize: 12, color: cs.onSurfaceVariant),
+                    ),
+                    if (run.completedTasks > 0)
+                      Text(
+                        L10n.t('directors.teamProgressTasks', lang, {
+                          'count': '${run.completedTasks}',
+                        }),
+                        style: TextStyle(
+                            fontSize: 12, color: cs.onSurfaceVariant),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+
+          // Director list
+          if (entries.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 8, 14, 12),
+              child: Column(
+                children: entries
+                    .map((d) => Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Row(
+                            children: [
+                              _StatusDot(status: d.status, cs: cs),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  d.name,
+                                  style: TextStyle(
+                                      fontSize: 13, color: cs.onSurface),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              Text(
+                                _statusLabel(d.status, lang),
+                                style: TextStyle(
+                                    fontSize: 12,
+                                    color: cs.onSurfaceVariant),
+                              ),
+                            ],
+                          ),
+                        ))
+                    .toList(),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  String _statusLabel(DirectorRunStatus status, String lang) {
+    return switch (status) {
+      DirectorRunStatus.running => L10n.t('directors.runningDirector', lang),
+      DirectorRunStatus.completed =>
+        L10n.t('directors.completedDirector', lang),
+      DirectorRunStatus.failed => L10n.t('directors.failedDirector', lang),
+      DirectorRunStatus.pending => L10n.t('directors.pendingDirector', lang),
+    };
+  }
+}
+
+class _StatusDot extends StatelessWidget {
+  final DirectorRunStatus status;
+  final ColorScheme cs;
+
+  const _StatusDot({required this.status, required this.cs});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = switch (status) {
+      DirectorRunStatus.pending => cs.onSurfaceVariant.withValues(alpha: 0.4),
+      DirectorRunStatus.running => cs.primary,
+      DirectorRunStatus.completed => Colors.green,
+      DirectorRunStatus.failed => cs.error,
+    };
+
+    return Container(
+      width: 10,
+      height: 10,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: color,
+      ),
+    );
+  }
+}
+
 // ── Create director bottom sheet ──
 
 class _CreateDirectorSheet extends StatefulWidget {
   final String lang;
   final DirectorTemplate? template;
+  final List<DirectorProject> projects;
+  final String activeProjectId;
   final Future<void> Function(Map<String, dynamic> data) onCreated;
 
   const _CreateDirectorSheet({
     required this.lang,
     this.template,
+    this.projects = const [],
+    this.activeProjectId = '',
     required this.onCreated,
   });
 
@@ -957,6 +1664,7 @@ class _CreateDirectorSheetState extends State<_CreateDirectorSheet> {
   late final TextEditingController _scheduleCtrl;
   bool _canDelegate = false;
   bool _saving = false;
+  late String _selectedProjectId;
 
   @override
   void initState() {
@@ -968,6 +1676,7 @@ class _CreateDirectorSheetState extends State<_CreateDirectorSheet> {
     _promptCtrl = TextEditingController(text: t?.rolePrompt ?? '');
     _scheduleCtrl = TextEditingController(text: t?.defaultSchedule ?? '');
     _canDelegate = t?.canDelegate ?? false;
+    _selectedProjectId = widget.activeProjectId;
   }
 
   @override
@@ -1000,6 +1709,9 @@ class _CreateDirectorSheetState extends State<_CreateDirectorSheet> {
       'role_prompt': _promptCtrl.text.trim(),
       'can_delegate': _canDelegate,
     };
+    if (_selectedProjectId.isNotEmpty) {
+      data['project_id'] = _selectedProjectId;
+    }
     final schedule = _scheduleCtrl.text.trim();
     if (schedule.isNotEmpty) data['schedule'] = schedule;
 
@@ -1110,6 +1822,40 @@ class _CreateDirectorSheetState extends State<_CreateDirectorSheet> {
                 ),
                 validator: (v) => validateCron(v, lang),
               ),
+              if (widget.projects.isNotEmpty) ...[
+                const SizedBox(height: 14),
+                DropdownButtonFormField<String>(
+                  initialValue: _selectedProjectId.isEmpty ? null : _selectedProjectId,
+                  decoration: InputDecoration(
+                    labelText: L10n.t('projects.title', lang),
+                    border: const OutlineInputBorder(),
+                  ),
+                  isExpanded: true,
+                  items: [
+                    DropdownMenuItem<String>(
+                      value: null,
+                      child: Text(L10n.t('projects.defaultProject', lang),
+                          style: TextStyle(color: cs.onSurfaceVariant)),
+                    ),
+                    ...widget.projects.map((p) => DropdownMenuItem<String>(
+                          value: p.id,
+                          child: Row(
+                            children: [
+                              Text(p.emoji,
+                                  style: const TextStyle(fontSize: 16)),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(p.name,
+                                    overflow: TextOverflow.ellipsis),
+                              ),
+                            ],
+                          ),
+                        )),
+                  ],
+                  onChanged: (v) =>
+                      setState(() => _selectedProjectId = v ?? ''),
+                ),
+              ],
               const SizedBox(height: 10),
               SwitchListTile(
                 title: Text(L10n.t('directors.canDelegate', lang),
@@ -1140,6 +1886,235 @@ class _CreateDirectorSheetState extends State<_CreateDirectorSheet> {
                               child: CircularProgressIndicator(
                                   strokeWidth: 2))
                           : Text(L10n.t('directors.create', lang)),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Create project bottom sheet ──
+
+class _CreateProjectSheet extends StatefulWidget {
+  final String lang;
+  final List<TeamTemplate> teamTemplates;
+  final Future<void> Function(Map<String, dynamic> data) onCreated;
+
+  const _CreateProjectSheet({
+    required this.lang,
+    required this.teamTemplates,
+    required this.onCreated,
+  });
+
+  @override
+  State<_CreateProjectSheet> createState() => _CreateProjectSheetState();
+}
+
+class _CreateProjectSheetState extends State<_CreateProjectSheet> {
+  final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _emojiCtrl;
+  late final TextEditingController _nameCtrl;
+  late final TextEditingController _descCtrl;
+  String? _selectedTemplate;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _emojiCtrl = TextEditingController(text: '\u{1F4C1}');
+    _nameCtrl = TextEditingController();
+    _descCtrl = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _emojiCtrl.dispose();
+    _nameCtrl.dispose();
+    _descCtrl.dispose();
+    super.dispose();
+  }
+
+  void _onTemplateChanged(String? value) {
+    setState(() => _selectedTemplate = value);
+    if (value == null) return;
+    final tmpl = widget.teamTemplates.cast<TeamTemplate?>().firstWhere(
+          (t) => t!.id == value,
+          orElse: () => null,
+        );
+    if (tmpl == null) return;
+    if (_nameCtrl.text.isEmpty) _nameCtrl.text = tmpl.name;
+    if (_emojiCtrl.text == '\u{1F4C1}') _emojiCtrl.text = tmpl.emoji;
+    if (_descCtrl.text.isEmpty) _descCtrl.text = tmpl.description;
+  }
+
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _saving = true);
+
+    final data = <String, dynamic>{
+      'name': _nameCtrl.text.trim(),
+      'emoji': _emojiCtrl.text.trim(),
+      'description': _descCtrl.text.trim(),
+    };
+    if (_selectedTemplate != null) data['team_template'] = _selectedTemplate;
+
+    await widget.onCreated(data);
+    if (mounted) setState(() => _saving = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final lang = widget.lang;
+
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 20,
+        right: 20,
+        top: 20,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+      ),
+      child: Form(
+        key: _formKey,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: cs.onSurfaceVariant.withValues(alpha: 0.3),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(L10n.t('projects.create', lang),
+                  style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: cs.onSurface)),
+              const SizedBox(height: 20),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: 72,
+                    child: TextFormField(
+                      controller: _emojiCtrl,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 28),
+                      decoration: InputDecoration(
+                        labelText: L10n.t('directors.emoji', lang),
+                        border: const OutlineInputBorder(),
+                        contentPadding: const EdgeInsets.symmetric(
+                            vertical: 12, horizontal: 8),
+                      ),
+                      validator: (v) =>
+                          (v == null || v.trim().isEmpty) ? '' : null,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextFormField(
+                      controller: _nameCtrl,
+                      decoration: InputDecoration(
+                        labelText: L10n.t('projects.name', lang),
+                        border: const OutlineInputBorder(),
+                      ),
+                      validator: (v) =>
+                          (v == null || v.trim().isEmpty) ? '' : null,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              TextFormField(
+                controller: _descCtrl,
+                decoration: InputDecoration(
+                  labelText: L10n.t('projects.description', lang),
+                  border: const OutlineInputBorder(),
+                ),
+                maxLines: 2,
+              ),
+              const SizedBox(height: 14),
+              DropdownButtonFormField<String>(
+                initialValue: _selectedTemplate,
+                decoration: InputDecoration(
+                  labelText: L10n.t('projects.teamTemplate', lang),
+                  border: const OutlineInputBorder(),
+                ),
+                isExpanded: true,
+                items: [
+                  DropdownMenuItem<String>(
+                    value: null,
+                    child: Text(L10n.t('projects.emptyTemplate', lang),
+                        style: TextStyle(color: cs.onSurfaceVariant)),
+                  ),
+                  ...widget.teamTemplates
+                      .where((t) => t.directors.isNotEmpty)
+                      .map((t) => DropdownMenuItem<String>(
+                            value: t.id,
+                            child: Row(
+                              children: [
+                                Text(t.emoji,
+                                    style: const TextStyle(fontSize: 18)),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(t.name,
+                                          style: const TextStyle(
+                                              fontSize: 14)),
+                                      Text(
+                                        L10n.t('projects.directors', lang,
+                                            {'n': '${t.directors.length}'}),
+                                        style: TextStyle(
+                                            fontSize: 11,
+                                            color: cs.onSurfaceVariant),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )),
+                ],
+                onChanged: _onTemplateChanged,
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed:
+                          _saving ? null : () => Navigator.of(context).pop(),
+                      child: Text(L10n.t('agent.cancel', lang)),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: _saving ? null : _submit,
+                      child: _saving
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2))
+                          : Text(L10n.t('projects.create', lang)),
                     ),
                   ),
                 ],

@@ -13,6 +13,7 @@ import { handlePermissionMessage } from "@/hooks/usePermissionMessages";
 import { handleComputerUseMessage } from "@/hooks/useComputerUseMessages";
 import { handleSubAgentMessage } from "@/hooks/useSubAgentMessages";
 import { handleVoiceMessage } from "@/hooks/useVoiceMessages";
+import { handleDirectorMessage } from "@/hooks/useDirectorMessages";
 import type { WSReceiveMessage } from "@/lib/types";
 import { synthesize } from "@/lib/api";
 import { autoSaveConversation, loadHistoryForAgent } from "@/lib/historyUtils";
@@ -45,6 +46,10 @@ export function useWebSocket() {
       const agentStore = useAgentStore.getState();
       const connectionStore = useConnectionStore.getState();
       const agentId = ("agent_id" in msg && msg.agent_id) || agentStore.activeAgentId;
+
+      // Director events don't carry agent_id — handle before the guard
+      if (handleDirectorMessage(msg, agentId || "")) return;
+
       if (!agentId) return;
 
       // Delegate to domain-specific handlers first

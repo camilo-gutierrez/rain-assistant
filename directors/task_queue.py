@@ -54,6 +54,18 @@ def _ensure_tasks_table(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_dtasks_creator
         ON director_tasks(creator_id)
     """)
+
+    # Migration: add project_id column
+    try:
+        conn.execute("ALTER TABLE director_tasks ADD COLUMN project_id TEXT NOT NULL DEFAULT 'default'")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_dtasks_project
+        ON director_tasks(project_id, user_id)
+    """)
+
     conn.commit()
 
 
@@ -93,6 +105,7 @@ def create_task(
     input_data: dict | None = None,
     depends_on: list[str] | None = None,
     user_id: str = "default",
+    project_id: str = "default",
 ) -> dict:
     """Create a new task in the queue."""
     now = time.time()
@@ -103,13 +116,13 @@ def create_task(
         conn.execute(
             """INSERT INTO director_tasks
                (id, title, description, creator_id, assignee_id, status, priority,
-                task_type, input_data, depends_on, created_at, updated_at, user_id)
-               VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)""",
+                task_type, input_data, depends_on, created_at, updated_at, user_id, project_id)
+               VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)""",
             (task_id, title, description, creator_id, assignee_id,
              max(1, min(10, priority)), task_type,
              json.dumps(input_data or {}, ensure_ascii=False),
              json.dumps(depends_on or [], ensure_ascii=False),
-             now, now, user_id),
+             now, now, user_id, project_id),
         )
         conn.commit()
 
@@ -125,6 +138,7 @@ def list_tasks(
     assignee_id: str | None = None,
     creator_id: str | None = None,
     limit: int = 50,
+    project_id: str | None = None,
 ) -> list[dict]:
     """List tasks with optional filters."""
     conn = _get_tasks_db()
@@ -132,6 +146,9 @@ def list_tasks(
         conditions = ["user_id = ?"]
         params: list = [user_id]
 
+        if project_id is not None:
+            conditions.append("project_id = ?")
+            params.append(project_id)
         if status:
             conditions.append("status = ?")
             params.append(status)
@@ -305,13 +322,21 @@ def get_ready_tasks(assignee_id: str | None = None, user_id: str | None = None) 
         conn.close()
 
 
-def get_task_stats(user_id: str = "default") -> dict:
+def get_task_stats(user_id: str = "default", project_id: str | None = None) -> dict:
     """Get task counts by status for the dashboard."""
     conn = _get_tasks_db()
     try:
+        conditions = ["user_id = ?"]
+        params: list = [user_id]
+
+        if project_id is not None:
+            conditions.append("project_id = ?")
+            params.append(project_id)
+
+        where = " AND ".join(conditions)
         rows = conn.execute(
-            "SELECT status, COUNT(*) as count FROM director_tasks WHERE user_id = ? GROUP BY status",
-            (user_id,),
+            f"SELECT status, COUNT(*) as count FROM director_tasks WHERE {where} GROUP BY status",
+            params,
         ).fetchall()
         stats = {r["status"]: r["count"] for r in rows}
         stats["total"] = sum(stats.values())

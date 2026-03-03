@@ -100,6 +100,10 @@ class VoiceModeService {
         return true;
 
       case 'voice_mode_changed':
+      case 'tts_audio_chunk':
+      case 'tts_sentence_end':
+      case 'tts_audio_done':
+      case 'tts_audio_cancel':
         return true;
 
       default:

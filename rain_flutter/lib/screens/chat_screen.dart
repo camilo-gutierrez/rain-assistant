@@ -52,7 +52,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   final List<ImageAttachment> _pendingImages = [];
 
   // Call system
-  int _lastMessageCountForTts = 0;
   StreamSubscription<Map<String, dynamic>>? _callResponseSub;
 
   @override
@@ -111,23 +110,24 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   void _startCallResponseListener(CallService callService) {
     _callResponseSub?.cancel();
     final ws = ref.read(webSocketServiceProvider);
-    _lastMessageCountForTts = ref.read(agentProvider).activeAgent?.messages.length ?? 0;
 
     _callResponseSub = ws.messageStream.listen((msg) {
       if (!callService.isActive) return;
 
       final type = msg['type'] as String?;
-      // When assistant finishes streaming a response
-      if (type == 'stream_end' || type == 'response_complete') {
-        final agent = ref.read(agentProvider).activeAgent;
+      // When assistant finishes processing (backend sends 'result')
+      if (type == 'result') {
+        final agentId = (msg['agent_id'] as String?) ??
+            ref.read(agentProvider).activeAgentId;
+        final agent = ref.read(agentProvider).agents[agentId];
         if (agent == null) return;
-        final messages = agent.messages;
-        if (messages.length > _lastMessageCountForTts) {
-          final lastMsg = messages.last;
-          if (lastMsg is AssistantMessage && lastMsg.text.isNotEmpty) {
-            callService.speakResponse(lastMsg.text);
-          }
-          _lastMessageCountForTts = messages.length;
+
+        // Find the last assistant message (not the metrics SystemMessage)
+        final lastAssistant = agent.messages.reversed
+            .whereType<AssistantMessage>()
+            .firstOrNull;
+        if (lastAssistant != null && lastAssistant.text.isNotEmpty) {
+          callService.speakResponse(lastAssistant.text);
         }
       }
     });

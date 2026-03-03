@@ -1,4 +1,83 @@
-/// Models for the Autonomous Directors system.
+// Models for the Autonomous Directors system.
+
+class DirectorProject {
+  final String id;
+  final String name;
+  final String emoji;
+  final String description;
+  final String color;
+  final String? teamTemplate;
+  final double createdAt;
+  final double updatedAt;
+
+  const DirectorProject({
+    required this.id,
+    required this.name,
+    this.emoji = '📁',
+    this.description = '',
+    this.color = '#6C7086',
+    this.teamTemplate,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  factory DirectorProject.fromJson(Map<String, dynamic> json) =>
+      DirectorProject(
+        id: json['id'] as String,
+        name: json['name'] as String,
+        emoji: (json['emoji'] as String?) ?? '📁',
+        description: (json['description'] as String?) ?? '',
+        color: (json['color'] as String?) ?? '#6C7086',
+        teamTemplate: json['team_template'] as String?,
+        createdAt: (json['created_at'] as num).toDouble(),
+        updatedAt: (json['updated_at'] as num).toDouble(),
+      );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'emoji': emoji,
+        'description': description,
+        'color': color,
+        'team_template': teamTemplate,
+      };
+}
+
+class TeamTemplate {
+  final String id;
+  final String name;
+  final String emoji;
+  final String description;
+  final String color;
+  final List<String> directors;
+  final List<DirectorTemplate> directorDetails;
+
+  const TeamTemplate({
+    required this.id,
+    required this.name,
+    this.emoji = '📁',
+    this.description = '',
+    this.color = '#6C7086',
+    this.directors = const [],
+    this.directorDetails = const [],
+  });
+
+  factory TeamTemplate.fromJson(Map<String, dynamic> json) => TeamTemplate(
+        id: json['id'] as String,
+        name: json['name'] as String,
+        emoji: (json['emoji'] as String?) ?? '📁',
+        description: (json['description'] as String?) ?? '',
+        color: (json['color'] as String?) ?? '#6C7086',
+        directors: (json['directors'] as List?)
+                ?.map((e) => e as String)
+                .toList() ??
+            [],
+        directorDetails: (json['director_details'] as List?)
+                ?.map((e) => DirectorTemplate.fromJson(e as Map<String, dynamic>))
+                .toList() ??
+            [],
+      );
+}
 
 class Director {
   final String id;
@@ -194,7 +273,7 @@ class DirectorTemplate {
         emoji: (json['emoji'] as String?) ?? '\u{1F916}',
         description: (json['description'] as String?) ?? '',
         rolePrompt: (json['role_prompt'] as String?) ?? '',
-        defaultSchedule: (json['default_schedule'] as String?) ?? '',
+        defaultSchedule: (json['schedule'] as String?) ?? '',
         canDelegate: json['can_delegate'] == true,
       );
 }

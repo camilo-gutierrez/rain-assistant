@@ -37,6 +37,8 @@ class MessageTile extends ConsumerWidget {
         ToolResultBlock(message: message as ToolResultMessage),
       PermissionRequestMessage() =>
         PermissionBlock(message: message as PermissionRequestMessage),
+      AskQuestionMessage() =>
+        AskQuestionBlock(message: message as AskQuestionMessage),
       ComputerScreenshotMessage() => ComputerScreenshotBlock(
           message: message as ComputerScreenshotMessage, lang: lang),
       ComputerActionMessage() => ComputerActionBlock(
@@ -945,6 +947,400 @@ class _PermissionBlockState extends ConsumerState<PermissionBlock> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ── AskUserQuestion block with options + free text ──
+
+class AskQuestionBlock extends ConsumerStatefulWidget {
+  final AskQuestionMessage message;
+  const AskQuestionBlock({super.key, required this.message});
+
+  @override
+  ConsumerState<AskQuestionBlock> createState() => _AskQuestionBlockState();
+}
+
+class _AskQuestionBlockState extends ConsumerState<AskQuestionBlock> {
+  final Map<String, String> _selectedAnswers = {};
+  final Map<String, TextEditingController> _otherControllers = {};
+  Timer? _countdownTimer;
+  int _remainingSeconds = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.message.status == QuestionStatus.pending) {
+      _startCountdown();
+    }
+  }
+
+  void _startCountdown() {
+    const timeoutMs = 5 * 60 * 1000;
+    final elapsed =
+        DateTime.now().millisecondsSinceEpoch - widget.message.timestamp;
+    final remaining = timeoutMs - elapsed;
+
+    if (remaining <= 0) {
+      _remainingSeconds = 0;
+      _expire();
+      return;
+    }
+
+    _remainingSeconds = (remaining / 1000).ceil();
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) {
+        _countdownTimer?.cancel();
+        return;
+      }
+      setState(() {
+        _remainingSeconds--;
+        if (_remainingSeconds <= 0) {
+          _countdownTimer?.cancel();
+          _expire();
+        }
+      });
+    });
+  }
+
+  void _expire() {
+    final agentId = ref.read(agentProvider).activeAgentId;
+    ref.read(agentProvider.notifier).updateQuestionStatus(
+          agentId,
+          widget.message.requestId,
+          QuestionStatus.expired,
+        );
+  }
+
+  @override
+  void dispose() {
+    _countdownTimer?.cancel();
+    for (final c in _otherControllers.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  String _formatTime(int seconds) {
+    final m = seconds ~/ 60;
+    final s = seconds % 60;
+    return '$m:${s.toString().padLeft(2, '0')}';
+  }
+
+  TextEditingController _otherController(String key) {
+    return _otherControllers.putIfAbsent(key, () => TextEditingController());
+  }
+
+  void _respond() {
+    _countdownTimer?.cancel();
+    final agentId = ref.read(agentProvider).activeAgentId;
+
+    // Build final answers: prefer free-text if entered, else selected option
+    final answers = <String, String>{};
+    for (final q in widget.message.questions) {
+      final qText = (q['question'] ?? '') as String;
+      final otherText = _otherController(qText).text.trim();
+      if (otherText.isNotEmpty) {
+        answers[qText] = otherText;
+      } else if (_selectedAnswers.containsKey(qText)) {
+        answers[qText] = _selectedAnswers[qText]!;
+      }
+    }
+
+    final ws = ref.read(webSocketServiceProvider);
+    ws.send({
+      'type': 'ask_question_response',
+      'request_id': widget.message.requestId,
+      'agent_id': agentId,
+      'answers': answers,
+    });
+
+    ref.read(agentProvider.notifier).updateQuestionStatus(
+          agentId,
+          widget.message.requestId,
+          answers.isEmpty ? QuestionStatus.skipped : QuestionStatus.answered,
+          answers.isEmpty ? null : answers,
+        );
+
+    if (answers.isNotEmpty) {
+      ref.read(agentProvider.notifier).setProcessing(agentId, true);
+      ref
+          .read(agentProvider.notifier)
+          .setAgentStatus(agentId, AgentStatus.working);
+    }
+  }
+
+  void _skip() {
+    _countdownTimer?.cancel();
+    final agentId = ref.read(agentProvider).activeAgentId;
+
+    final ws = ref.read(webSocketServiceProvider);
+    ws.send({
+      'type': 'ask_question_response',
+      'request_id': widget.message.requestId,
+      'agent_id': agentId,
+      'answers': <String, String>{},
+    });
+
+    ref.read(agentProvider.notifier).updateQuestionStatus(
+          agentId,
+          widget.message.requestId,
+          QuestionStatus.skipped,
+        );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final lang = ref.watch(settingsProvider).language;
+    final isPending = widget.message.status == QuestionStatus.pending;
+
+    final fgColor = cs.onPrimaryContainer;
+    final bgColor = cs.primaryContainer;
+
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        constraints:
+            BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.85),
+        decoration: BoxDecoration(
+          color: bgColor,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ListTile(
+              dense: true,
+              leading: Icon(Icons.help_outline, color: cs.primary),
+              title: Text(
+                L10n.t('ask.title', lang),
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                  color: fgColor,
+                ),
+              ),
+              trailing: isPending && _remainingSeconds > 0
+                  ? Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: (_remainingSeconds < 60
+                                ? cs.error
+                                : cs.onSurfaceVariant)
+                            .withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        _formatTime(_remainingSeconds),
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          fontFamily: 'monospace',
+                          color: _remainingSeconds < 60
+                              ? cs.error
+                              : cs.onSurfaceVariant,
+                        ),
+                      ),
+                    )
+                  : null,
+            ),
+            // Render each question
+            for (final q in widget.message.questions) ...[
+              _buildQuestion(q, cs, lang, isPending),
+            ],
+            // Action buttons or resolved status
+            if (isPending)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _skip,
+                        icon: const Icon(Icons.skip_next, size: 16),
+                        label: Text(L10n.t('ask.skip', lang)),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: fgColor,
+                          side: BorderSide(
+                              color: fgColor.withValues(alpha: 0.4)),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: _respond,
+                        icon: const Icon(Icons.send, size: 16),
+                        label: Text(L10n.t('ask.respond', lang)),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: fgColor,
+                          foregroundColor: bgColor,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+                child: Row(
+                  children: [
+                    Icon(
+                      widget.message.status == QuestionStatus.answered
+                          ? Icons.check_circle
+                          : widget.message.status == QuestionStatus.skipped
+                              ? Icons.skip_next
+                              : Icons.timer_off,
+                      size: 16,
+                      color:
+                          widget.message.status == QuestionStatus.answered
+                              ? Colors.green
+                              : cs.error,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      widget.message.status == QuestionStatus.answered
+                          ? L10n.t('ask.answered', lang)
+                          : widget.message.status == QuestionStatus.skipped
+                              ? L10n.t('ask.skipped', lang)
+                              : L10n.t('ask.expired', lang),
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: widget.message.status ==
+                                QuestionStatus.answered
+                            ? Colors.green
+                            : cs.error,
+                      ),
+                    ),
+                    // Show the answer text when answered
+                    if (widget.message.status == QuestionStatus.answered &&
+                        widget.message.answers.isNotEmpty) ...[
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          widget.message.answers.values.join(', '),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: fgColor.withValues(alpha: 0.7),
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildQuestion(
+    Map<String, dynamic> q,
+    ColorScheme cs,
+    String lang,
+    bool isPending,
+  ) {
+    final qText = (q['question'] ?? '') as String;
+    final header = (q['header'] ?? '') as String;
+    final multiSelect = (q['multiSelect'] ?? false) as bool;
+    final options = (q['options'] as List?)
+            ?.map((o) => Map<String, dynamic>.from(o))
+            .toList() ??
+        [];
+
+    final fgColor = cs.onPrimaryContainer;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (header.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Text(
+                header,
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.5,
+                  color: fgColor.withValues(alpha: 0.5),
+                ),
+              ),
+            ),
+          Text(qText, style: TextStyle(fontSize: 14, color: fgColor)),
+          if (options.isNotEmpty && isPending) ...[
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: options.map((opt) {
+                final label = (opt['label'] ?? '') as String;
+                final desc = (opt['description'] ?? '') as String;
+                final selected = _selectedAnswers[qText] == label;
+                return Tooltip(
+                  message: desc,
+                  child: multiSelect
+                      ? FilterChip(
+                          label: Text(label, style: const TextStyle(fontSize: 12)),
+                          selected: selected,
+                          onSelected: (_) {
+                            setState(() {
+                              if (selected) {
+                                _selectedAnswers.remove(qText);
+                              } else {
+                                _selectedAnswers[qText] = label;
+                              }
+                              _otherController(qText).clear();
+                            });
+                          },
+                        )
+                      : ChoiceChip(
+                          label: Text(label, style: const TextStyle(fontSize: 12)),
+                          selected: selected,
+                          onSelected: (_) {
+                            setState(() {
+                              _selectedAnswers[qText] = label;
+                              _otherController(qText).clear();
+                            });
+                          },
+                        ),
+                );
+              }).toList(),
+            ),
+          ],
+          if (isPending) ...[
+            const SizedBox(height: 8),
+            TextField(
+              controller: _otherController(qText),
+              decoration: InputDecoration(
+                hintText: L10n.t('ask.otherPlaceholder', lang),
+                filled: true,
+                fillColor: cs.surface.withValues(alpha: 0.5),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                isDense: true,
+              ),
+              style: const TextStyle(fontSize: 14),
+              onChanged: (_) {
+                setState(() => _selectedAnswers.remove(qText));
+              },
+            ),
+          ],
+        ],
       ),
     );
   }

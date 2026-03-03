@@ -40,9 +40,9 @@ class VoiceActivityDetector:
 
     def __init__(
         self,
-        threshold: float = 0.5,
-        min_speech_ms: int = 250,
-        min_silence_ms: int = 800,
+        threshold: float = 0.45,
+        min_speech_ms: int = 200,
+        min_silence_ms: int = 500,
         sample_rate: int = 16000,
     ) -> None:
         self.threshold = threshold
@@ -63,9 +63,23 @@ class VoiceActivityDetector:
     def _ensure_model(self) -> None:
         if self._model is not None:
             return
+
+        # Try silero-vad pip package first (more reliable than torch.hub)
+        try:
+            from silero_vad import load_silero_vad
+            self._model = load_silero_vad()
+            return
+        except ImportError:
+            pass
+        except Exception as exc:
+            import logging
+            logging.getLogger("rain.vad").warning(
+                "silero_vad package failed: %s, falling back to torch.hub", exc,
+            )
+
+        # Fallback: torch.hub.load
         try:
             import torch
-
             self._model, _utils = torch.hub.load(
                 repo_or_dir="snakers4/silero-vad",
                 model="silero_vad",
@@ -74,7 +88,8 @@ class VoiceActivityDetector:
             self._model.eval()
         except Exception as exc:
             raise RuntimeError(
-                "Failed to load Silero VAD. Install with: pip install silero-vad torch"
+                f"Failed to load Silero VAD ({type(exc).__name__}: {exc}). "
+                "Install with: pip install silero-vad torch"
             ) from exc
 
     # ------------------------------------------------------------------

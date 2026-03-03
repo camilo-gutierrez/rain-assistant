@@ -271,7 +271,12 @@ export type WSReceiveMessage =
   | { type: "voice_mode_changed"; agent_id: string; mode: VoiceMode }
   | { type: "partial_transcription"; agent_id: string; text: string; is_final: boolean }
   | { type: "mcp_server_status"; agent_id: string; status: string; label?: string; server?: string }
-  | { type: "auto_approve_changed"; agent_id: string; enabled: boolean };
+  | { type: "auto_approve_changed"; agent_id: string; enabled: boolean }
+  // Director team execution events
+  | { type: "director_event"; event: "team_run_start"; project_id: string; project_name: string; director_count: number }
+  | { type: "director_event"; event: "run_complete"; director_id: string; director_name: string; project_id: string; success: boolean }
+  | { type: "director_event"; event: "task_complete"; director_id: string; director_name: string; project_id: string; task_id: string; success: boolean }
+  | { type: "director_event"; event: "team_run_complete"; project_id: string; project_name: string; results: Array<{ director_id: string; success: boolean }> };
 
 // === AI Provider ===
 export type AIProvider = "claude" | "openai" | "gemini" | "ollama";
@@ -542,6 +547,28 @@ export interface ActivityItem {
   task_id?: string;
   creator_id?: string;
   assignee_id?: string;
+}
+
+// === Director Projects ===
+export interface DirectorProject {
+  id: string;
+  name: string;
+  emoji: string;
+  description: string;
+  color: string;
+  team_template: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface TeamTemplate {
+  id: string;
+  name: string;
+  emoji: string;
+  description: string;
+  color: string;
+  directors: string[];
+  director_details?: DirectorTemplate[];
 }
 
 // === Active Panel ===

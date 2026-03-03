@@ -26,8 +26,8 @@ class SettingsState {
     this.ttsAutoPlay = false,
     this.ttsVoice = 'es-MX-DaliaNeural',
     this.voiceMode = 'push-to-talk',
-    this.vadSensitivity = 0.5,
-    this.silenceTimeout = 800,
+    this.vadSensitivity = 0.45,
+    this.silenceTimeout = 500,
     this.voiceLang = 'auto',
   });
 
@@ -76,8 +76,8 @@ class SettingsNotifier extends StateNotifier<SettingsState> {
       ttsAutoPlay: prefs.getBool('ttsAutoPlay') ?? false,
       ttsVoice: prefs.getString('ttsVoice') ?? 'es-MX-DaliaNeural',
       voiceMode: prefs.getString('voiceMode') ?? 'push-to-talk',
-      vadSensitivity: prefs.getDouble('vadSensitivity') ?? 0.5,
-      silenceTimeout: prefs.getInt('silenceTimeout') ?? 800,
+      vadSensitivity: prefs.getDouble('vadSensitivity') ?? 0.45,
+      silenceTimeout: prefs.getInt('silenceTimeout') ?? 500,
       voiceLang: prefs.getString('voiceLang') ?? 'auto',
     );
   }

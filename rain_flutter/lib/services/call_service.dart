@@ -25,6 +25,7 @@ class CallService {
   final VoiceModeService voiceService;
 
   final AudioRecorder _recorder = AudioRecorder();
+  final StreamingTtsPlayer _streamingTts = StreamingTtsPlayer();
   StreamSubscription<Uint8List>? _audioStreamSub;
   StreamSubscription<Map<String, dynamic>>? _wsMsgSub;
   Timer? _durationTimer;
@@ -54,7 +55,23 @@ class CallService {
   /// Track if we're currently speaking TTS.
   bool _isSpeakingTts = false;
 
-  CallService(this._ws, this._audioService, this.voiceService);
+  /// Whether streaming TTS was received for the current response.
+  bool _receivedStreamingTts = false;
+
+  CallService(this._ws, this._audioService, this.voiceService) {
+    _streamingTts.onPlaybackStarted = () {
+      if (isActive) {
+        _isSpeakingTts = true;
+        voiceService.voiceState.value = VoiceState.speaking;
+      }
+    };
+    _streamingTts.onAllDone = () {
+      _isSpeakingTts = false;
+      if (isActive) {
+        voiceService.voiceState.value = VoiceState.listening;
+      }
+    };
+  }
 
   bool get isActive => phase.value == CallPhase.active;
   bool get isInCall => phase.value != CallPhase.idle;
@@ -97,6 +114,7 @@ class CallService {
     _ws.send({
       'type': 'talk_mode_start',
       'agent_id': agentId,
+      'tts_voice': ttsVoice,
     });
 
     // 3. Activate voice state machine
@@ -129,6 +147,7 @@ class CallService {
     await _stopAudioStreaming();
 
     // Stop TTS if playing
+    await _streamingTts.cancel();
     await _audioService.stop();
     _isSpeakingTts = false;
 
@@ -165,20 +184,21 @@ class CallService {
   }
 
   /// Play TTS for an assistant response during a call.
+  /// With streaming TTS, this is only used as a fallback when the backend
+  /// doesn't send streaming audio (e.g., mostly-code responses).
   Future<void> speakResponse(String text) async {
     if (!isActive || !autoTts) return;
+    // Streaming TTS is handled via WebSocket messages (tts_audio_chunk).
+    // Only fall back to REST-based synthesis if no streaming audio was received.
+    if (_receivedStreamingTts) return;
 
     _isSpeakingTts = true;
     voiceService.voiceState.value = VoiceState.speaking;
 
     await _audioService.synthesize(text, _ttsVoice);
-
-    // Wait for playback to finish
     await _waitForTtsComplete();
 
     _isSpeakingTts = false;
-
-    // Return to listening after TTS completes
     if (isActive) {
       voiceService.voiceState.value = VoiceState.listening;
     }
@@ -187,6 +207,7 @@ class CallService {
   /// Handle interruption (user starts speaking during TTS).
   Future<void> _handleInterruption() async {
     if (_isSpeakingTts) {
+      await _streamingTts.cancel();
       await _audioService.stop();
       _isSpeakingTts = false;
       if (_agentId != null) {
@@ -244,18 +265,62 @@ class CallService {
 
   void _startWsListener() {
     _wsMsgSub?.cancel();
+    _streamingTts.reset();
+    _receivedStreamingTts = false;
+
     _wsMsgSub = _ws.messageStream.listen((msg) {
       if (!isActive) return;
 
+      final type = msg['type'] as String?;
+
+      // ── Streaming TTS messages ──
+      if (type == 'tts_audio_chunk') {
+        final data = msg['data'] as String?;
+        if (data != null) {
+          _receivedStreamingTts = true;
+          final isStreaming = msg['streaming'] == true;
+          if (isStreaming) {
+            // Incremental chunk — accumulate in player
+            _streamingTts.addChunk(Uint8List.fromList(base64Decode(data)));
+          } else {
+            // Legacy: complete sentence in one message
+            _streamingTts.enqueue(Uint8List.fromList(base64Decode(data)));
+          }
+        }
+        return;
+      }
+      if (type == 'tts_sentence_end') {
+        // Mark current sentence as complete so it can be played
+        _streamingTts.sentenceEnd();
+        return;
+      }
+      if (type == 'tts_audio_done') {
+        // All sentences sent. If no audio was received (e.g. code-only response),
+        // transition back to listening immediately.
+        if (!_receivedStreamingTts && isActive) {
+          voiceService.voiceState.value = VoiceState.listening;
+        }
+        // Otherwise StreamingTtsPlayer.onAllDone handles the transition.
+        _receivedStreamingTts = false;
+        return;
+      }
+      if (type == 'tts_audio_cancel') {
+        _streamingTts.cancel();
+        _isSpeakingTts = false;
+        _receivedStreamingTts = false;
+        return;
+      }
+
+      // ── Voice state messages ──
       final handled = voiceService.handleMessage(msg);
       if (!handled) return;
-
-      final type = msg['type'] as String?;
 
       // Auto-send transcription as chat message
       if (type == 'voice_transcription' && msg['is_final'] == true) {
         final text = voiceService.lastTranscription.value;
         if (text.isNotEmpty) {
+          _streamingTts.reset();
+          _receivedStreamingTts = false;
           onTranscriptionReady?.call(text);
           voiceService.lastTranscription.value = '';
         }
@@ -271,7 +336,10 @@ class CallService {
   /// Compute RMS audio level from PCM16 samples (0.0 to 1.0).
   void _updateAudioLevel(Uint8List chunk) {
     if (chunk.length < 4) return;
-    final samples = chunk.buffer.asInt16List(chunk.offsetInBytes, chunk.length ~/ 2);
+    // Copy to aligned buffer — record plugin on some Android devices delivers
+    // chunks with odd offsetInBytes, which crashes asInt16List.
+    final aligned = Uint8List.fromList(chunk);
+    final samples = aligned.buffer.asInt16List(0, aligned.length ~/ 2);
     double sum = 0;
     for (final s in samples) {
       sum += s * s;
@@ -322,6 +390,7 @@ class CallService {
     _wsMsgSub?.cancel();
     _durationTimer?.cancel();
     _recorder.dispose();
+    _streamingTts.dispose();
     phase.dispose();
     duration.dispose();
     isMuted.dispose();

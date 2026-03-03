@@ -12,10 +12,22 @@ from .storage import (
     mark_director_run,
     update_context,
     migrate_directors,
+    # Projects
+    create_project,
+    list_projects,
+    get_project,
+    update_project,
+    delete_project,
+    count_projects,
+    MAX_PROJECTS_PER_USER,
 )
 from .meta_tool import (
     MANAGE_DIRECTORS_DEFINITION,
     handle_manage_directors,
+)
+from .projects_tool import (
+    MANAGE_PROJECTS_DEFINITION,
+    handle_manage_projects,
 )
 from .task_queue import (
     create_task,
@@ -50,9 +62,19 @@ __all__ = [
     "mark_director_run",
     "update_context",
     "migrate_directors",
-    # Meta-tool
+    # Projects
+    "create_project",
+    "list_projects",
+    "get_project",
+    "update_project",
+    "delete_project",
+    "count_projects",
+    "MAX_PROJECTS_PER_USER",
+    # Meta-tools
     "MANAGE_DIRECTORS_DEFINITION",
     "handle_manage_directors",
+    "MANAGE_PROJECTS_DEFINITION",
+    "handle_manage_projects",
     # Task queue
     "create_task",
     "list_tasks",

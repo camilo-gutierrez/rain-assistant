@@ -23,7 +23,7 @@ else:
 class RainAssistantApp:
     def __init__(self):
         self.recorder = AudioRecorder()
-        self.transcriber = Transcriber(model_size="base", language="es")
+        self.transcriber = Transcriber(model_size="auto", language="es")
         self._model_loaded = False
         self._processing = False
 

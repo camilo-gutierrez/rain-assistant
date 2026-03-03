@@ -326,9 +326,38 @@ _DELEGATE_SECTION = (
 )
 
 
-def _compose_director_prompt(director: dict, task: dict | None = None) -> str:
+_LANG_NAMES = {"es": "Spanish (español)", "en": "English"}
+
+
+def _compose_director_prompt(
+    director: dict,
+    task: dict | None = None,
+    project: dict | None = None,
+) -> str:
     """Build the director's system prompt for execution."""
     parts = [director["role_prompt"]]
+
+    # Project context — so the director knows what project it's working on
+    if project and project.get("id") != "default":
+        parts.append(
+            f"\n\n## Project Context\n"
+            f"You are part of the project: **{project.get('emoji', '')} {project.get('name', '')}**\n"
+        )
+        if project.get("description"):
+            parts.append(f"Project description: {project['description']}")
+        parts.append(
+            "Focus your work, research, and deliverables on this specific project."
+        )
+
+    # User language preference — all deliverables must match
+    import shared_state
+    lang = shared_state.config.get("language", "es")
+    lang_name = _LANG_NAMES.get(lang, lang)
+    parts.append(
+        f"\n\n## Language\n"
+        f"IMPORTANT: Write ALL your outputs, deliverables, reports, and inbox items in **{lang_name}**. "
+        f"This is the user's preferred language."
+    )
 
     # Persistent context
     context = director.get("context_window", {})
@@ -343,11 +372,15 @@ def _compose_director_prompt(director: dict, task: dict | None = None) -> str:
         for k, v in context.items():
             parts.append(f"- **{k}**: {v}")
 
-    # Available directors for delegation
+    # Available directors for delegation (scoped to same project)
     if director.get("can_delegate"):
         try:
             from .storage import list_directors
-            others = list_directors(user_id=director.get("user_id", "default"), enabled_only=True)
+            others = list_directors(
+                user_id=director.get("user_id", "default"),
+                enabled_only=True,
+                project_id=director.get("project_id", "default"),
+            )
             others = [d for d in others if d["id"] != director["id"]]
             if others:
                 parts.append("\n\n## Available Directors for Delegation")
@@ -442,6 +475,7 @@ def _execute_actions(
     director: dict,
     task: dict | None,
     user_id: str,
+    project_id: str = "default",
 ) -> dict:
     """Execute parsed actions (save_to_inbox, delegate_task, update_my_context).
 
@@ -477,6 +511,7 @@ def _execute_actions(
                     task_id=task["id"] if task else None,
                     metadata={"trigger": "director_action", "director": director_id},
                     user_id=user_id,
+                    project_id=project_id,
                 )
                 summary["inbox_saved"] += 1
                 logger.info("[DIRECTORS] %s saved to inbox: '%s'", director_id, title)
@@ -501,6 +536,7 @@ def _execute_actions(
                     task_type=action_data.get("task_type", "analysis"),
                     input_data=action_data.get("input_data"),
                     user_id=user_id,
+                    project_id=project_id,
                 )
                 summary["tasks_delegated"] += 1
                 logger.info("[DIRECTORS] %s delegated task '%s' to %s", director_id, title, assignee)
@@ -536,6 +572,7 @@ async def execute_director(
     trigger: str = "schedule",
     task: dict | None = None,
     user_id: str = "default",
+    project_id: str = "default",
 ) -> tuple[str | None, str | None, float]:
     """Execute a director using a temporary provider instance.
 
@@ -544,6 +581,7 @@ async def execute_director(
         trigger: What triggered this execution ('schedule', 'manual', 'task').
         task: If executing a delegated task, the task dict.
         user_id: User ID for isolation.
+        project_id: Project ID for isolation.
 
     Returns:
         (result_text, error_text, cost) — one of result/error will be None.
@@ -586,7 +624,16 @@ async def execute_director(
     try:
         provider = get_provider(provider_name)
 
-        system_prompt = _compose_director_prompt(director, task=task)
+        # Fetch project context if not default
+        project_ctx = None
+        if project_id and project_id != "default":
+            try:
+                from .storage import get_project
+                project_ctx = get_project(project_id, user_id=user_id)
+            except Exception:
+                pass
+
+        system_prompt = _compose_director_prompt(director, task=task, project=project_ctx)
         cwd = str(Path.home())
         permission_callback = _build_permission_callback(director, provider_name=provider_name)
 
@@ -599,7 +646,7 @@ async def execute_director(
         )
 
         # For providers with _tool_executor (OpenAI, Gemini), register tool handlers
-        _register_director_tools(provider, director, task, user_id)
+        _register_director_tools(provider, director, task, user_id, project_id)
 
         # Build the execution prompt
         if task:
@@ -642,7 +689,7 @@ async def execute_director(
         if not actions:
             actions = _extract_actions(collected_text)
         if actions:
-            summary = _execute_actions(actions, director, task, user_id)
+            summary = _execute_actions(actions, director, task, user_id, project_id)
             logger.info(
                 "[DIRECTORS] %s actions: %d inbox, %d delegated, %d context, %d errors",
                 director["id"],
@@ -667,6 +714,7 @@ async def execute_director(
                 task_id=task["id"] if task else None,
                 metadata={"trigger": trigger, "director": director["id"], "auto_saved": True},
                 user_id=user_id,
+                project_id=project_id,
             )
 
         duration = time.time() - start_time
@@ -693,7 +741,9 @@ async def execute_director(
                 pass
 
 
-def _register_director_tools(provider, director: dict, task: dict | None, user_id: str):
+def _register_director_tools(
+    provider, director: dict, task: dict | None, user_id: str, project_id: str = "default",
+):
     """Register handler functions for director-specific tools on the provider's executor.
 
     This only works for providers that have a _tool_executor (OpenAI, Gemini, Ollama).
@@ -726,6 +776,7 @@ def _register_director_tools(provider, director: dict, task: dict | None, user_i
             task_type=args.get("task_type", "analysis"),
             input_data=args.get("input_data"),
             user_id=user_id,
+            project_id=project_id,
         )
         return {
             "content": f"Task '{title}' created and assigned to director '{assignee}' (id: {new_task['id']})",
@@ -749,6 +800,7 @@ def _register_director_tools(provider, director: dict, task: dict | None, user_i
             task_id=task["id"] if task else None,
             metadata={"trigger": "director_tool", "director": director_id},
             user_id=user_id,
+            project_id=project_id,
         )
         return {
             "content": f"Saved to inbox: '{title}' (id: {item['id']})",

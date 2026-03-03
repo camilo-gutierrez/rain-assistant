@@ -105,3 +105,131 @@ Future<void> showPermissionAlertDialog(
 
   pinController.dispose();
 }
+
+/// Shows a modal dialog for AskUserQuestion when the user is viewing
+/// a different agent tab (foreground, different agent).
+Future<void> showAskQuestionAlertDialog(
+  BuildContext context,
+  WidgetRef ref, {
+  required String agentId,
+  required String agentLabel,
+  required String requestId,
+  required List<Map<String, dynamic>> questions,
+}) async {
+  final lang = ref.read(settingsProvider).language;
+
+  // For the dialog, show first question with single-select options
+  final firstQ = questions.isNotEmpty ? questions[0] : <String, dynamic>{};
+  final questionText = (firstQ['question'] ?? '') as String;
+  final options = (firstQ['options'] as List?)
+          ?.map((o) => Map<String, dynamic>.from(o))
+          .toList() ??
+      [];
+
+  final otherController = TextEditingController();
+  String? selectedLabel;
+
+  final result = await showDialog<String?>(
+    context: context,
+    barrierDismissible: false,
+    builder: (ctx) {
+      final cs = Theme.of(ctx).colorScheme;
+      return StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          return AlertDialog(
+            icon: Icon(
+              Icons.help_outline,
+              color: cs.primary,
+              size: 40,
+            ),
+            title: Text('$agentLabel: ${L10n.t('ask.title', lang)}'),
+            content: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 340),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(questionText, style: const TextStyle(fontSize: 14)),
+                  if (options.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    ...options.map((opt) {
+                      final label = (opt['label'] ?? '') as String;
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: ChoiceChip(
+                          label: Text(label),
+                          selected: selectedLabel == label,
+                          onSelected: (_) {
+                            setDialogState(() {
+                              selectedLabel = label;
+                              otherController.clear();
+                            });
+                          },
+                        ),
+                      );
+                    }),
+                  ],
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: otherController,
+                    decoration: InputDecoration(
+                      hintText: L10n.t('ask.otherPlaceholder', lang),
+                      isDense: true,
+                    ),
+                    onChanged: (_) {
+                      setDialogState(() => selectedLabel = null);
+                    },
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(null),
+                child: Text(L10n.t('ask.skip', lang)),
+              ),
+              FilledButton(
+                onPressed: () {
+                  final answer = otherController.text.isNotEmpty
+                      ? otherController.text
+                      : selectedLabel;
+                  Navigator.of(ctx).pop(answer);
+                },
+                child: Text(L10n.t('ask.respond', lang)),
+              ),
+            ],
+          );
+        },
+      );
+    },
+  );
+
+  final ws = ref.read(webSocketServiceProvider);
+  final agentNotifier = ref.read(agentProvider.notifier);
+
+  if (result == null) {
+    // Skipped
+    ws.send({
+      'type': 'ask_question_response',
+      'request_id': requestId,
+      'agent_id': agentId,
+      'answers': <String, String>{},
+    });
+    agentNotifier.updateQuestionStatus(
+        agentId, requestId, QuestionStatus.skipped);
+  } else {
+    final answers = {questionText: result};
+    ws.send({
+      'type': 'ask_question_response',
+      'request_id': requestId,
+      'agent_id': agentId,
+      'answers': answers,
+    });
+    agentNotifier.updateQuestionStatus(
+        agentId, requestId, QuestionStatus.answered, answers);
+    agentNotifier.setProcessing(agentId, true);
+    agentNotifier.setAgentStatus(agentId, AgentStatus.working);
+  }
+
+  otherController.dispose();
+}

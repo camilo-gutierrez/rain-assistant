@@ -231,6 +231,29 @@ class AgentNotifier extends StateNotifier<AgentState> {
     }
   }
 
+  /// Update an AskUserQuestion message status (and optionally answers).
+  void updateQuestionStatus(
+    String agentId,
+    String requestId,
+    QuestionStatus status, [
+    Map<String, String>? answers,
+  ]) {
+    final agent = state.agents[agentId];
+    if (agent == null) return;
+
+    final idx = agent.messages.indexWhere(
+      (m) => m is AskQuestionMessage && m.requestId == requestId,
+    );
+    if (idx >= 0) {
+      agent.messages[idx] =
+          (agent.messages[idx] as AskQuestionMessage).copyWith(
+        status: status,
+        answers: answers,
+      );
+      _notify();
+    }
+  }
+
   /// Create or replace an A2UI surface message (upsert by surfaceId).
   void upsertSurface(String agentId, A2UISurface surface) {
     final agent = state.agents[agentId];

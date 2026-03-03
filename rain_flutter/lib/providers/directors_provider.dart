@@ -1,6 +1,69 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/director.dart';
+
+/// Status of a single director during a team run.
+enum DirectorRunStatus { pending, running, completed, failed }
+
+/// A director entry in the active team run.
+class DirectorRunEntry {
+  final String id;
+  final String name;
+  final DirectorRunStatus status;
+
+  const DirectorRunEntry({
+    required this.id,
+    required this.name,
+    this.status = DirectorRunStatus.pending,
+  });
+
+  DirectorRunEntry copyWith({DirectorRunStatus? status}) =>
+      DirectorRunEntry(id: id, name: name, status: status ?? this.status);
+}
+
+/// Tracks the state of an active team run.
+class ActiveTeamRun {
+  final String projectId;
+  final String projectName;
+  final int directorCount;
+  final Map<String, DirectorRunEntry> directors;
+  final int completedTasks;
+  final DateTime startedAt;
+
+  const ActiveTeamRun({
+    required this.projectId,
+    required this.projectName,
+    required this.directorCount,
+    this.directors = const {},
+    this.completedTasks = 0,
+    required this.startedAt,
+  });
+
+  ActiveTeamRun copyWith({
+    Map<String, DirectorRunEntry>? directors,
+    int? completedTasks,
+  }) =>
+      ActiveTeamRun(
+        projectId: projectId,
+        projectName: projectName,
+        directorCount: directorCount,
+        directors: directors ?? this.directors,
+        completedTasks: completedTasks ?? this.completedTasks,
+        startedAt: startedAt,
+      );
+
+  int get doneCount => directors.values
+      .where((d) =>
+          d.status == DirectorRunStatus.completed ||
+          d.status == DirectorRunStatus.failed)
+      .length;
+
+  int get total => directorCount > directors.length ? directorCount : directors.length;
+
+  bool get allDone => total > 0 && doneCount >= total;
+}
 
 class DirectorsState {
   final List<Director> directors;
@@ -18,6 +81,15 @@ class DirectorsState {
   final String? directorsError;
   final String? inboxError;
   final Set<String> runningIds;
+  // Projects
+  final List<DirectorProject> projects;
+  final List<TeamTemplate> teamTemplates;
+  final String activeProjectId;
+  final bool projectsLoading;
+  final bool teamTemplatesLoading;
+  final bool teamRunning;
+  // Team run progress
+  final ActiveTeamRun? activeTeamRun;
 
   const DirectorsState({
     this.directors = const [],
@@ -35,6 +107,13 @@ class DirectorsState {
     this.directorsError,
     this.inboxError,
     this.runningIds = const {},
+    this.projects = const [],
+    this.teamTemplates = const [],
+    this.activeProjectId = '',
+    this.projectsLoading = false,
+    this.teamTemplatesLoading = false,
+    this.teamRunning = false,
+    this.activeTeamRun,
   });
 
   DirectorsState copyWith({
@@ -56,6 +135,14 @@ class DirectorsState {
     String? inboxError,
     bool clearInboxError = false,
     Set<String>? runningIds,
+    List<DirectorProject>? projects,
+    List<TeamTemplate>? teamTemplates,
+    String? activeProjectId,
+    bool? projectsLoading,
+    bool? teamTemplatesLoading,
+    bool? teamRunning,
+    ActiveTeamRun? activeTeamRun,
+    bool clearActiveTeamRun = false,
   }) =>
       DirectorsState(
         directors: directors ?? this.directors,
@@ -76,11 +163,92 @@ class DirectorsState {
         inboxError:
             clearInboxError ? null : (inboxError ?? this.inboxError),
         runningIds: runningIds ?? this.runningIds,
+        projects: projects ?? this.projects,
+        teamTemplates: teamTemplates ?? this.teamTemplates,
+        activeProjectId: activeProjectId ?? this.activeProjectId,
+        projectsLoading: projectsLoading ?? this.projectsLoading,
+        teamTemplatesLoading: teamTemplatesLoading ?? this.teamTemplatesLoading,
+        teamRunning: teamRunning ?? this.teamRunning,
+        activeTeamRun: clearActiveTeamRun
+            ? null
+            : (activeTeamRun ?? this.activeTeamRun),
       );
 }
 
 class DirectorsNotifier extends StateNotifier<DirectorsState> {
   DirectorsNotifier() : super(const DirectorsState());
+
+  String get _projectParam => state.activeProjectId.isNotEmpty
+      ? state.activeProjectId
+      : '';
+
+  // ── Projects ──
+
+  Future<void> loadProjects(Dio dio) async {
+    state = state.copyWith(projectsLoading: true);
+    try {
+      final res = await dio.get('/directors/projects');
+      final list = (res.data['projects'] as List? ?? [])
+          .map((e) => DirectorProject.fromJson(e as Map<String, dynamic>))
+          .toList();
+      state = state.copyWith(projects: list, projectsLoading: false);
+    } catch (_) {
+      state = state.copyWith(projectsLoading: false);
+    }
+  }
+
+  Future<void> loadTeamTemplates(Dio dio) async {
+    state = state.copyWith(teamTemplatesLoading: true);
+    try {
+      final res = await dio.get('/directors/team-templates');
+      final list = (res.data['team_templates'] as List? ?? [])
+          .map((e) => TeamTemplate.fromJson(e as Map<String, dynamic>))
+          .toList();
+      state = state.copyWith(teamTemplates: list, teamTemplatesLoading: false);
+    } catch (_) {
+      state = state.copyWith(teamTemplatesLoading: false);
+    }
+  }
+
+  Future<DirectorProject?> createProject(Dio dio, Map<String, dynamic> data) async {
+    try {
+      final res = await dio.post('/directors/projects', data: data);
+      final project = DirectorProject.fromJson(res.data['project'] as Map<String, dynamic>);
+      await loadProjects(dio);
+      return project;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<bool> deleteProject(Dio dio, String projectId) async {
+    try {
+      await dio.delete('/directors/projects/$projectId');
+      await loadProjects(dio);
+      if (state.activeProjectId == projectId) {
+        setActiveProject(dio, '');
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  void setActiveProject(Dio dio, String projectId) {
+    state = state.copyWith(
+      activeProjectId: projectId,
+      directors: const [],
+      inboxItems: const [],
+      tasks: const [],
+      activity: const [],
+      clearStats: true,
+    );
+    loadDirectors(dio);
+    loadStats(dio);
+    loadInbox(dio);
+    loadTasks(dio);
+    loadActivity(dio);
+  }
 
   // ── Directors ──
 
@@ -88,7 +256,9 @@ class DirectorsNotifier extends StateNotifier<DirectorsState> {
     state = state.copyWith(
         directorsLoading: true, clearDirectorsError: true);
     try {
-      final res = await dio.get('/directors');
+      final params = <String, dynamic>{};
+      if (_projectParam.isNotEmpty) params['project_id'] = _projectParam;
+      final res = await dio.get('/directors', queryParameters: params);
       final list = (res.data['directors'] as List? ?? [])
           .map((e) => Director.fromJson(e as Map<String, dynamic>))
           .toList();
@@ -101,7 +271,9 @@ class DirectorsNotifier extends StateNotifier<DirectorsState> {
 
   Future<void> loadStats(Dio dio) async {
     try {
-      final res = await dio.get('/directors/stats');
+      final params = <String, dynamic>{};
+      if (_projectParam.isNotEmpty) params['project_id'] = _projectParam;
+      final res = await dio.get('/directors/stats', queryParameters: params);
       final stats = DirectorStats.fromJson(res.data as Map<String, dynamic>);
       state = state.copyWith(stats: stats, unreadCount: stats.inboxUnread);
     } catch (_) {}
@@ -142,6 +314,47 @@ class DirectorsNotifier extends StateNotifier<DirectorsState> {
     }
   }
 
+  Future<bool> runProject(Dio dio, String projectId) async {
+    state = state.copyWith(teamRunning: true);
+    try {
+      final res = await dio.post('/directors/projects/$projectId/run');
+      // Initialize team run progress from HTTP response
+      if (state.activeTeamRun == null) {
+        final dirsList = (res.data['directors'] as List? ?? []);
+        final project = state.projects.cast<DirectorProject?>().firstWhere(
+              (p) => p!.id == projectId,
+              orElse: () => null,
+            );
+        final entries = <String, DirectorRunEntry>{};
+        for (var i = 0; i < dirsList.length; i++) {
+          final d = dirsList[i] as Map<String, dynamic>;
+          final id = d['id'] as String? ?? '';
+          entries[id] = DirectorRunEntry(
+            id: id,
+            name: d['name'] as String? ?? '',
+            // First director starts running (sequential execution)
+            status: i == 0
+                ? DirectorRunStatus.running
+                : DirectorRunStatus.pending,
+          );
+        }
+        state = state.copyWith(
+          activeTeamRun: ActiveTeamRun(
+            projectId: projectId,
+            projectName: project?.name ?? '',
+            directorCount: dirsList.length,
+            directors: entries,
+            startedAt: DateTime.now(),
+          ),
+        );
+      }
+      return true;
+    } catch (_) {
+      state = state.copyWith(teamRunning: false);
+      return false;
+    }
+  }
+
   Future<bool> deleteDirector(Dio dio, Director d) async {
     try {
       await dio.delete('/directors/${d.id}');
@@ -159,6 +372,7 @@ class DirectorsNotifier extends StateNotifier<DirectorsState> {
     try {
       final params = <String, String>{};
       if (filter != null && filter != 'all') params['status'] = filter;
+      if (_projectParam.isNotEmpty) params['project_id'] = _projectParam;
       final res =
           await dio.get('/directors/inbox', queryParameters: params);
       final list = (res.data['items'] as List? ?? [])
@@ -215,7 +429,9 @@ class DirectorsNotifier extends StateNotifier<DirectorsState> {
   Future<void> loadTasks(Dio dio) async {
     state = state.copyWith(tasksLoading: true);
     try {
-      final res = await dio.get('/directors/tasks');
+      final params = <String, dynamic>{};
+      if (_projectParam.isNotEmpty) params['project_id'] = _projectParam;
+      final res = await dio.get('/directors/tasks', queryParameters: params);
       final list = (res.data['tasks'] as List? ?? [])
           .map((e) => DirectorTask.fromJson(e as Map<String, dynamic>))
           .toList();
@@ -230,8 +446,10 @@ class DirectorsNotifier extends StateNotifier<DirectorsState> {
   Future<void> loadActivity(Dio dio, {int limit = 30}) async {
     state = state.copyWith(activityLoading: true);
     try {
+      final params = <String, dynamic>{'limit': limit};
+      if (_projectParam.isNotEmpty) params['project_id'] = _projectParam;
       final res = await dio.get('/directors/activity',
-          queryParameters: {'limit': limit});
+          queryParameters: params);
       final list = (res.data['activity'] as List? ?? [])
           .map((e) => ActivityItem.fromJson(e as Map<String, dynamic>))
           .toList();
@@ -246,6 +464,95 @@ class DirectorsNotifier extends StateNotifier<DirectorsState> {
   void onDirectorRunComplete(String directorId) {
     state = state.copyWith(
         runningIds: Set.from(state.runningIds)..remove(directorId));
+  }
+
+  /// Called when team_run_start event arrives via WebSocket.
+  void onTeamRunStart(String projectId, String projectName, int directorCount) {
+    if (state.activeTeamRun != null) return; // HTTP may have initialized it first
+    state = state.copyWith(
+      teamRunning: true,
+      activeTeamRun: ActiveTeamRun(
+        projectId: projectId,
+        projectName: projectName,
+        directorCount: directorCount,
+        startedAt: DateTime.now(),
+      ),
+    );
+  }
+
+  /// Called when run_complete event arrives — a single director finished.
+  void onTeamDirectorComplete(String directorId, String directorName, bool success) {
+    final run = state.activeTeamRun;
+    if (run == null) return;
+
+    final dirs = Map<String, DirectorRunEntry>.from(run.directors);
+
+    // Update or add this director
+    dirs[directorId] = DirectorRunEntry(
+      id: directorId,
+      name: directorName,
+      status: success ? DirectorRunStatus.completed : DirectorRunStatus.failed,
+    );
+
+    // Mark next pending director as running (sequential execution)
+    final pending = dirs.entries
+        .where((e) => e.value.status == DirectorRunStatus.pending)
+        .toList();
+    if (pending.isNotEmpty) {
+      final nextId = pending.first.key;
+      dirs[nextId] = dirs[nextId]!.copyWith(status: DirectorRunStatus.running);
+    }
+
+    state = state.copyWith(activeTeamRun: run.copyWith(directors: dirs));
+  }
+
+  /// Called when task_complete event arrives.
+  void onTeamTaskComplete() {
+    final run = state.activeTeamRun;
+    if (run == null) return;
+    state = state.copyWith(
+      activeTeamRun: run.copyWith(completedTasks: run.completedTasks + 1),
+    );
+  }
+
+  Timer? _autoClearTimer;
+
+  /// Called when team_run_complete event arrives — all directors finished.
+  void onTeamRunFinish() {
+    final run = state.activeTeamRun;
+    if (run == null) return;
+
+    // Ensure all directors are in terminal state
+    final dirs = Map<String, DirectorRunEntry>.from(run.directors);
+    for (final id in dirs.keys) {
+      final d = dirs[id]!;
+      if (d.status == DirectorRunStatus.pending ||
+          d.status == DirectorRunStatus.running) {
+        dirs[id] = d.copyWith(status: DirectorRunStatus.completed);
+      }
+    }
+
+    state = state.copyWith(
+      teamRunning: false,
+      activeTeamRun: run.copyWith(directors: dirs),
+    );
+
+    // Auto-clear after 8 seconds
+    _autoClearTimer?.cancel();
+    _autoClearTimer = Timer(const Duration(seconds: 8), () {
+      if (state.activeTeamRun?.startedAt == run.startedAt) {
+        clearTeamRun();
+      }
+    });
+  }
+
+  /// Manually dismiss the team run progress.
+  void clearTeamRun() {
+    _autoClearTimer?.cancel();
+    state = state.copyWith(
+      teamRunning: false,
+      clearActiveTeamRun: true,
+    );
   }
 }
 

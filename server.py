@@ -26,7 +26,7 @@ import database
 from key_manager import ensure_encryption_key
 
 from transcriber import Transcriber
-from synthesizer import Synthesizer
+from synthesizer import DEFAULT_VOICE, SentenceBuffer, Synthesizer
 from claude_agent_sdk import (
     ClaudeSDKClient,
     ClaudeAgentOptions,
@@ -314,7 +314,10 @@ from directors import migrate_directors as _migrate_directors
 # Ensure built-in alter egos exist on startup
 ensure_builtin_egos()
 
-transcriber = Transcriber(model_size="base", language="es")
+transcriber = Transcriber(
+    model_size="auto",
+    language=shared_state.config.get("language", "es"),
+)
 synthesizer = Synthesizer()
 
 # Voice processing (lazy — only loaded when voice features are used)
@@ -747,9 +750,13 @@ async def _scheduler_loop():
             for director in pending_directors:
                 director_id = director["id"]
                 director_user = director.get("user_id", "default")
+                director_project = director.get("project_id", "default")
                 try:
                     result_text, error_text, cost = await asyncio.wait_for(
-                        execute_director(director, trigger="schedule", user_id=director_user),
+                        execute_director(
+                            director, trigger="schedule",
+                            user_id=director_user, project_id=director_project,
+                        ),
                         timeout=300,
                     )
                     mark_director_run(director_id, result=result_text, error=error_text, cost=cost)
@@ -759,6 +766,7 @@ async def _scheduler_loop():
                         "event": "run_complete",
                         "director_id": director_id,
                         "director_name": director.get("name", ""),
+                        "project_id": director_project,
                         "success": not bool(error_text),
                     })
                 except asyncio.TimeoutError:
@@ -782,6 +790,7 @@ async def _scheduler_loop():
             for dtask in ready_tasks:
                 assignee_id = dtask.get("assignee_id")
                 task_user = dtask.get("user_id", "default")
+                task_project = dtask.get("project_id", "default")
                 if not assignee_id:
                     continue
                 director = _get_director_for_task(assignee_id, user_id=task_user)
@@ -792,7 +801,10 @@ async def _scheduler_loop():
                     continue
                 try:
                     result_text, error_text, cost = await asyncio.wait_for(
-                        _exec_director_task(director, trigger="task", task=dtask, user_id=task_user),
+                        _exec_director_task(
+                            director, trigger="task", task=dtask,
+                            user_id=task_user, project_id=task_project,
+                        ),
                         timeout=300,
                     )
                     if error_text:
@@ -805,6 +817,7 @@ async def _scheduler_loop():
                         "event": "task_complete",
                         "director_id": assignee_id,
                         "director_name": director.get("name", ""),
+                        "project_id": task_project,
                         "task_id": dtask["id"],
                         "success": not bool(error_text),
                     })
@@ -1383,6 +1396,11 @@ async def websocket_endpoint(ws: WebSocket):
     permission_responses: dict[str, dict] = {}            # request_id → {approved, pin}
     _perm_request_owners: dict[str, str] = {}             # request_id → agent_id
 
+    # AskUserQuestion interception tracking
+    pending_questions: dict[str, asyncio.Event] = {}     # request_id → Event
+    question_responses: dict[str, dict] = {}              # request_id → {answers}
+    _askq_owners: dict[str, str] = {}                     # request_id → agent_id
+
     # ── Voice state per agent ──
     # voice_sessions: agent_id → { vad, mode, audio_buffer, audio_task }
     voice_sessions: dict[str, dict] = {}
@@ -1461,12 +1479,66 @@ async def websocket_endpoint(ws: WebSocket):
                 return aid
         return None
 
+    async def _handle_ask_user_question(
+        tool_input: dict,
+        agent_id: str,
+    ) -> PermissionResultDeny:
+        """Intercept AskUserQuestion: send to frontend and wait for real user answer."""
+        request_id = f"askq_{secrets.token_hex(8)}"
+        event = asyncio.Event()
+        pending_questions[request_id] = event
+        _askq_owners[request_id] = agent_id
+
+        questions = tool_input.get("questions", [])
+
+        await send({
+            "type": "ask_question",
+            "request_id": request_id,
+            "agent_id": agent_id,
+            "questions": questions,
+        })
+
+        # Wait for frontend response (5 min timeout)
+        try:
+            await asyncio.wait_for(event.wait(), timeout=300)
+        except asyncio.TimeoutError:
+            pending_questions.pop(request_id, None)
+            question_responses.pop(request_id, None)
+            _askq_owners.pop(request_id, None)
+            return PermissionResultDeny(
+                message="The user did not respond to the question in time (5 min timeout)."
+            )
+
+        response = question_responses.pop(request_id, {})
+        pending_questions.pop(request_id, None)
+        _askq_owners.pop(request_id, None)
+
+        answers = response.get("answers", {})
+        if not answers:
+            return PermissionResultDeny(
+                message="The user skipped the question without providing an answer."
+            )
+
+        # Format answers as readable text for Claude
+        parts = []
+        for q_text, answer in answers.items():
+            parts.append(f"Q: {q_text}\nA: {answer}")
+        answer_text = "\n\n".join(parts) if parts else "No answer provided."
+
+        return PermissionResultDeny(
+            message=f"User answered the question:\n\n{answer_text}"
+        )
+
     async def can_use_tool_callback(
         tool_name: str,
         tool_input: dict,
         context: ToolPermissionContext,
     ) -> PermissionResultAllow | PermissionResultDeny:
         """Permission callback invoked by the SDK before each tool execution."""
+        # Intercept AskUserQuestion — must wait for real user input
+        if tool_name == "AskUserQuestion":
+            return await _handle_ask_user_question(tool_input, _get_active_streaming_agent() or "default")
+
         # Check if this tool belongs to a disabled MCP server
         mcp_server = _get_mcp_server_for_tool(tool_name)
         if mcp_server and _is_mcp_server_disabled(mcp_server):
@@ -1609,11 +1681,75 @@ async def websocket_endpoint(ws: WebSocket):
                                       {"text": accumulated_text}, agent_id=agent_id, user_id=user_id)
                 accumulated_text = ""
 
+        # ── Streaming TTS for voice calls ──
+        vs = voice_sessions.get(agent_id)
+        is_voice_call = bool(vs and vs.get("talk_active"))
+        sentence_buf: SentenceBuffer | None = None
+        tts_tasks: list[asyncio.Task] = []
+        sentence_idx = 0
+
+        tts_queue: asyncio.Queue[tuple[str, int] | None] = asyncio.Queue()
+        tts_worker_task: asyncio.Task | None = None
+
+        if is_voice_call:
+            sentence_buf = SentenceBuffer(min_length=8)
+            vs["tts_tasks"] = tts_tasks
+            vs["tts_cancelled"] = False
+
+        async def _tts_worker():
+            """Sequential TTS worker: processes sentences one at a time,
+            streaming each chunk immediately to the client."""
+            import base64 as _b64
+            while True:
+                item = await tts_queue.get()
+                if item is None:
+                    break  # Poison pill — no more sentences
+                text, idx = item
+                if vs.get("tts_cancelled"):
+                    continue
+                try:
+                    has_audio = False
+                    async for chunk in synthesizer.synthesize_streaming(
+                        text, vs.get("tts_voice", DEFAULT_VOICE), vs.get("tts_rate", "+0%"),
+                    ):
+                        if vs.get("tts_cancelled"):
+                            break
+                        has_audio = True
+                        await send({
+                            "type": "tts_audio_chunk",
+                            "agent_id": agent_id,
+                            "data": _b64.b64encode(chunk).decode(),
+                            "sentence_index": idx,
+                            "streaming": True,
+                        })
+                    if has_audio and not vs.get("tts_cancelled"):
+                        await send({
+                            "type": "tts_sentence_end",
+                            "agent_id": agent_id,
+                            "sentence_index": idx,
+                        })
+                except asyncio.CancelledError:
+                    break
+                except Exception:
+                    _logger.warning("TTS sentence %d failed", idx, exc_info=True)
+
+        if is_voice_call:
+            tts_worker_task = asyncio.create_task(_tts_worker())
+            tts_tasks.append(tts_worker_task)
+
         try:
             async for event in provider.stream_response():
                 if event.type == "assistant_text":
                     accumulated_text += event.data.get("text", "")
                     await send({"type": "assistant_text", "agent_id": agent_id, **event.data})
+
+                    # Feed sentence buffer for streaming TTS
+                    if sentence_buf and not vs.get("tts_cancelled"):
+                        delta = event.data.get("text", "")
+                        for sentence in sentence_buf.feed(delta):
+                            idx = sentence_idx
+                            sentence_idx += 1
+                            await tts_queue.put((sentence, idx))
 
                 elif event.type == "tool_use":
                     flush_text()
@@ -1666,8 +1802,46 @@ async def websocket_endpoint(ws: WebSocket):
                     flush_text()
                     await send({"type": "error", "agent_id": agent_id, **event.data})
 
+            # ── Finalize streaming TTS after LLM completes ──
+            if is_voice_call and sentence_buf:
+                remaining = sentence_buf.flush()
+                if remaining and not vs.get("tts_cancelled"):
+                    await tts_queue.put((remaining, sentence_idx))
+                # Signal worker to stop and wait for it
+                await tts_queue.put(None)
+                if tts_worker_task:
+                    try:
+                        await asyncio.wait_for(tts_worker_task, timeout=60)
+                    except (asyncio.TimeoutError, asyncio.CancelledError):
+                        pass
+                if not vs.get("tts_cancelled"):
+                    await send({"type": "tts_audio_done", "agent_id": agent_id})
+                # Response cycle complete — resume voice listening
+                vs["_busy"] = False
+                vs["vad"].reset()
+                await send({
+                    "type": "talk_state_changed", "agent_id": agent_id,
+                    "state": "listening",
+                })
+
         except asyncio.CancelledError:
             flush_text()
+            # Cancel any in-flight TTS tasks
+            if is_voice_call:
+                vs["tts_cancelled"] = True
+                # Drain the queue so worker can exit
+                while not tts_queue.empty():
+                    try:
+                        tts_queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+                await tts_queue.put(None)  # Poison pill
+                if tts_worker_task and not tts_worker_task.done():
+                    tts_worker_task.cancel()
+                await send({"type": "tts_audio_cancel", "agent_id": agent_id})
+                # Resume voice listening after cancellation
+                vs["_busy"] = False
+                vs["vad"].reset()
         except Exception as e:
             flush_text()
             # ── Streaming failover ──
@@ -1744,6 +1918,14 @@ async def websocket_endpoint(ws: WebSocket):
             else:
                 _logger.exception("Streaming error")
                 await send({"type": "error", "agent_id": agent_id, "text": "An unexpected error occurred. Please try again."})
+            # Resume voice listening after error
+            if is_voice_call and vs:
+                vs["_busy"] = False
+                vs["vad"].reset()
+                await send({
+                    "type": "talk_state_changed", "agent_id": agent_id,
+                    "state": "listening",
+                })
 
     async def cancel_agent_streaming(agent_id: str):
         """Cancel the streaming task for a specific agent."""
@@ -2156,17 +2338,23 @@ async def websocket_endpoint(ws: WebSocket):
             last_activity = time.time()
 
             # ── 6a. Message size limit ──
-            # Use higher limit for messages carrying base64 image data
-            _msg_limit = WS_MAX_IMAGE_MESSAGE_BYTES if (
-                len(raw) > WS_MAX_MESSAGE_BYTES and '"images"' in raw[:500]
-            ) else WS_MAX_MESSAGE_BYTES
+            # Use higher limit for messages carrying base64 image/audio data
+            _raw_prefix = raw[:500]
+            if len(raw) > WS_MAX_MESSAGE_BYTES and (
+                '"images"' in _raw_prefix or '"audio_chunk"' in _raw_prefix
+            ):
+                _msg_limit = WS_MAX_IMAGE_MESSAGE_BYTES
+            else:
+                _msg_limit = WS_MAX_MESSAGE_BYTES
             if len(raw) > _msg_limit:
                 database.log_security_event(
                     "ws_message_too_large", "warning",
                     token_prefix=token[:8] if token else "",
                     details=f"size={len(raw)}, limit={_msg_limit}",
                 )
-                await send({"type": "error", "agent_id": "default", "text": "Message too large"})
+                import re as _re
+                _aid_m = _re.search(r'"agent_id"\s*:\s*"([^"]{1,64})"', _raw_prefix)
+                await send({"type": "error", "agent_id": _aid_m.group(1) if _aid_m else "default", "text": "Message too large"})
                 continue
 
             try:
@@ -2201,18 +2389,20 @@ async def websocket_endpoint(ws: WebSocket):
                 continue
 
             # ── 6c. WebSocket rate limiting (60/min) ──
-            rl_result = rate_limiter.check(token or "", EndpointCategory.WEBSOCKET_MSG)
-            if not rl_result.allowed:
-                database.log_security_event(
-                    "ws_rate_limited", "warning",
-                    token_prefix=token[:8] if token else "",
-                    details=f"limit={rl_result.limit}",
-                )
-                await send({
-                    "type": "error", "agent_id": agent_id,
-                    "text": f"Rate limit exceeded. Retry in {int(rl_result.retry_after)}s",
-                })
-                continue
+            # Exempt audio_chunk — high-frequency stream, not user-initiated
+            if msg_type != "audio_chunk":
+                rl_result = rate_limiter.check(token or "", EndpointCategory.WEBSOCKET_MSG)
+                if not rl_result.allowed:
+                    database.log_security_event(
+                        "ws_rate_limited", "warning",
+                        token_prefix=token[:8] if token else "",
+                        details=f"limit={rl_result.limit}",
+                    )
+                    await send({
+                        "type": "error", "agent_id": agent_id,
+                        "text": f"Rate limit exceeded. Retry in {int(rl_result.retry_after)}s",
+                    })
+                    continue
 
             # ---- Set API key (global, not per-agent) ----
             if msg_type == "set_api_key":
@@ -2268,9 +2458,13 @@ async def websocket_endpoint(ws: WebSocket):
             # ---- Set transcription language ----
             elif msg_type == "set_transcription_lang":
                 lang = data.get("lang", "").strip()
-                if lang in ("en", "es"):
+                if lang in ("auto", "en", "es", "pt", "fr", "de", "it", "ja", "zh", "ko"):
                     transcriber.language = lang
-                    await send({"type": "status", "agent_id": agent_id, "text": f"Transcription language set to {lang}."})
+                    # Persist language in config so directors use the same language
+                    shared_state.config["language"] = lang
+                    CONFIG_FILE.write_text(json.dumps(shared_state.config, indent=2), encoding="utf-8")
+                    label = "auto-detect" if lang == "auto" else lang
+                    await send({"type": "status", "agent_id": agent_id, "text": f"Transcription language set to {label}."})
 
             # ---- Set working directory for an agent ----
             elif msg_type == "set_cwd":
@@ -2819,8 +3013,8 @@ async def websocket_endpoint(ws: WebSocket):
                     vs_data: dict = {
                         "mode": mode,
                         "vad": VoiceActivityDetector(
-                            threshold=data.get("vad_threshold", 0.5),
-                            min_silence_ms=data.get("silence_timeout", 800),
+                            threshold=data.get("vad_threshold", 0.45),
+                            min_silence_ms=data.get("silence_timeout", 500),
                         ),
                         "audio_buffer": bytearray(),
                         "is_recording": False,
@@ -2882,6 +3076,42 @@ async def websocket_endpoint(ws: WebSocket):
                     if not vs.get("wake_active"):
                         continue  # Still waiting for wake word, skip VAD
 
+                # ── Busy gate: skip new recordings while transcribing/processing/speaking ──
+                # Still process VAD to detect speech_start for TTS interruption.
+                if vs.get("_busy"):
+                    # Safety timeout: clear stuck busy state after 30 seconds
+                    if time.monotonic() - vs.get("_busy_since", 0) > 30:
+                        _logger.warning("Voice busy timeout for agent %s — resetting", agent_id)
+                        vs["_busy"] = False
+                        vs["is_recording"] = False
+                        vs["audio_buffer"] = bytearray()
+                        vad.reset()
+                        await send({
+                            "type": "talk_state_changed", "agent_id": agent_id,
+                            "state": "listening",
+                        })
+                    else:
+                        # Discard audio but still run VAD for interruption detection
+                        vs["audio_buffer_raw"] = vs.get("audio_buffer_raw", bytearray())
+                        if len(vs["audio_buffer_raw"]) + len(pcm_data) > _MAX_AUDIO_BUFFER:
+                            vs["audio_buffer_raw"] = bytearray()
+                            continue
+                        vs["audio_buffer_raw"].extend(pcm_data)
+                        while len(vs["audio_buffer_raw"]) >= chunk_size:
+                            chunk = bytes(vs["audio_buffer_raw"][:chunk_size])
+                            vs["audio_buffer_raw"] = vs["audio_buffer_raw"][chunk_size:]
+                            try:
+                                event = vad.process_chunk(chunk)
+                            except RuntimeError:
+                                break
+                            # Forward speech_start for interruption detection during TTS
+                            if event == VADEvent.SPEECH_START:
+                                await send({
+                                    "type": "vad_event", "agent_id": agent_id,
+                                    "event": "speech_start",
+                                })
+                        continue
+
                 # Process audio in VAD-sized chunks
                 vs["audio_buffer_raw"] = vs.get("audio_buffer_raw", bytearray())
                 if len(vs["audio_buffer_raw"]) + len(pcm_data) > _MAX_AUDIO_BUFFER:
@@ -2893,7 +3123,19 @@ async def websocket_endpoint(ws: WebSocket):
                     chunk = bytes(vs["audio_buffer_raw"][:chunk_size])
                     vs["audio_buffer_raw"] = vs["audio_buffer_raw"][chunk_size:]
 
-                    event = vad.process_chunk(chunk)
+                    try:
+                        event = vad.process_chunk(chunk)
+                    except RuntimeError as exc:
+                        _logger.error("VAD model error: %s", exc)
+                        if not vs.get("_vad_error_sent"):
+                            vs["_vad_error_sent"] = True
+                            await send({
+                                "type": "error", "agent_id": agent_id,
+                                "text": f"VAD error: {exc}",
+                            })
+                        # Disable this voice session to stop further processing
+                        voice_sessions.pop(agent_id, None)
+                        break
 
                     if event == VADEvent.SPEECH_START:
                         vs["is_recording"] = True
@@ -2913,6 +3155,9 @@ async def websocket_endpoint(ws: WebSocket):
                     elif event == VADEvent.SPEECH_END and vs["is_recording"]:
                         vs["audio_buffer"].extend(chunk)
                         vs["is_recording"] = False
+                        # Block new recordings until response cycle completes
+                        vs["_busy"] = True
+                        vs["_busy_since"] = time.monotonic()
                         await send({
                             "type": "vad_event", "agent_id": agent_id,
                             "event": "speech_end",
@@ -2923,20 +3168,16 @@ async def websocket_endpoint(ws: WebSocket):
                         vs["audio_buffer"] = bytearray()
 
                         async def _transcribe_voice(ab: bytes, aid: str):
-                            """Save PCM buffer to temp WAV and transcribe."""
-                            import struct
-                            import wave
-
-                            tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+                            """Transcribe PCM buffer directly (no temp file)."""
+                            _vs = voice_sessions.get(aid)
                             try:
-                                with wave.open(tmp.name, "wb") as wf:
-                                    wf.setnchannels(1)
-                                    wf.setsampwidth(2)
-                                    wf.setframerate(16000)
-                                    wf.writeframes(ab)
                                 loop = asyncio.get_event_loop()
-                                text = await loop.run_in_executor(
-                                    None, transcriber.transcribe, tmp.name
+                                text = await asyncio.wait_for(
+                                    loop.run_in_executor(
+                                        None,
+                                        lambda: transcriber.transcribe_pcm_buffer(ab, 16000, fast=True),
+                                    ),
+                                    timeout=15,  # 15s max for transcription
                                 )
                                 if text and text.strip():
                                     await send({
@@ -2945,21 +3186,34 @@ async def websocket_endpoint(ws: WebSocket):
                                         "text": text.strip(),
                                         "is_final": True,
                                     })
+                                    # _busy stays True — cleared after TTS/response completes
                                 else:
+                                    # No speech detected: resume listening immediately
+                                    if _vs:
+                                        _vs["_busy"] = False
+                                        _vs["vad"].reset()
                                     await send({
                                         "type": "vad_event", "agent_id": aid,
                                         "event": "no_speech",
                                     })
+                            except asyncio.TimeoutError:
+                                _logger.warning("Transcription timed out for agent %s", aid)
+                                if _vs:
+                                    _vs["_busy"] = False
+                                    _vs["vad"].reset()
+                                await send({
+                                    "type": "vad_event", "agent_id": aid,
+                                    "event": "no_speech",
+                                })
                             except Exception as exc:
+                                # Transcription failed: resume listening
+                                if _vs:
+                                    _vs["_busy"] = False
+                                    _vs["vad"].reset()
                                 await send({
                                     "type": "error", "agent_id": aid,
                                     "text": f"Transcription error: {exc}",
                                 })
-                            finally:
-                                try:
-                                    os.unlink(tmp.name)
-                                except OSError:
-                                    pass
 
                         vs["audio_task"] = asyncio.create_task(
                             _transcribe_voice(audio_bytes, agent_id)
@@ -2978,11 +3232,17 @@ async def websocket_endpoint(ws: WebSocket):
                 if not vs:
                     voice_sessions[agent_id] = {
                         "mode": "talk-mode",
-                        "vad": VoiceActivityDetector(),
+                        "vad": VoiceActivityDetector(min_silence_ms=500),
                         "audio_buffer": bytearray(),
                         "is_recording": False,
                         "audio_task": None,
                         "talk_active": True,
+                        "tts_voice": data.get("tts_voice", DEFAULT_VOICE),
+                        "tts_rate": data.get("tts_rate", "+0%"),
+                        "tts_tasks": [],
+                        "tts_cancelled": False,
+                        "_busy": False,
+                        "_busy_since": 0.0,
                     }
                 else:
                     vs["mode"] = "talk-mode"
@@ -3012,7 +3272,17 @@ async def websocket_endpoint(ws: WebSocket):
                 if vs and vs.get("talk_active"):
                     vs["is_recording"] = False
                     vs["audio_buffer"] = bytearray()
+                    vs["_busy"] = False
                     vs["vad"].reset()
+                    # Cancel any active streaming TTS tasks
+                    vs["tts_cancelled"] = True
+                    for task in vs.get("tts_tasks", []):
+                        if not task.done():
+                            task.cancel()
+                    vs["tts_tasks"] = []
+                    await send({"type": "tts_audio_cancel", "agent_id": agent_id})
+                    # Cancel the LLM streaming task so it stops generating
+                    await cancel_agent_streaming(agent_id)
                     await send({
                         "type": "talk_state_changed", "agent_id": agent_id,
                         "state": "listening",
@@ -3037,6 +3307,25 @@ async def websocket_endpoint(ws: WebSocket):
                         "type": "error",
                         "agent_id": agent_id,
                         "text": "Permission request expired or not found.",
+                    })
+
+            elif msg_type == "ask_question_response":
+                request_id = data.get("request_id", "")
+                if (
+                    request_id
+                    and re.fullmatch(r"askq_[0-9a-f]{16}", request_id)
+                    and request_id in pending_questions
+                    and _askq_owners.get(request_id) == agent_id
+                ):
+                    question_responses[request_id] = {
+                        "answers": data.get("answers", {}),
+                    }
+                    pending_questions[request_id].set()
+                else:
+                    await send({
+                        "type": "error",
+                        "agent_id": agent_id,
+                        "text": "Question request expired or not found.",
                     })
 
             # ── A2UI: user interaction with a rendered surface ──

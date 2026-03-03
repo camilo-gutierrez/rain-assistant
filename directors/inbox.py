@@ -44,6 +44,18 @@ def _ensure_inbox_table(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_inbox_director
         ON director_inbox(director_id, user_id)
     """)
+
+    # Migration: add project_id column
+    try:
+        conn.execute("ALTER TABLE director_inbox ADD COLUMN project_id TEXT NOT NULL DEFAULT 'default'")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_inbox_project
+        ON director_inbox(project_id, user_id)
+    """)
+
     conn.commit()
 
 
@@ -78,6 +90,7 @@ def add_inbox_item(
     task_id: str | None = None,
     metadata: dict | None = None,
     user_id: str = "default",
+    project_id: str = "default",
 ) -> dict:
     """Add a new item to the inbox."""
     now = time.time()
@@ -88,12 +101,12 @@ def add_inbox_item(
         conn.execute(
             """INSERT INTO director_inbox
                (id, director_id, director_name, title, content, content_type,
-                status, priority, task_id, metadata, created_at, updated_at, user_id)
-               VALUES (?, ?, ?, ?, ?, ?, 'unread', ?, ?, ?, ?, ?, ?)""",
+                status, priority, task_id, metadata, created_at, updated_at, user_id, project_id)
+               VALUES (?, ?, ?, ?, ?, ?, 'unread', ?, ?, ?, ?, ?, ?, ?)""",
             (item_id, director_id, director_name, title, content, content_type,
              max(1, min(10, priority)), task_id,
              json.dumps(metadata or {}, ensure_ascii=False),
-             now, now, user_id),
+             now, now, user_id, project_id),
         )
         conn.commit()
 
@@ -110,6 +123,7 @@ def list_inbox(
     content_type: str | None = None,
     limit: int = 50,
     offset: int = 0,
+    project_id: str | None = None,
 ) -> list[dict]:
     """List inbox items with optional filters."""
     conn = _get_inbox_db()
@@ -117,6 +131,9 @@ def list_inbox(
         conditions = ["user_id = ?"]
         params: list = [user_id]
 
+        if project_id is not None:
+            conditions.append("project_id = ?")
+            params.append(project_id)
         if status:
             conditions.append("status = ?")
             params.append(status)
@@ -191,29 +208,46 @@ def update_inbox_status(
         conn.close()
 
 
-def get_unread_count(user_id: str = "default") -> int:
+def get_unread_count(user_id: str = "default", project_id: str | None = None) -> int:
     """Get the number of unread inbox items."""
     conn = _get_inbox_db()
     try:
+        conditions = ["user_id = ?", "status = 'unread'"]
+        params: list = [user_id]
+
+        if project_id is not None:
+            conditions.append("project_id = ?")
+            params.append(project_id)
+
+        where = " AND ".join(conditions)
         row = conn.execute(
-            "SELECT COUNT(*) FROM director_inbox WHERE user_id = ? AND status = 'unread'",
-            (user_id,),
+            f"SELECT COUNT(*) FROM director_inbox WHERE {where}",
+            params,
         ).fetchone()
         return row[0] if row else 0
     finally:
         conn.close()
 
 
-def archive_old_items(days: int = 30, user_id: str = "default") -> int:
+def archive_old_items(days: int = 30, user_id: str = "default", project_id: str | None = None) -> int:
     """Archive items older than N days that aren't already archived."""
     cutoff = time.time() - (days * 86400)
     conn = _get_inbox_db()
     try:
+        conditions = ["user_id = ?", "status NOT IN ('archived')", "created_at < ?"]
+        params: list = [user_id]
+
+        if project_id is not None:
+            conditions.insert(1, "project_id = ?")
+            params.append(project_id)
+
+        params.append(cutoff)
+
+        where = " AND ".join(conditions)
+        now = time.time()
         cur = conn.execute(
-            """UPDATE director_inbox
-               SET status = 'archived', updated_at = ?
-               WHERE user_id = ? AND status NOT IN ('archived') AND created_at < ?""",
-            (time.time(), user_id, cutoff),
+            f"UPDATE director_inbox SET status = 'archived', updated_at = ? WHERE {where}",
+            [now] + params,
         )
         conn.commit()
         return cur.rowcount

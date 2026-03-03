@@ -13,6 +13,7 @@ import 'models/rate_limits.dart';
 import 'models/subagent_info.dart';
 import 'providers/agent_provider.dart';
 import 'providers/audio_provider.dart';
+import 'providers/call_provider.dart';
 import 'providers/connection_provider.dart';
 import 'providers/metrics_provider.dart';
 import 'providers/directors_provider.dart';
@@ -106,16 +107,20 @@ class _AppShellState extends ConsumerState<_AppShell> {
       // Initialize background task service (foreground service for keep-alive)
       ref.read(backgroundTaskServiceProvider).init();
 
-      // Configure audio session for background playback (non-critical)
-      try {
-        await ref.read(audioServiceProvider).initAudioSession();
-      } catch (e) {
-        print('[Rain] Audio session init failed (non-critical): $e');
-      }
-
-      // Load persisted auth state
+      // Load persisted auth state (must happen BEFORE audioServiceProvider,
+      // which needs authenticatedDio → serverUrl)
       final auth = ref.read(authServiceProvider);
       await auth.init();
+
+      // Configure audio session for background playback (non-critical)
+      // Must be after auth.init() so serverUrl is available for Dio baseUrl
+      if (auth.serverUrl != null) {
+        try {
+          await ref.read(audioServiceProvider).initAudioSession();
+        } catch (e) {
+          print('[Rain] Audio session init failed (non-critical): $e');
+        }
+      }
 
       if (!mounted) return;
 
@@ -178,6 +183,11 @@ class _AppShellState extends ConsumerState<_AppShell> {
       }
       if (status == ConnectionStatus.connected) {
         sub.cancel();
+        // Sync transcription language with backend on first connect
+        ws.send({
+          'type': 'set_transcription_lang',
+          'lang': ref.read(settingsProvider).voiceLang,
+        });
         // api_key_loaded may have arrived during loading — check before
         if (ref.read(apiKeyLoadedProvider)) {
           // Skip file browser if we restored agents with a valid cwd
@@ -227,10 +237,16 @@ class _AppShellState extends ConsumerState<_AppShell> {
             type: ToastType.success);
       }
 
-      // Resume sessions for all agents
-      final agents = ref.read(agentProvider).agents;
+      // Sync transcription language with backend
       final ws = ref.read(webSocketServiceProvider);
       final settings = ref.read(settingsProvider);
+      ws.send({
+        'type': 'set_transcription_lang',
+        'lang': settings.voiceLang,
+      });
+
+      // Resume sessions for all agents
+      final agents = ref.read(agentProvider).agents;
       for (final agent in agents.values) {
         if (agent.cwd != null && agent.sessionId != null && agent.sessionId!.isNotEmpty) {
           ws.send({
@@ -471,19 +487,22 @@ class _AppShellState extends ConsumerState<_AppShell> {
         agentNotifier.setAgentStatus(agentId, AgentStatus.done);
         _checkStopBackgroundTask();
 
-        // TTS auto-play
-        final settings = ref.read(settingsProvider);
-        if (settings.ttsEnabled && settings.ttsAutoPlay) {
-          final agent = ref.read(agentProvider).agents[agentId];
-          if (agent != null) {
-            // Find the last assistant message text
-            final lastAssistant = agent.messages.reversed
-                .whereType<AssistantMessage>()
-                .firstOrNull;
-            if (lastAssistant != null && lastAssistant.text.isNotEmpty) {
-              ref
-                  .read(audioServiceProvider)
-                  .synthesize(lastAssistant.text, settings.ttsVoice);
+        // TTS auto-play (skip if a call is active — call handles its own TTS)
+        final callService = ref.read(callServiceProvider);
+        if (!callService.isActive) {
+          final settings = ref.read(settingsProvider);
+          if (settings.ttsEnabled && settings.ttsAutoPlay) {
+            final agent = ref.read(agentProvider).agents[agentId];
+            if (agent != null) {
+              // Find the last assistant message text
+              final lastAssistant = agent.messages.reversed
+                  .whereType<AssistantMessage>()
+                  .firstOrNull;
+              if (lastAssistant != null && lastAssistant.text.isNotEmpty) {
+                ref
+                    .read(audioServiceProvider)
+                    .synthesize(lastAssistant.text, settings.ttsVoice);
+              }
             }
           }
         }
@@ -538,6 +557,25 @@ class _AppShellState extends ConsumerState<_AppShell> {
           ),
         );
         _dispatchNotification('permission_request', agentId, msg);
+
+      case 'ask_question':
+        if (agentId.isEmpty) break;
+        agentNotifier.finalizeStreaming(agentId);
+        agentNotifier.setProcessing(agentId, false);
+        agentNotifier.incrementUnread(agentId);
+        agentNotifier.appendMessage(
+          agentId,
+          AskQuestionMessage(
+            id: UniqueKey().toString(),
+            requestId: msg['request_id'] ?? '',
+            questions: (msg['questions'] as List?)
+                    ?.map((q) => Map<String, dynamic>.from(q))
+                    .toList() ??
+                [],
+            timestamp: DateTime.now().millisecondsSinceEpoch,
+          ),
+        );
+        _dispatchNotification('ask_question', agentId, msg);
 
       case 'auto_approve_changed':
         if (agentId.isNotEmpty) {
@@ -719,12 +757,37 @@ class _AppShellState extends ConsumerState<_AppShell> {
       case 'director_event':
         final directorsNotifier = ref.read(directorsProvider.notifier);
         final event = msg['event'] as String? ?? '';
-        if (event == 'run_complete' || event == 'task_complete') {
-          directorsNotifier.incrementUnread();
-          final directorId = msg['director_id'] as String? ?? '';
-          if (directorId.isNotEmpty) {
-            directorsNotifier.onDirectorRunComplete(directorId);
-          }
+        switch (event) {
+          case 'team_run_start':
+            directorsNotifier.onTeamRunStart(
+              msg['project_id'] as String? ?? '',
+              msg['project_name'] as String? ?? '',
+              (msg['director_count'] as num?)?.toInt() ?? 0,
+            );
+          case 'run_complete':
+            final directorId = msg['director_id'] as String? ?? '';
+            final directorName = msg['director_name'] as String? ?? '';
+            final success = msg['success'] as bool? ?? false;
+            directorsNotifier.incrementUnread();
+            if (directorId.isNotEmpty) {
+              directorsNotifier.onDirectorRunComplete(directorId);
+              directorsNotifier.onTeamDirectorComplete(
+                  directorId, directorName, success);
+            }
+          case 'task_complete':
+            directorsNotifier.incrementUnread();
+            final directorId = msg['director_id'] as String? ?? '';
+            if (directorId.isNotEmpty) {
+              directorsNotifier.onDirectorRunComplete(directorId);
+            }
+            directorsNotifier.onTeamTaskComplete();
+          case 'team_run_complete':
+            directorsNotifier.onTeamRunFinish();
+            // Refresh data now that team is done
+            final dio = ref.read(authServiceProvider).authenticatedDio;
+            directorsNotifier.loadDirectors(dio);
+            directorsNotifier.loadStats(dio);
+            directorsNotifier.loadActivity(dio);
         }
     }
   }
@@ -915,6 +978,7 @@ class _AppShellState extends ConsumerState<_AppShell> {
         final body = lang == 'es'
             ? 'Herramienta: $tool (${level.toString().toUpperCase()})'
             : 'Tool: $tool (${level.toString().toUpperCase()})';
+        final isInCall = ref.read(callServiceProvider).isActive;
 
         if (isBackground) {
           notifService.showPermissionNotification(
@@ -925,9 +989,10 @@ class _AppShellState extends ConsumerState<_AppShell> {
             title: title,
             body: body,
           );
-        } else if (isOnDifferentAgent &&
-            notifSettings.inAppDialogs &&
-            _screen == _AppScreen.chat) {
+        } else if (isInCall ||
+            (isOnDifferentAgent &&
+                notifSettings.inAppDialogs &&
+                _screen == _AppScreen.chat)) {
           showPermissionAlertDialog(
             context,
             ref,
@@ -993,6 +1058,54 @@ class _AppShellState extends ConsumerState<_AppShell> {
           title: resultTitle,
           body: resultBody,
         );
+
+      case 'ask_question':
+        if (!notifSettings.permissionNotifications) return;
+
+        final questions = (msg['questions'] as List?) ?? [];
+        final firstQ = questions.isNotEmpty
+            ? (questions[0]['question'] ?? '') as String
+            : '';
+        final askRequestId = msg['request_id'] ?? '';
+        final askTitle = lang == 'es'
+            ? 'Pregunta - $agentLabel'
+            : 'Question - $agentLabel';
+        final askBody = firstQ.length > 100
+            ? '${firstQ.substring(0, 100)}...'
+            : firstQ;
+        final isInCallAsk = ref.read(callServiceProvider).isActive;
+
+        if (isBackground) {
+          notifService.showPermissionNotification(
+            agentId: agentId,
+            tool: 'AskUserQuestion',
+            level: 'question',
+            requestId: askRequestId,
+            title: askTitle,
+            body: askBody,
+          );
+        } else if (isInCallAsk ||
+            (isOnDifferentAgent &&
+                notifSettings.inAppDialogs &&
+                _screen == _AppScreen.chat)) {
+          showAskQuestionAlertDialog(
+            context,
+            ref,
+            agentId: agentId,
+            agentLabel: agentLabel,
+            requestId: askRequestId,
+            questions: questions
+                .map((q) => Map<String, dynamic>.from(q))
+                .toList(),
+          );
+          if (notifSettings.hapticFeedback) {
+            notifService.hapticForPermission();
+          }
+        } else {
+          if (notifSettings.hapticFeedback) {
+            notifService.hapticForPermission();
+          }
+        }
 
       case 'error':
         if (!notifSettings.errorNotifications) return;
