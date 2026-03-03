@@ -5,7 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/director.dart';
 
 /// Status of a single director during a team run.
-enum DirectorRunStatus { pending, running, completed, failed }
+enum DirectorRunStatus { pending, running, completed, failed, stopped }
 
 /// A director entry in the active team run.
 class DirectorRunEntry {
@@ -57,7 +57,8 @@ class ActiveTeamRun {
   int get doneCount => directors.values
       .where((d) =>
           d.status == DirectorRunStatus.completed ||
-          d.status == DirectorRunStatus.failed)
+          d.status == DirectorRunStatus.failed ||
+          d.status == DirectorRunStatus.stopped)
       .length;
 
   int get total => directorCount > directors.length ? directorCount : directors.length;
@@ -355,6 +356,28 @@ class DirectorsNotifier extends StateNotifier<DirectorsState> {
     }
   }
 
+  Future<bool> stopTeam(Dio dio, String projectId) async {
+    try {
+      await dio.post('/directors/projects/$projectId/stop');
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> updateContext(
+      Dio dio, String directorId, Map<String, dynamic> contextWindow) async {
+    try {
+      await dio.patch('/directors/$directorId', data: {
+        'context_window': contextWindow,
+      });
+      await loadDirectors(dio);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<bool> deleteDirector(Dio dio, Director d) async {
     try {
       await dio.delete('/directors/${d.id}');
@@ -540,6 +563,35 @@ class DirectorsNotifier extends StateNotifier<DirectorsState> {
     // Auto-clear after 8 seconds
     _autoClearTimer?.cancel();
     _autoClearTimer = Timer(const Duration(seconds: 8), () {
+      if (state.activeTeamRun?.startedAt == run.startedAt) {
+        clearTeamRun();
+      }
+    });
+  }
+
+  /// Called when team_run_stopped event arrives — user force-stopped the team.
+  void onTeamRunStopped(String projectId) {
+    final run = state.activeTeamRun;
+    if (run == null) return;
+
+    // Mark all non-terminal directors as stopped
+    final dirs = Map<String, DirectorRunEntry>.from(run.directors);
+    for (final id in dirs.keys) {
+      final d = dirs[id]!;
+      if (d.status == DirectorRunStatus.pending ||
+          d.status == DirectorRunStatus.running) {
+        dirs[id] = d.copyWith(status: DirectorRunStatus.stopped);
+      }
+    }
+
+    state = state.copyWith(
+      teamRunning: false,
+      activeTeamRun: run.copyWith(directors: dirs),
+    );
+
+    // Auto-clear after 5 seconds
+    _autoClearTimer?.cancel();
+    _autoClearTimer = Timer(const Duration(seconds: 5), () {
       if (state.activeTeamRun?.startedAt == run.startedAt) {
         clearTeamRun();
       }

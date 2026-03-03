@@ -6,6 +6,7 @@ import '../models/director.dart';
 import '../providers/connection_provider.dart';
 import '../providers/directors_provider.dart';
 import '../providers/settings_provider.dart';
+import '../widgets/context_editor_sheet.dart';
 import '../widgets/toast.dart';
 
 class DirectorDetailScreen extends ConsumerStatefulWidget {
@@ -197,6 +198,98 @@ class _DirectorDetailScreenState extends ConsumerState<DirectorDetailScreen> {
             ),
           ),
           const SizedBox(height: 20),
+
+          // ── Context configuration ──
+          if (d.requiredContext.isNotEmpty ||
+              d.contextWindow.isNotEmpty) ...[
+            Row(
+              children: [
+                Expanded(
+                  child: Text(L10n.t('directors.contextConfig', lang),
+                      style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 14,
+                          color: cs.onSurface)),
+                ),
+                SizedBox(
+                  height: 32,
+                  child: FilledButton.tonalIcon(
+                    onPressed: () => showContextEditorSheet(context, d),
+                    icon: const Icon(Icons.tune, size: 16),
+                    label: Text(L10n.t('directors.configure', lang),
+                        style: const TextStyle(fontSize: 12)),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            if (d.needsSetup)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                margin: const EdgeInsets.only(bottom: 8),
+                decoration: BoxDecoration(
+                  color: Colors.amber.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                      color: Colors.amber.withValues(alpha: 0.3)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.warning_amber_rounded,
+                        color: Colors.amber.shade700, size: 20),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        L10n.t('directors.needsSetupHint', lang,
+                            {'fields': d.missingFields.join(', ')}),
+                        style: TextStyle(
+                            fontSize: 13, color: Colors.amber.shade700),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            // Show configured context keys
+            if (d.contextWindow.isNotEmpty)
+              ...d.contextWindow.entries.map((e) => Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          d.missingFields.contains(e.key)
+                              ? Icons.radio_button_unchecked
+                              : Icons.check_circle_outline,
+                          size: 14,
+                          color: d.missingFields.contains(e.key)
+                              ? Colors.amber.shade700
+                              : Colors.green,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(e.key,
+                            style: TextStyle(
+                                fontWeight: FontWeight.w500,
+                                fontSize: 13,
+                                color: cs.onSurface)),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            e.value.toString().length > 60
+                                ? '${e.value.toString().substring(0, 60)}...'
+                                : e.value.toString(),
+                            style: TextStyle(
+                                fontSize: 12,
+                                color: cs.onSurfaceVariant),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  )),
+            const SizedBox(height: 20),
+          ],
 
           // ── Last run result ──
           Text(L10n.t('directors.lastResult', lang),

@@ -1,5 +1,7 @@
 // Models for the Autonomous Directors system.
 
+import 'dart:convert';
+
 class DirectorProject {
   final String id;
   final String name;
@@ -13,7 +15,7 @@ class DirectorProject {
   const DirectorProject({
     required this.id,
     required this.name,
-    this.emoji = '📁',
+    this.emoji = '\u{1F4C1}',
     this.description = '',
     this.color = '#6C7086',
     this.teamTemplate,
@@ -25,7 +27,7 @@ class DirectorProject {
       DirectorProject(
         id: json['id'] as String,
         name: json['name'] as String,
-        emoji: (json['emoji'] as String?) ?? '📁',
+        emoji: (json['emoji'] as String?) ?? '\u{1F4C1}',
         description: (json['description'] as String?) ?? '',
         color: (json['color'] as String?) ?? '#6C7086',
         teamTemplate: json['team_template'] as String?,
@@ -55,7 +57,7 @@ class TeamTemplate {
   const TeamTemplate({
     required this.id,
     required this.name,
-    this.emoji = '📁',
+    this.emoji = '\u{1F4C1}',
     this.description = '',
     this.color = '#6C7086',
     this.directors = const [],
@@ -65,7 +67,7 @@ class TeamTemplate {
   factory TeamTemplate.fromJson(Map<String, dynamic> json) => TeamTemplate(
         id: json['id'] as String,
         name: json['name'] as String,
-        emoji: (json['emoji'] as String?) ?? '📁',
+        emoji: (json['emoji'] as String?) ?? '\u{1F4C1}',
         description: (json['description'] as String?) ?? '',
         color: (json['color'] as String?) ?? '#6C7086',
         directors: (json['directors'] as List?)
@@ -78,6 +80,74 @@ class TeamTemplate {
             [],
       );
 }
+
+// ---------------------------------------------------------------------------
+// Context field metadata — describes a configurable context field for a director
+// ---------------------------------------------------------------------------
+
+class ContextFieldMeta {
+  final String key;
+  final String label;
+  final String labelEs;
+  final String type; // text, textarea, tags, number, select, toggle
+  final String hint;
+  final String hintEs;
+  final bool required;
+  final String defaultValue;
+  final List<String> options;
+  final String group;
+  final bool readOnly;
+  final bool autoManaged;
+  final bool allowFileAttach;
+
+  const ContextFieldMeta({
+    required this.key,
+    required this.label,
+    this.labelEs = '',
+    this.type = 'text',
+    this.hint = '',
+    this.hintEs = '',
+    this.required = false,
+    this.defaultValue = '',
+    this.options = const [],
+    this.group = 'general',
+    this.readOnly = false,
+    this.autoManaged = false,
+    this.allowFileAttach = false,
+  });
+
+  factory ContextFieldMeta.fromJson(Map<String, dynamic> json) =>
+      ContextFieldMeta(
+        key: json['key'] as String,
+        label: (json['label'] as String?) ?? '',
+        labelEs: (json['label_es'] as String?) ?? '',
+        type: (json['type'] as String?) ?? 'text',
+        hint: (json['hint'] as String?) ?? '',
+        hintEs: (json['hint_es'] as String?) ?? '',
+        required: json['required'] == true,
+        defaultValue: (json['default'] as String?) ?? '',
+        options: (json['options'] as List?)
+                ?.map((e) => e as String)
+                .toList() ??
+            [],
+        group: (json['group'] as String?) ?? 'general',
+        readOnly: json['read_only'] == true,
+        autoManaged: json['auto_managed'] == true,
+        allowFileAttach: json['allow_file_attach'] == true,
+      );
+
+  /// Get the label in the user's language.
+  String localizedLabel(String lang) =>
+      lang == 'es' && labelEs.isNotEmpty ? labelEs : label;
+
+  /// Get the hint in the user's language.
+  String localizedHint(String lang) =>
+      lang == 'es' && hintEs.isNotEmpty ? hintEs : hint;
+}
+
+// ---------------------------------------------------------------------------
+// Director
+// ---------------------------------------------------------------------------
 
 class Director {
   final String id;
@@ -97,6 +167,12 @@ class Director {
   final String? lastError;
   final double createdAt;
   final double updatedAt;
+  // Context configuration
+  final Map<String, dynamic> contextWindow;
+  final String templateId;
+  final String setupStatus; // "complete" | "needs_setup"
+  final List<String> missingFields;
+  final List<ContextFieldMeta> requiredContext;
 
   const Director({
     required this.id,
@@ -116,27 +192,57 @@ class Director {
     this.lastError,
     required this.createdAt,
     required this.updatedAt,
+    this.contextWindow = const {},
+    this.templateId = '',
+    this.setupStatus = 'complete',
+    this.missingFields = const [],
+    this.requiredContext = const [],
   });
 
-  factory Director.fromJson(Map<String, dynamic> json) => Director(
-        id: json['id'] as String,
-        name: json['name'] as String,
-        emoji: (json['emoji'] as String?) ?? '\u{1F916}',
-        description: (json['description'] as String?) ?? '',
-        rolePrompt: (json['role_prompt'] as String?) ?? '',
-        schedule: json['schedule'] as String?,
-        enabled: json['enabled'] == 1 || json['enabled'] == true,
-        canDelegate: json['can_delegate'] == 1 || json['can_delegate'] == true,
-        permissionLevel: (json['permission_level'] as String?) ?? 'green',
-        runCount: (json['run_count'] as num?)?.toInt() ?? 0,
-        totalCost: (json['total_cost'] as num?)?.toDouble() ?? 0.0,
-        lastRun: (json['last_run'] as num?)?.toDouble(),
-        nextRun: (json['next_run'] as num?)?.toDouble(),
-        lastResult: json['last_result'] as String?,
-        lastError: json['last_error'] as String?,
-        createdAt: (json['created_at'] as num).toDouble(),
-        updatedAt: (json['updated_at'] as num).toDouble(),
-      );
+  factory Director.fromJson(Map<String, dynamic> json) {
+    // Parse context_window — can be a Map or a JSON string
+    Map<String, dynamic> ctx = {};
+    final rawCtx = json['context_window'];
+    if (rawCtx is Map<String, dynamic>) {
+      ctx = rawCtx;
+    } else if (rawCtx is String && rawCtx.isNotEmpty) {
+      try {
+        ctx = jsonDecode(rawCtx) as Map<String, dynamic>;
+      } catch (_) {}
+    }
+
+    return Director(
+      id: json['id'] as String,
+      name: json['name'] as String,
+      emoji: (json['emoji'] as String?) ?? '\u{1F916}',
+      description: (json['description'] as String?) ?? '',
+      rolePrompt: (json['role_prompt'] as String?) ?? '',
+      schedule: json['schedule'] as String?,
+      enabled: json['enabled'] == 1 || json['enabled'] == true,
+      canDelegate: json['can_delegate'] == 1 || json['can_delegate'] == true,
+      permissionLevel: (json['permission_level'] as String?) ?? 'green',
+      runCount: (json['run_count'] as num?)?.toInt() ?? 0,
+      totalCost: (json['total_cost'] as num?)?.toDouble() ?? 0.0,
+      lastRun: (json['last_run'] as num?)?.toDouble(),
+      nextRun: (json['next_run'] as num?)?.toDouble(),
+      lastResult: json['last_result'] as String?,
+      lastError: json['last_error'] as String?,
+      createdAt: (json['created_at'] as num).toDouble(),
+      updatedAt: (json['updated_at'] as num).toDouble(),
+      contextWindow: ctx,
+      templateId: (json['template_id'] as String?) ?? '',
+      setupStatus: (json['setup_status'] as String?) ?? 'complete',
+      missingFields: (json['missing_fields'] as List?)
+              ?.map((e) => e as String)
+              .toList() ??
+          [],
+      requiredContext: (json['required_context'] as List?)
+              ?.map(
+                  (e) => ContextFieldMeta.fromJson(e as Map<String, dynamic>))
+              .toList() ??
+          [],
+    );
+  }
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -149,6 +255,9 @@ class Director {
         'can_delegate': canDelegate,
         'permission_level': permissionLevel,
       };
+
+  /// Whether this director needs the user to configure context fields.
+  bool get needsSetup => setupStatus == 'needs_setup';
 }
 
 class DirectorTask {
@@ -255,6 +364,7 @@ class DirectorTemplate {
   final String rolePrompt;
   final String defaultSchedule;
   final bool canDelegate;
+  final List<ContextFieldMeta> requiredContext;
 
   const DirectorTemplate({
     required this.id,
@@ -264,6 +374,7 @@ class DirectorTemplate {
     required this.rolePrompt,
     this.defaultSchedule = '',
     this.canDelegate = false,
+    this.requiredContext = const [],
   });
 
   factory DirectorTemplate.fromJson(Map<String, dynamic> json) =>
@@ -275,6 +386,11 @@ class DirectorTemplate {
         rolePrompt: (json['role_prompt'] as String?) ?? '',
         defaultSchedule: (json['schedule'] as String?) ?? '',
         canDelegate: json['can_delegate'] == true,
+        requiredContext: (json['required_context'] as List?)
+                ?.map((e) =>
+                    ContextFieldMeta.fromJson(e as Map<String, dynamic>))
+                .toList() ??
+            [],
       );
 }
 

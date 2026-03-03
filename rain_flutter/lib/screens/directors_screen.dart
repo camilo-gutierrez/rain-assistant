@@ -5,6 +5,7 @@ import '../models/director.dart';
 import '../providers/connection_provider.dart';
 import '../providers/directors_provider.dart';
 import '../providers/settings_provider.dart';
+import '../widgets/context_editor_sheet.dart';
 import '../widgets/toast.dart';
 import 'director_detail_screen.dart';
 
@@ -494,6 +495,17 @@ class _DirectorsScreenState extends ConsumerState<DirectorsScreen>
                   lang: lang,
                   onDismiss: () =>
                       ref.read(directorsProvider.notifier).clearTeamRun(),
+                  onStop: s.teamRunning
+                      ? () async {
+                          final dio =
+                              ref.read(authServiceProvider).authenticatedDio;
+                          final projectId =
+                              ref.read(directorsProvider).activeProjectId;
+                          await ref
+                              .read(directorsProvider.notifier)
+                              .stopTeam(dio, projectId);
+                        }
+                      : null,
                 ),
               ),
           ],
@@ -507,6 +519,9 @@ class _DirectorsScreenState extends ConsumerState<DirectorsScreen>
                   onToggle: () => _toggleEnabled(d),
                   onRun: () => _runNow(d),
                   onDelete: () => _deleteDirector(d),
+                  onConfigure: d.requiredContext.isNotEmpty
+                      ? () => showContextEditorSheet(context, d)
+                      : null,
                   onTap: () => Navigator.of(context).push(
                     MaterialPageRoute(
                       builder: (_) => DirectorDetailScreen(directorId: d.id),
@@ -916,6 +931,7 @@ class _DirectorCard extends StatelessWidget {
   final VoidCallback onRun;
   final VoidCallback onDelete;
   final VoidCallback onTap;
+  final VoidCallback? onConfigure;
 
   const _DirectorCard({
     required this.director,
@@ -925,6 +941,7 @@ class _DirectorCard extends StatelessWidget {
     required this.onRun,
     required this.onDelete,
     required this.onTap,
+    this.onConfigure,
   });
 
   @override
@@ -1008,6 +1025,36 @@ class _DirectorCard extends StatelessWidget {
                                   ),
                                 ),
                               ),
+                              if (d.needsSetup) ...[
+                                const SizedBox(width: 6),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color:
+                                        Colors.amber.withValues(alpha: 0.15),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(Icons.warning_amber_rounded,
+                                          size: 12,
+                                          color: Colors.amber.shade700),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        L10n.t(
+                                            'directors.needsSetup', lang),
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w600,
+                                          color: Colors.amber.shade700,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
                             ],
                           ),
                           const SizedBox(height: 2),
@@ -1052,6 +1099,21 @@ class _DirectorCard extends StatelessWidget {
                               TextStyle(fontSize: 12, color: cs.primary)),
                     ],
                     const Spacer(),
+                    if (d.requiredContext.isNotEmpty &&
+                        onConfigure != null)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: SizedBox(
+                          height: 30,
+                          child: OutlinedButton.icon(
+                            onPressed: onConfigure,
+                            icon: const Icon(Icons.tune, size: 16),
+                            label: Text(
+                                L10n.t('directors.configure', lang),
+                                style: const TextStyle(fontSize: 12)),
+                          ),
+                        ),
+                      ),
                     if (d.enabled)
                       SizedBox(
                         height: 30,
@@ -1448,11 +1510,13 @@ class _TeamRunProgress extends StatelessWidget {
   final ActiveTeamRun run;
   final String lang;
   final VoidCallback onDismiss;
+  final VoidCallback? onStop;
 
   const _TeamRunProgress({
     required this.run,
     required this.lang,
     required this.onDismiss,
+    this.onStop,
   });
 
   @override
@@ -1508,7 +1572,15 @@ class _TeamRunProgress extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                if (run.allDone)
+                if (!run.allDone && onStop != null)
+                  IconButton(
+                    onPressed: onStop,
+                    icon: Icon(Icons.stop_circle_outlined,
+                        size: 22, color: cs.error),
+                    tooltip: L10n.t('directors.stopTeam', lang),
+                    visualDensity: VisualDensity.compact,
+                  )
+                else if (run.allDone)
                   IconButton(
                     onPressed: onDismiss,
                     icon: Icon(Icons.close, size: 18, color: cs.onSurfaceVariant),
@@ -1604,6 +1676,7 @@ class _TeamRunProgress extends StatelessWidget {
         L10n.t('directors.completedDirector', lang),
       DirectorRunStatus.failed => L10n.t('directors.failedDirector', lang),
       DirectorRunStatus.pending => L10n.t('directors.pendingDirector', lang),
+      DirectorRunStatus.stopped => L10n.t('directors.stoppedDirector', lang),
     };
   }
 }
@@ -1621,6 +1694,7 @@ class _StatusDot extends StatelessWidget {
       DirectorRunStatus.running => cs.primary,
       DirectorRunStatus.completed => Colors.green,
       DirectorRunStatus.failed => cs.error,
+      DirectorRunStatus.stopped => Colors.orange,
     };
 
     return Container(

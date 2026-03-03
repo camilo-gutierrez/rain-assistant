@@ -788,6 +788,13 @@ class _AppShellState extends ConsumerState<_AppShell> {
             directorsNotifier.loadDirectors(dio);
             directorsNotifier.loadStats(dio);
             directorsNotifier.loadActivity(dio);
+          case 'team_run_stopped':
+            directorsNotifier.onTeamRunStopped(
+              msg['project_id'] as String? ?? '',
+            );
+            final dio2 = ref.read(authServiceProvider).authenticatedDio;
+            directorsNotifier.loadDirectors(dio2);
+            directorsNotifier.loadStats(dio2);
         }
     }
   }

@@ -97,6 +97,13 @@ def _get_db() -> sqlite3.Connection:
         ON directors(project_id, user_id)
     """)
 
+    # --- Migration: add template_id to directors ---
+    try:
+        conn.execute("ALTER TABLE directors ADD COLUMN template_id TEXT NOT NULL DEFAULT ''")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+
     conn.commit()
     return conn
 
@@ -156,6 +163,7 @@ def add_director(
     can_delegate: bool = False,
     user_id: str = "default",
     project_id: str = "default",
+    template_id: str = "",
 ) -> dict | None:
     """Create a new director.
 
@@ -178,11 +186,11 @@ def add_director(
             """INSERT INTO directors
                (id, name, emoji, description, role_prompt, schedule, enabled,
                 tools_allowed, plugins_allowed, permission_level, can_delegate,
-                next_run, created_at, updated_at, user_id, project_id)
-               VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                next_run, created_at, updated_at, user_id, project_id, template_id)
+               VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (id, name, emoji, description, role_prompt, schedule,
              tools_json, plugins_json, permission_level, 1 if can_delegate else 0,
-             next_run, now, now, user_id, project_id),
+             next_run, now, now, user_id, project_id, template_id),
         )
         conn.commit()
 

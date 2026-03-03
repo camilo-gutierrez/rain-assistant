@@ -41,6 +41,47 @@ def _auth(request: Request):
     return _get_user_id_from_request(request), None
 
 
+def _compute_setup_status(director: dict) -> dict:
+    """Add setup_status, missing_fields, and required_context to a director dict.
+
+    Computed on read — never stored. If the director was created from a template
+    that defines ``required_context``, we check which required fields are empty
+    in ``context_window`` and flag them.
+    """
+    template_id = director.get("template_id", "")
+    if not template_id:
+        director["setup_status"] = "complete"
+        director["missing_fields"] = []
+        director["required_context"] = []
+        return director
+
+    template = get_director_template(template_id)
+    if not template or "required_context" not in template:
+        director["setup_status"] = "complete"
+        director["missing_fields"] = []
+        director["required_context"] = []
+        return director
+
+    context = director.get("context_window", {})
+    if isinstance(context, str):
+        try:
+            import json as _json
+            context = _json.loads(context)
+        except (ValueError, TypeError):
+            context = {}
+
+    required_fields = template["required_context"]
+    missing = []
+    for field in required_fields:
+        if field.get("required") and not context.get(field["key"]):
+            missing.append(field["key"])
+
+    director["setup_status"] = "needs_setup" if missing else "complete"
+    director["missing_fields"] = missing
+    director["required_context"] = required_fields
+    return director
+
+
 # ---------------------------------------------------------------------------
 # Directors: list + create (no path params)
 # ---------------------------------------------------------------------------
@@ -54,6 +95,7 @@ async def api_list_directors(request: Request, project_id: str = ""):
         user_id=uid,
         project_id=project_id or None,
     )
+    directors = [_compute_setup_status(d) for d in directors]
     return {"directors": directors}
 
 
@@ -82,6 +124,7 @@ async def api_create_director(request: Request):
         can_delegate=body.get("can_delegate", False),
         user_id=uid,
         project_id=body.get("project_id", "default"),
+        template_id=body.get("template_id", ""),
     )
     if director is None:
         return JSONResponse({"error": "Could not create director (duplicate ID or invalid cron)"}, status_code=400)
@@ -155,6 +198,7 @@ async def api_create_project(request: Request):
                         can_delegate=tmpl.get("can_delegate", False),
                         user_id=uid,
                         project_id=project["id"],
+                        template_id=tmpl["id"],
                     )
                     if director:
                         installed_directors.append(director)
@@ -428,6 +472,7 @@ async def api_get_director(request: Request, director_id: str):
     director = get_director(director_id, user_id=uid)
     if not director:
         return JSONResponse({"error": "Not found"}, status_code=404)
+    director = _compute_setup_status(director)
     return {"director": director}
 
 
@@ -537,87 +582,127 @@ async def api_run_project(request: Request, project_id: str):
         })
 
         results = []
-        for director in directors:
-            did = director["id"]
-            try:
-                result_text, error_text, cost = await asyncio.wait_for(
-                    execute_director(
-                        director, trigger="manual",
-                        user_id=uid, project_id=project_id,
-                    ),
-                    timeout=300,
-                )
-                mark_director_run(did, result=result_text, error=error_text, cost=cost)
-                results.append({
-                    "director_id": did, "success": not bool(error_text),
-                })
-                await _ss.notify_user(uid, {
-                    "type": "director_event",
-                    "event": "run_complete",
-                    "director_id": did,
-                    "director_name": director.get("name", ""),
-                    "project_id": project_id,
-                    "success": not bool(error_text),
-                })
-            except asyncio.TimeoutError:
-                mark_director_run(did, error="Execution timed out after 300s")
-                results.append({"director_id": did, "success": False})
-            except Exception as e:
-                mark_director_run(did, error=str(e))
-                results.append({"director_id": did, "success": False})
-
-        # Process any delegated tasks that were created during the run
         try:
-            from directors.task_queue import get_ready_tasks, claim_task, complete_task, fail_task
-            ready_tasks = get_ready_tasks(user_id=uid)
-            for dtask in ready_tasks:
-                assignee_id = dtask.get("assignee_id")
-                if not assignee_id:
-                    continue
-                assignee = get_director(assignee_id, user_id=uid)
-                if not assignee or not assignee.get("enabled"):
-                    continue
-                claimed = claim_task(dtask["id"], assignee_id, uid)
-                if not claimed:
-                    continue
+            for director in directors:
+                did = director["id"]
                 try:
-                    rt, et, c = await asyncio.wait_for(
+                    result_text, error_text, cost = await asyncio.wait_for(
                         execute_director(
-                            assignee, trigger="task", task=dtask,
+                            director, trigger="manual",
                             user_id=uid, project_id=project_id,
                         ),
                         timeout=300,
                     )
-                    if et:
-                        fail_task(dtask["id"], et, uid)
-                    else:
-                        complete_task(dtask["id"], {"result": rt, "cost": c}, uid)
+                    mark_director_run(did, result=result_text, error=error_text, cost=cost)
+                    results.append({
+                        "director_id": did, "success": not bool(error_text),
+                    })
                     await _ss.notify_user(uid, {
                         "type": "director_event",
-                        "event": "task_complete",
-                        "director_id": assignee_id,
-                        "director_name": assignee.get("name", ""),
+                        "event": "run_complete",
+                        "director_id": did,
+                        "director_name": director.get("name", ""),
                         "project_id": project_id,
-                        "task_id": dtask["id"],
-                        "success": not bool(et),
+                        "success": not bool(error_text),
                     })
-                except (asyncio.TimeoutError, Exception):
-                    fail_task(dtask["id"], "Task execution failed", uid)
-        except ImportError:
-            pass
+                except asyncio.CancelledError:
+                    raise
+                except asyncio.TimeoutError:
+                    mark_director_run(did, error="Execution timed out after 300s")
+                    results.append({"director_id": did, "success": False})
+                except Exception as e:
+                    mark_director_run(did, error=str(e))
+                    results.append({"director_id": did, "success": False})
 
-        await _ss.notify_user(uid, {
-            "type": "director_event",
-            "event": "team_run_complete",
-            "project_id": project_id,
-            "project_name": project.get("name", ""),
-            "results": results,
-        })
+            # Process any delegated tasks that were created during the run
+            try:
+                from directors.task_queue import get_ready_tasks, claim_task, complete_task, fail_task
+                ready_tasks = get_ready_tasks(user_id=uid)
+                for dtask in ready_tasks:
+                    assignee_id = dtask.get("assignee_id")
+                    if not assignee_id:
+                        continue
+                    assignee = get_director(assignee_id, user_id=uid)
+                    if not assignee or not assignee.get("enabled"):
+                        continue
+                    claimed = claim_task(dtask["id"], assignee_id, uid)
+                    if not claimed:
+                        continue
+                    try:
+                        rt, et, c = await asyncio.wait_for(
+                            execute_director(
+                                assignee, trigger="task", task=dtask,
+                                user_id=uid, project_id=project_id,
+                            ),
+                            timeout=300,
+                        )
+                        if et:
+                            fail_task(dtask["id"], et, uid)
+                        else:
+                            complete_task(dtask["id"], {"result": rt, "cost": c}, uid)
+                        await _ss.notify_user(uid, {
+                            "type": "director_event",
+                            "event": "task_complete",
+                            "director_id": assignee_id,
+                            "director_name": assignee.get("name", ""),
+                            "project_id": project_id,
+                            "task_id": dtask["id"],
+                            "success": not bool(et),
+                        })
+                    except asyncio.CancelledError:
+                        raise
+                    except (asyncio.TimeoutError, Exception):
+                        fail_task(dtask["id"], "Task execution failed", uid)
+            except asyncio.CancelledError:
+                raise
+            except ImportError:
+                pass
 
-    asyncio.create_task(_run_team())
+            await _ss.notify_user(uid, {
+                "type": "director_event",
+                "event": "team_run_complete",
+                "project_id": project_id,
+                "project_name": project.get("name", ""),
+                "results": results,
+            })
+
+        except asyncio.CancelledError:
+            # Team was force-stopped by user
+            try:
+                await _ss.notify_user(uid, {
+                    "type": "director_event",
+                    "event": "team_run_stopped",
+                    "project_id": project_id,
+                    "project_name": project.get("name", ""),
+                    "results": results,
+                })
+            except Exception:
+                pass
+        finally:
+            _ss.unregister_team_task(uid, project_id)
+
+    import shared_state as _ss_reg
+    task = asyncio.create_task(_run_team())
+    _ss_reg.register_team_task(uid, project_id, task)
 
     return {
         "queued": True,
         "directors": [{"id": d["id"], "name": d["name"]} for d in directors],
         "message": f"Running {len(directors)} directors sequentially",
     }
+
+
+@directors_router.post("/api/directors/projects/{project_id}/stop")
+async def api_stop_project(request: Request, project_id: str):
+    """Force stop a running team execution."""
+    uid, err = _auth(request)
+    if err:
+        return err
+
+    import shared_state as _ss
+    if _ss.cancel_team_task(uid, project_id):
+        return {"stopped": True}
+    return JSONResponse(
+        {"error": "No running team found for this project"},
+        status_code=404,
+    )

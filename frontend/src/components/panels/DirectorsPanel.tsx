@@ -44,9 +44,12 @@ import {
   Users,
   CheckCircle,
   X,
+  Settings,
+  AlertTriangle,
 } from "lucide-react";
 import EmptyState from "@/components/EmptyState";
 import { SkeletonList } from "@/components/Skeleton";
+import DirectorContextEditor from "@/components/panels/DirectorContextEditor";
 
 type Tab = "directors" | "templates" | "tasks" | "activity";
 type TemplateSubTab = "individual" | "teams";
@@ -69,6 +72,7 @@ export default function DirectorsPanel() {
   const [teamTemplates, setTeamTemplates] = useState<TeamTemplate[]>([]);
   const [creatingProjectId, setCreatingProjectId] = useState<string | null>(null);
   const [expandedTeamId, setExpandedTeamId] = useState<string | null>(null);
+  const [editingContextFor, setEditingContextFor] = useState<Director | null>(null);
 
   // Team run state from store (replaces local teamRunning boolean)
   const activeRun = useDirectorRunStore((s) => s.activeRun);
@@ -374,6 +378,7 @@ export default function DirectorsPanel() {
                   onRun={() => handleRun(d.id)}
                   onDelete={() => handleDelete(d.id)}
                   onToggle={() => handleToggleEnabled(d)}
+                  onConfigure={() => setEditingContextFor(d)}
                   t={t}
                 />
               ))}
@@ -573,6 +578,18 @@ export default function DirectorsPanel() {
           )}
         </>
       )}
+
+      {/* Context Editor Modal */}
+      {editingContextFor && (
+        <DirectorContextEditor
+          director={editingContextFor}
+          onClose={() => setEditingContextFor(null)}
+          onSaved={() => {
+            setEditingContextFor(null);
+            loadDirectors();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -587,6 +604,7 @@ interface DirectorCardProps {
   onRun: () => void;
   onDelete: () => void;
   onToggle: () => void;
+  onConfigure: () => void;
   t: (key: string, params?: Record<string, string | number>) => string;
 }
 
@@ -598,9 +616,12 @@ const DirectorCard = React.memo(function DirectorCard({
   onRun,
   onDelete,
   onToggle,
+  onConfigure,
   t,
 }: DirectorCardProps) {
   const [expanded, setExpanded] = useState(false);
+  const needsSetup = d.setup_status === "needs_setup";
+  const hasContext = (d.required_context ?? []).length > 0;
 
   return (
     <div className="rounded-lg bg-surface2/50 hover:bg-surface2 transition-colors overflow-hidden">
@@ -608,9 +629,15 @@ const DirectorCard = React.memo(function DirectorCard({
       <div className="flex items-center gap-3 p-3">
         <span className="text-lg shrink-0">{d.emoji}</span>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-sm font-medium text-text">{d.name}</span>
             <span className={`w-2 h-2 rounded-full shrink-0 ${d.enabled ? "bg-green" : "bg-subtext"}`} />
+            {needsSetup && (
+              <span className="text-xs px-1.5 py-0.5 rounded-full bg-yellow/10 text-yellow flex items-center gap-1">
+                <AlertTriangle size={10} />
+                {t("directors.needsSetup")}
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2 mt-0.5">
             {d.schedule ? (
@@ -634,6 +661,20 @@ const DirectorCard = React.memo(function DirectorCard({
           </div>
         </div>
         <div className="flex items-center gap-1 shrink-0">
+          {/* Configure button — only if director has required_context fields */}
+          {hasContext && (
+            <button
+              onClick={onConfigure}
+              className={`min-w-[32px] min-h-[32px] flex items-center justify-center rounded-lg transition-colors ${
+                needsSetup
+                  ? "text-yellow hover:bg-yellow/10"
+                  : "text-text2 hover:bg-surface2"
+              }`}
+              title={t("directors.configure")}
+            >
+              <Settings size={14} />
+            </button>
+          )}
           {/* Run button */}
           <button
             onClick={onRun}
@@ -663,12 +704,62 @@ const DirectorCard = React.memo(function DirectorCard({
         </div>
       </div>
 
+      {/* Needs setup banner */}
+      {needsSetup && !expanded && (
+        <div className="mx-3 mb-2 px-2.5 py-1.5 rounded-md bg-yellow/5 border border-yellow/20">
+          <p className="text-xs text-yellow">
+            {t("directors.needsSetupHint").replace(
+              "{fields}",
+              (d.missing_fields ?? []).join(", ")
+            )}
+          </p>
+        </div>
+      )}
+
       {/* Expanded details */}
       {expanded && (
         <div className="px-3 pb-3 space-y-2 border-t border-overlay/50 pt-2">
           {d.description && (
             <p className="text-xs text-text2">{d.description}</p>
           )}
+
+          {/* Needs setup banner (expanded) */}
+          {needsSetup && (
+            <div className="flex items-start gap-2 px-2.5 py-2 rounded-md bg-yellow/5 border border-yellow/20">
+              <AlertTriangle size={12} className="text-yellow shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <p className="text-xs text-yellow">
+                  {t("directors.needsSetupHint").replace(
+                    "{fields}",
+                    (d.missing_fields ?? []).join(", ")
+                  )}
+                </p>
+                <button
+                  onClick={onConfigure}
+                  className="text-xs mt-1 px-2 py-0.5 rounded bg-yellow/10 text-yellow hover:bg-yellow/20 transition-colors"
+                >
+                  {t("directors.configure")}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Context summary (when configured) */}
+          {hasContext && !needsSetup && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-green flex items-center gap-1">
+                <CheckCircle size={10} />
+                {t("directors.contextConfigured")}
+              </span>
+              <button
+                onClick={onConfigure}
+                className="text-xs text-text2 hover:text-text transition-colors underline"
+              >
+                {t("directors.configure")}
+              </button>
+            </div>
+          )}
+
           <div className="flex items-center gap-2 flex-wrap">
             {d.can_delegate && (
               <span className="text-xs px-1.5 py-0.5 rounded-full bg-mauve/10 text-mauve">

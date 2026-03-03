@@ -114,6 +114,28 @@ pending_images: dict[str, dict] = {}
 # WebSocket push: map user_id -> list of async send callables for real-time notifications
 _active_user_senders: dict[str, list] = {}
 
+# Running team tasks: { "user_id:project_id": asyncio.Task }
+_running_team_tasks: dict[str, object] = {}
+
+
+def register_team_task(user_id: str, project_id: str, task: object):
+    """Register a running team task for cancellation support."""
+    _running_team_tasks[f"{user_id}:{project_id}"] = task
+
+
+def unregister_team_task(user_id: str, project_id: str):
+    """Remove a team task from the registry."""
+    _running_team_tasks.pop(f"{user_id}:{project_id}", None)
+
+
+def cancel_team_task(user_id: str, project_id: str) -> bool:
+    """Cancel a running team task. Returns True if found and cancelled."""
+    task = _running_team_tasks.get(f"{user_id}:{project_id}")
+    if task and not task.done():
+        task.cancel()
+        return True
+    return False
+
 
 async def notify_user(user_id: str, message: dict):
     """Send a push message to all active WebSocket connections for a user."""

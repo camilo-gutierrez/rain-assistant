@@ -1,7 +1,7 @@
 name: rain_flutter
 description: "Rain Assistant - Flutter Client"
 publish_to: 'none'
-version: 1.0.14+14
+version: 1.0.15+15
 
 environment:
   sdk: ^3.9.2
@@ -41,6 +41,9 @@ dependencies:
 
   # Images
   image_picker: ^1.1.2
+
+  # File picker
+  file_picker: ^8.1.7
 
   # Crash reporting
   sentry_flutter: ^8.12.0

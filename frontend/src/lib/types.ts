@@ -460,6 +460,20 @@ export interface SkillUpdate {
 }
 
 // === Autonomous Directors ===
+
+export interface ContextFieldMeta {
+  key: string;
+  label: string;
+  label_es: string;
+  type: "text" | "textarea" | "tags" | "number" | "select" | "toggle";
+  hint: string;
+  hint_es: string;
+  required: boolean;
+  default: string;
+  options: string[];
+  group: string;
+}
+
 export interface Director {
   id: string;
   name: string;
@@ -481,6 +495,11 @@ export interface Director {
   total_cost: number;
   created_at: number;
   updated_at: number;
+  // Context configuration (computed by API)
+  template_id: string;
+  setup_status: "complete" | "needs_setup";
+  missing_fields: string[];
+  required_context: ContextFieldMeta[];
 }
 
 export interface DirectorTask {
@@ -528,6 +547,7 @@ export interface DirectorTemplate {
   plugins_allowed: string[];
   permission_level: string;
   can_delegate: boolean;
+  required_context?: ContextFieldMeta[];
 }
 
 export interface ActivityItem {
