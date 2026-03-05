@@ -8,7 +8,12 @@ MAX_LINE_LENGTH = 2000
 
 
 def resolve_path(path_str: str, cwd: str) -> Path:
-    """Resolve a path relative to the working directory. Raises ValueError on traversal."""
+    """Resolve a path relative to the working directory. Raises ValueError on traversal.
+
+    Uses Path.is_relative_to() instead of string prefix matching to prevent
+    bypasses like cwd=/tmp/x allowing /tmp/xyz/file.  Symlinks are followed
+    by resolve() so a symlink inside cwd pointing outside is caught.
+    """
     p = Path(path_str)
     if not p.is_absolute():
         p = Path(cwd) / p
@@ -22,7 +27,9 @@ def resolve_path(path_str: str, cwd: str) -> Path:
             raise ValueError(f"Path does not exist: {path_str}")
         resolved = parent_resolved / p.name
     cwd_resolved = Path(cwd).resolve()
-    if not str(resolved).startswith(str(cwd_resolved) + os.sep) and resolved != cwd_resolved:
+    try:
+        resolved.relative_to(cwd_resolved)
+    except ValueError:
         raise ValueError(f"Path traversal blocked: {path_str}")
     return resolved
 

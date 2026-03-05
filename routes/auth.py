@@ -18,6 +18,7 @@ from shared_state import (
     _token_device_map,
     _auth_attempts,
     _oauth_login_process,
+    _hash_token,
     config,
     CONFIG_FILE,
     TOKEN_TTL_SECONDS,
@@ -138,10 +139,7 @@ async def authenticate(request: Request):
         if existing:
             # Revoke old token for this device
             old_hash = existing["token_hash"]
-            old_tokens = [t for t, _ in active_tokens.items()
-                          if hashlib.sha256(t.encode()).hexdigest() == old_hash]
-            for t in old_tokens:
-                active_tokens.pop(t, None)
+            active_tokens.pop(old_hash, None)
             database.revoke_session(old_hash)
             _token_device_map.pop(old_hash, None)
             print(f"  [AUTH] Device {device_id[:8]}... re-authenticated, old token revoked", flush=True)
@@ -163,10 +161,7 @@ async def authenticate(request: Request):
                                 pass
                         revoked_hash = database.revoke_session_by_device_id(replace_id)
                         if revoked_hash:
-                            to_remove = [t for t, _ in active_tokens.items()
-                                         if hashlib.sha256(t.encode()).hexdigest() == revoked_hash]
-                            for t in to_remove:
-                                active_tokens.pop(t, None)
+                            active_tokens.pop(revoked_hash, None)
                             _token_device_map.pop(revoked_hash, None)
                         database.log_security_event(
                             "device_replaced", "warning",
@@ -191,10 +186,10 @@ async def authenticate(request: Request):
                     }, status_code=409)
 
     token = secrets.token_urlsafe(32)
-    active_tokens[token] = time.time() + TOKEN_TTL_SECONDS
+    token_hash = _hash_token(token)
+    active_tokens[token_hash] = time.time() + TOKEN_TTL_SECONDS
 
     # Track session in database (with encrypted token for persistence across restarts)
-    token_hash = hashlib.sha256(token.encode()).hexdigest()
     encrypted_token = database.encrypt_field(token)
     database.create_session(
         token_hash, client_ip, user_agent, device_id, device_name,
@@ -362,10 +357,7 @@ async def revoke_device_with_pin(request: Request):
 
     revoked_hash = database.revoke_session_by_device_id(device_id)
     if revoked_hash:
-        to_remove = [t for t, _ in active_tokens.items()
-                     if hashlib.sha256(t.encode()).hexdigest() == revoked_hash]
-        for t in to_remove:
-            active_tokens.pop(t, None)
+        active_tokens.pop(revoked_hash, None)
         _token_device_map.pop(revoked_hash, None)
 
     database.log_security_event(
@@ -470,8 +462,8 @@ async def logout(request: Request):
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
     client_ip = _get_real_ip(request)
-    active_tokens.pop(token, None)
-    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    token_hash = _hash_token(token)
+    active_tokens.pop(token_hash, None)
     database.revoke_session(token_hash)
     database.log_security_event(
         "token_revoked", "info", client_ip=client_ip,
@@ -538,7 +530,7 @@ async def list_devices(request: Request):
     # Clean expired before listing
     database.cleanup_expired_sessions(TOKEN_TTL_SECONDS)
 
-    current_hash = hashlib.sha256(token.encode()).hexdigest()
+    current_hash = _hash_token(token)
     devices = database.get_active_devices()
     result = []
     for d in devices:
@@ -566,7 +558,7 @@ async def revoke_device(request: Request, device_id: str):
     client_ip = _get_real_ip(request)
 
     # Prevent revoking self
-    current_hash = hashlib.sha256(token.encode()).hexdigest()
+    current_hash = _hash_token(token)
     session = database.get_session_by_device_id(device_id)
     if not session:
         return JSONResponse({"error": "Device not found"}, status_code=404)
@@ -584,10 +576,7 @@ async def revoke_device(request: Request, device_id: str):
     # Then remove from in-memory tokens
     revoked_hash = database.revoke_session_by_device_id(device_id)
     if revoked_hash:
-        to_remove = [t for t, _ in active_tokens.items()
-                     if hashlib.sha256(t.encode()).hexdigest() == revoked_hash]
-        for t in to_remove:
-            active_tokens.pop(t, None)
+        active_tokens.pop(revoked_hash, None)
         _token_device_map.pop(revoked_hash, None)
 
     database.log_security_event(

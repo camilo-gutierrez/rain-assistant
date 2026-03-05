@@ -47,8 +47,13 @@ def _log_plugin_execution(plugin_name: str, exec_type: str, args_keys: list, suc
                 os.chmod(log_file, 0o600)
             except OSError:
                 pass
-    except Exception:
-        pass  # Never let audit logging break plugin execution
+    except Exception as exc:
+        # Don't break plugin execution, but log the failure visibly
+        import sys
+        print(
+            f"  [AUDIT] WARNING: Failed to write plugin audit log: {exc}",
+            file=sys.stderr, flush=True,
+        )
 
 from .schema import Plugin, PluginExecution
 from .loader import get_plugin_env
@@ -75,6 +80,28 @@ _SAFE_ENV_KEYS = {
 _SERVER_DIR = Path(__file__).resolve().parent.parent
 
 
+_BLOCKED_ENV_PATTERNS = {
+    # API keys from any provider — block if a plugin env var name matches
+    "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY",
+    "GOOGLE_API_KEY", "OLLAMA_API_KEY", "HUGGINGFACE_TOKEN",
+    "RAIN_ENCRYPTION_KEY", "RAIN_AUTH_TOKEN",
+    "SECRET_KEY", "PRIVATE_KEY", "DATABASE_URL", "DB_PASSWORD",
+    "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+    "GITHUB_TOKEN", "GITLAB_TOKEN",
+}
+
+# Also block by substring pattern (catches HF_TOKEN, MY_API_KEY, etc.)
+_BLOCKED_ENV_SUBSTRINGS = ("_SECRET", "_TOKEN", "_PASSWORD", "_CREDENTIAL", "API_KEY", "PRIVATE_KEY")
+
+
+def _is_blocked_env_name(name: str) -> bool:
+    """Check if an environment variable name looks like a credential."""
+    upper = name.upper()
+    if upper in _BLOCKED_ENV_PATTERNS:
+        return True
+    return any(sub in upper for sub in _BLOCKED_ENV_SUBSTRINGS)
+
+
 def _build_sandboxed_env(plugin_env: dict[str, str]) -> dict[str, str]:
     """Build a minimal environment dict for subprocess execution.
 
@@ -82,6 +109,9 @@ def _build_sandboxed_env(plugin_env: dict[str, str]) -> dict[str, str]:
     plugin-specific env vars from config.json.  This prevents leaking
     server secrets like ANTHROPIC_API_KEY, OPENAI_API_KEY, database
     credentials, tokens, etc. into plugin subprocesses.
+
+    Plugin env vars whose names match credential patterns are blocked
+    to prevent accidental exposure of secrets through plugins.
     """
     safe = {}
     for key in _SAFE_ENV_KEYS:
@@ -89,8 +119,14 @@ def _build_sandboxed_env(plugin_env: dict[str, str]) -> dict[str, str]:
         if val is not None:
             safe[key] = val
 
-    # Layer plugin-specific env on top
-    safe.update(plugin_env)
+    # Layer plugin-specific env on top, but block credential-like names
+    for key, val in plugin_env.items():
+        if _is_blocked_env_name(key):
+            _audit.warning(
+                "Blocked credential-like env var '%s' from plugin subprocess", key
+            )
+            continue
+        safe[key] = val
     return safe
 
 
@@ -113,7 +149,13 @@ def _get_safe_cwd(requested_cwd: str) -> str:
 
 
 def _get_preexec_fn():
-    """Return a preexec_fn that sets resource limits on Unix, or None on Windows."""
+    """Return a preexec_fn that sets resource limits and creates a new
+    process group on Unix, or None on Windows.
+
+    The new process group (os.setsid) ensures that when we kill the
+    plugin process, all its child processes are also terminated,
+    preventing zombie/orphan processes that outlive the timeout.
+    """
     if sys.platform == "win32":
         return None
 
@@ -125,8 +167,28 @@ def _get_preexec_fn():
         except (ImportError, ValueError, OSError):
             # resource module not available or RLIMIT_AS not supported (macOS)
             pass
+        # Create a new process group so we can kill the entire tree
+        os.setsid()
 
     return _set_limits
+
+
+def _kill_process_tree(proc):
+    """Kill a subprocess and all its children.
+
+    On Unix, kills the entire process group.
+    On Windows, uses taskkill /T to kill the tree.
+    """
+    import signal
+    try:
+        if sys.platform == "win32":
+            # Windows: kill process tree
+            proc.kill()
+        else:
+            # Unix: kill the entire process group
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (ProcessLookupError, OSError):
+        pass  # Process already exited
 
 
 def _resolve_value(key: str, arguments: dict, env: dict) -> str:
@@ -534,7 +596,7 @@ async def _execute_bash(
     try:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=TIMEOUT)
     except asyncio.TimeoutError:
-        proc.kill()
+        _kill_process_tree(proc)
         await proc.wait()
         return {"content": f"Command timed out after {TIMEOUT}s", "is_error": True}
 
@@ -605,7 +667,7 @@ async def _execute_python(
             proc.communicate(input=input_data), timeout=TIMEOUT
         )
     except asyncio.TimeoutError:
-        proc.kill()
+        _kill_process_tree(proc)
         await proc.wait()
         return {"content": f"Script timed out after {TIMEOUT}s", "is_error": True}
 

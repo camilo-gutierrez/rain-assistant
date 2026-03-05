@@ -57,10 +57,14 @@ class RateLimiter:
 
     @staticmethod
     def _token_key(token: str) -> str:
-        """Hash the full token to avoid prefix-collision issues."""
+        """Hash the full token to avoid prefix-collision issues.
+
+        Uses the full SHA-256 hash (64 hex chars) to prevent birthday-attack
+        collisions that were possible with the previous 16-char truncation.
+        """
         if not token:
             return "anon"
-        return hashlib.sha256(token.encode()).hexdigest()[:16]
+        return hashlib.sha256(token.encode()).hexdigest()
 
     def check(self, token: str, category: EndpointCategory) -> RateLimitResult:
         """Check if a request is allowed. If allowed, records it.

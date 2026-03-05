@@ -215,20 +215,28 @@ def ensure_encryption_key(config_path: Path) -> str:
                 pass
             log.info("Encryption key migrated from config.json to OS keyring.")
         else:
-            log.info(
-                "Keyring unavailable -- encryption key stays in config.json."
-            )
+            # Keyring unavailable — migrate to env var requirement.
+            # Remove the plaintext key from config.json and refuse to use it.
             import sys
+            log.warning(
+                "Encryption key found in config.json but keyring is unavailable. "
+                "Migrating: the key will be used THIS SESSION ONLY. "
+                "Set RAIN_ENCRYPTION_KEY env var for future sessions."
+            )
             print(
-                "  \u26a0\ufe0f  WARNING: Encryption key stored in config.json (plaintext fallback).",
+                "  \u26a0\ufe0f  SECURITY: Encryption key found in config.json (insecure).",
                 file=sys.stderr, flush=True,
             )
             print(
-                "  \u26a0\ufe0f  For better security, set RAIN_ENCRYPTION_KEY environment variable",
+                f"  \u26a0\ufe0f  Set RAIN_ENCRYPTION_KEY={existing_key}",
                 file=sys.stderr, flush=True,
             )
             print(
-                "  \u26a0\ufe0f  or install a keyring backend: pip install keyrings.alt",
+                "  \u26a0\ufe0f  Then remove 'encryption_key' from config.json.",
+                file=sys.stderr, flush=True,
+            )
+            print(
+                "  \u26a0\ufe0f  Or install a keyring backend: pip install keyrings.alt",
                 file=sys.stderr, flush=True,
             )
         return existing_key
@@ -239,33 +247,32 @@ def ensure_encryption_key(config_path: Path) -> str:
     if _keyring_set(new_key):
         log.info("New encryption key generated and stored in OS keyring.")
     else:
-        # Fall back: store in config.json
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-        _secure_chmod(config_path.parent, 0o700)
-        cfg["encryption_key"] = new_key
-        try:
-            config_path.write_text(
-                json.dumps(cfg, indent=2), encoding="utf-8"
-            )
-            _secure_chmod(config_path, 0o600)
-        except OSError as exc:
-            log.error("Could not persist new encryption key: %s", exc)
-        log.info(
-            "New encryption key generated and stored in config.json "
-            "(keyring unavailable)."
-        )
+        # No keyring available — require env var, never store plaintext
         import sys
+        log.error(
+            "No keyring backend available and RAIN_ENCRYPTION_KEY not set. "
+            "A temporary key has been generated for this session ONLY."
+        )
         print(
-            "  \u26a0\ufe0f  WARNING: Encryption key stored in config.json (plaintext fallback).",
+            "  \u26a0\ufe0f  SECURITY: No keyring backend and no RAIN_ENCRYPTION_KEY set.",
             file=sys.stderr, flush=True,
         )
         print(
-            "  \u26a0\ufe0f  For better security, set RAIN_ENCRYPTION_KEY environment variable",
+            f"  \u26a0\ufe0f  Generated temporary key (will NOT be persisted):",
             file=sys.stderr, flush=True,
         )
         print(
-            "  \u26a0\ufe0f  or install a keyring backend: pip install keyrings.alt",
+            f"  \u26a0\ufe0f  export RAIN_ENCRYPTION_KEY={new_key}",
             file=sys.stderr, flush=True,
         )
+        print(
+            "  \u26a0\ufe0f  Add this to your shell profile or .env file for persistence.",
+            file=sys.stderr, flush=True,
+        )
+        print(
+            "  \u26a0\ufe0f  Or install a keyring backend: pip install keyrings.alt",
+            file=sys.stderr, flush=True,
+        )
+        # Do NOT write the key to config.json — that defeats encryption.
 
     return new_key

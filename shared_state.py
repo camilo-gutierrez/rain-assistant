@@ -75,8 +75,14 @@ MAX_ENTRIES = 200
 # Mutable shared state (populated by server.py at startup)
 # ---------------------------------------------------------------------------
 
-# Token storage: { token_string: expiry_timestamp }
+# Token storage: { token_sha256_hash: expiry_timestamp }
+# Tokens are hashed before storage to prevent plaintext exposure in memory dumps.
 active_tokens: dict[str, float] = {}
+
+
+def _hash_token(token: str) -> str:
+    """Hash a token using SHA-256 for secure in-memory storage."""
+    return hashlib.sha256(token.encode()).hexdigest()
 
 # Map device_id -> WebSocket for active connections (for remote revocation)
 _active_ws_by_device: dict = {}
@@ -207,12 +213,19 @@ def _secure_chmod(path: Path, mode: int) -> None:
 
 
 def verify_token(token: str | None) -> bool:
-    """Check if a token exists and has not expired."""
-    if token is None or token not in active_tokens:
+    """Check if a token exists and has not expired.
+
+    Tokens are stored hashed in active_tokens to prevent plaintext
+    exposure in memory dumps.
+    """
+    if token is None:
         return False
-    expiry = active_tokens[token]
+    token_hash = _hash_token(token)
+    if token_hash not in active_tokens:
+        return False
+    expiry = active_tokens[token_hash]
     if time.time() > expiry:
-        active_tokens.pop(token, None)
+        active_tokens.pop(token_hash, None)
         return False
     return True
 

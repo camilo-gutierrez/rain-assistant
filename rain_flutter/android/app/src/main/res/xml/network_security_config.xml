@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Network Security Configuration for Rain Assistant.
+
+  - HTTPS enforced for all domains by default.
+  - Cleartext (HTTP) only allowed for localhost/LAN development.
+  - Users connecting to local servers (192.168.x.x, 10.x.x.x) need
+    cleartext because self-hosted servers rarely have TLS certificates.
+-->
+<network-security-config>
+    <!-- Default: block cleartext traffic -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <!-- Allow cleartext for local development and self-hosted servers -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">10.0.2.2</domain>
+        <!-- Common LAN ranges for self-hosted servers -->
+        <domain includeSubdomains="true">192.168.0.0</domain>
+        <domain includeSubdomains="true">10.0.0.0</domain>
+    </domain-config>
+</network-security-config>

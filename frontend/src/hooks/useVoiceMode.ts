@@ -27,10 +27,16 @@ interface VoiceModeState {
   partialTranscription: string;
   lastTranscription: string;
   wakeWordConfidence: number;
+  isMuted: boolean;
+  callDurationSeconds: number;
+  audioLevel: number;
   setVoiceState: (s: VoiceState) => void;
   setPartialTranscription: (t: string) => void;
   setLastTranscription: (t: string) => void;
   setWakeWordConfidence: (c: number) => void;
+  setIsMuted: (m: boolean) => void;
+  setCallDurationSeconds: (s: number) => void;
+  setAudioLevel: (l: number) => void;
   reset: () => void;
 }
 
@@ -39,16 +45,25 @@ export const useVoiceModeStore = create<VoiceModeState>()((set) => ({
   partialTranscription: "",
   lastTranscription: "",
   wakeWordConfidence: 0,
+  isMuted: false,
+  callDurationSeconds: 0,
+  audioLevel: 0,
   setVoiceState: (voiceState) => set({ voiceState }),
   setPartialTranscription: (partialTranscription) => set({ partialTranscription }),
   setLastTranscription: (lastTranscription) => set({ lastTranscription }),
   setWakeWordConfidence: (wakeWordConfidence) => set({ wakeWordConfidence }),
+  setIsMuted: (isMuted) => set({ isMuted }),
+  setCallDurationSeconds: (callDurationSeconds) => set({ callDurationSeconds }),
+  setAudioLevel: (audioLevel) => set({ audioLevel }),
   reset: () =>
     set({
       voiceState: "idle",
       partialTranscription: "",
       lastTranscription: "",
       wakeWordConfidence: 0,
+      isMuted: false,
+      callDurationSeconds: 0,
+      audioLevel: 0,
     }),
 }));
 
@@ -69,6 +84,8 @@ export function useVoiceMode() {
   const workletNodeRef = useRef<AudioWorkletNode | ScriptProcessorNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const activeRef = useRef(false);
+  const isMutedRef = useRef(false);
+  const durationTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const send = useConnectionStore((s) => s.send);
   const voiceMode = useSettingsStore((s) => s.voiceMode);
@@ -109,6 +126,15 @@ export function useVoiceMode() {
 
         const input = e.inputBuffer.getChannelData(0);
 
+        // Compute RMS audio level (0.0 - 1.0)
+        let sumSquares = 0;
+        for (let j = 0; j < input.length; j++) {
+          sumSquares += input[j] * input[j];
+        }
+        const rms = Math.sqrt(sumSquares / input.length);
+        const level = Math.min(1.0, rms * 4);
+        useVoiceModeStore.getState().setAudioLevel(level);
+
         // Append to accumulator
         const combined = new Float32Array(accumulator.length + input.length);
         combined.set(accumulator);
@@ -130,7 +156,10 @@ export function useVoiceMode() {
           const bytes = new Uint8Array(pcm16.buffer);
           const base64 = btoa(String.fromCharCode(...bytes));
 
-          send({ type: "audio_chunk", data: base64, agent_id: agentId });
+          // Only send when not muted
+          if (!isMutedRef.current) {
+            send({ type: "audio_chunk", data: base64, agent_id: agentId });
+          }
         }
       };
 
@@ -147,6 +176,12 @@ export function useVoiceMode() {
 
   const stopCapture = useCallback(() => {
     activeRef.current = false;
+    isMutedRef.current = false;
+
+    if (durationTimerRef.current) {
+      clearInterval(durationTimerRef.current);
+      durationTimerRef.current = null;
+    }
 
     if (workletNodeRef.current) {
       workletNodeRef.current.disconnect();
@@ -162,6 +197,14 @@ export function useVoiceMode() {
     }
 
     useVoiceModeStore.getState().reset();
+  }, []);
+
+  // ── Toggle mute ──
+
+  const toggleMute = useCallback(() => {
+    const newMuted = !isMutedRef.current;
+    isMutedRef.current = newMuted;
+    useVoiceModeStore.getState().setIsMuted(newMuted);
   }, []);
 
   // ── Activate voice mode for current agent ──
@@ -185,6 +228,13 @@ export function useVoiceMode() {
       const initialState: VoiceState =
         voiceMode === "wake-word" ? "wake_listening" : "listening";
       useVoiceModeStore.getState().setVoiceState(initialState);
+
+      // Start call duration timer
+      useVoiceModeStore.getState().setCallDurationSeconds(0);
+      durationTimerRef.current = setInterval(() => {
+        const store = useVoiceModeStore.getState();
+        store.setCallDurationSeconds(store.callDurationSeconds + 1);
+      }, 1000);
     },
     [voiceMode, vadSensitivity, silenceTimeout, send, startCapture]
   );
@@ -292,6 +342,10 @@ export function useVoiceMode() {
   // ── Cleanup on unmount ──
   useEffect(() => {
     return () => {
+      if (durationTimerRef.current) {
+        clearInterval(durationTimerRef.current);
+        durationTimerRef.current = null;
+      }
       stopCapture();
     };
   }, [stopCapture]);
@@ -301,6 +355,7 @@ export function useVoiceMode() {
     deactivate,
     stopCapture,
     interrupt,
+    toggleMute,
     isActive: activeRef.current,
   };
 }

@@ -1,18 +1,20 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
-import type { ComputerScreenshotMessage } from "@/lib/types";
+import { useState, useRef, useCallback, useMemo } from "react";
+import type { ComputerScreenshotMessage, AnyMessage } from "@/lib/types";
 import { useTranslation } from "@/hooks/useTranslation";
 
 interface Props {
   readonly message: ComputerScreenshotMessage;
+  readonly messages?: AnyMessage[];
   readonly interactive?: boolean;
   readonly onClickHint?: (x: number, y: number) => void;
 }
 
-export default function ScreenshotViewer({ message, interactive, onClickHint }: Props) {
+export default function ScreenshotViewer({ message, messages, interactive, onClickHint }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [zoom, setZoom] = useState(1);
+  const [showDiff, setShowDiff] = useState(false);
   const [clickMarkers, setClickMarkers] = useState<{ x: number; y: number; id: number }[]>([]);
   const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null);
   const imgRef = useRef<HTMLImageElement>(null);
@@ -21,6 +23,22 @@ export default function ScreenshotViewer({ message, interactive, onClickHint }: 
 
   const mediaType = message.mediaType || "image/png";
   const isUnchanged = message.changed === false;
+
+  // Find the previous screenshot in messages for diff overlay
+  const previousScreenshot = useMemo(() => {
+    if (!messages) return null;
+    const thisIndex = messages.findIndex((m) => m.id === message.id);
+    if (thisIndex <= 0) return null;
+    // Search backwards for the most recent computer_screenshot before this one
+    for (let i = thisIndex - 1; i >= 0; i--) {
+      if (messages[i].type === "computer_screenshot") {
+        return messages[i] as ComputerScreenshotMessage;
+      }
+    }
+    return null;
+  }, [messages, message.id]);
+
+  const hasPreviousScreenshot = previousScreenshot !== null;
 
   const handleImageClick = useCallback(
     (e: React.MouseEvent) => {
@@ -60,6 +78,20 @@ export default function ScreenshotViewer({ message, interactive, onClickHint }: 
     setCursor(null);
   }, []);
 
+  // Diff overlay element (shared between interactive and non-interactive modes)
+  const diffOverlay = showDiff && previousScreenshot ? (
+    <img
+      src={`data:${previousScreenshot.mediaType || "image/png"};base64,${previousScreenshot.image}`}
+      alt={t("cu.diffOverlay")}
+      className="absolute inset-0 w-full h-full rounded-lg pointer-events-none"
+      style={{
+        mixBlendMode: "difference",
+        opacity: 0.7,
+        ...(zoom > 1 ? { transform: `scale(${zoom})`, transformOrigin: "top left" } : {}),
+      }}
+    />
+  ) : null;
+
   return (
     <div className="flex flex-col gap-1 my-1 animate-fade-in">
       <div className="flex items-center gap-2 text-xs text-subtext">
@@ -73,6 +105,18 @@ export default function ScreenshotViewer({ message, interactive, onClickHint }: 
           <span className="px-2 py-0.5 rounded-full bg-surface2 text-subtext text-xs">
             {t("cu.screenshotUnchanged")}
           </span>
+        )}
+        {hasPreviousScreenshot && (
+          <button
+            onClick={() => setShowDiff((d) => !d)}
+            className={`px-2 py-0.5 rounded-full text-xs font-medium focus-ring transition-colors ${
+              showDiff
+                ? "bg-primary/20 text-primary border border-primary/30"
+                : "bg-surface2 text-subtext hover:text-text"
+            }`}
+          >
+            {t("cu.diffToggle")}
+          </button>
         )}
         {interactive && (
           <div className="flex items-center gap-1 ml-auto">
@@ -110,6 +154,7 @@ export default function ScreenshotViewer({ message, interactive, onClickHint }: 
             className="rounded-lg border border-overlay transition-all hover:border-primary/40 max-w-full"
             style={zoom > 1 ? { transform: `scale(${zoom})`, transformOrigin: "top left" } : undefined}
           />
+          {diffOverlay}
           {cursor && (
             <>
               <div
@@ -135,7 +180,7 @@ export default function ScreenshotViewer({ message, interactive, onClickHint }: 
       ) : (
         <button
           type="button"
-          className="inline-block border-0 bg-transparent p-0"
+          className="relative inline-block border-0 bg-transparent p-0"
           onClick={() => setExpanded(!expanded)}
         >
           <img
@@ -146,6 +191,7 @@ export default function ScreenshotViewer({ message, interactive, onClickHint }: 
               expanded ? "max-w-full" : "max-w-sm"
             }`}
           />
+          {diffOverlay}
         </button>
       )}
     </div>

@@ -24,6 +24,24 @@ import {
 import EmptyState from "@/components/EmptyState";
 import { SkeletonList } from "@/components/Skeleton";
 import ReactMarkdown from "react-markdown";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
+
+const sanitizeSchema = {
+  ...defaultSchema,
+  attributes: {
+    ...defaultSchema.attributes,
+    code: [...(defaultSchema.attributes?.code || []), 'className'],
+    span: [...(defaultSchema.attributes?.span || []), 'className'],
+  },
+  protocols: {
+    ...defaultSchema.protocols,
+    href: ['http', 'https', 'mailto'],
+    src: ['http', 'https'],
+  },
+  tagNames: (defaultSchema.tagNames || []).filter(
+    (tag: string) => !['script', 'iframe', 'object', 'embed', 'form', 'input', 'textarea', 'select', 'button'].includes(tag)
+  ),
+};
 
 type Filter = "all" | "unread";
 
@@ -229,7 +247,7 @@ const InboxCard = React.memo(function InboxCard({
         <div className="px-3 pb-3 space-y-3 border-t border-overlay/50 pt-3">
           {/* Markdown content */}
           <div className="prose prose-sm max-w-none text-text prose-headings:text-text prose-p:text-text2 prose-code:text-primary prose-a:text-blue prose-pre:bg-surface2 prose-pre:text-text overflow-x-auto">
-            <ReactMarkdown>{item.content}</ReactMarkdown>
+            <ReactMarkdown rehypePlugins={[[rehypeSanitize, sanitizeSchema]]}>{item.content}</ReactMarkdown>
           </div>
 
           {/* Metadata */}

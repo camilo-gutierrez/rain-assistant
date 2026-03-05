@@ -202,92 +202,12 @@ class _DirectorDetailScreenState extends ConsumerState<DirectorDetailScreen> {
           // ── Context configuration ──
           if (d.requiredContext.isNotEmpty ||
               d.contextWindow.isNotEmpty) ...[
-            Row(
-              children: [
-                Expanded(
-                  child: Text(L10n.t('directors.contextConfig', lang),
-                      style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 14,
-                          color: cs.onSurface)),
-                ),
-                SizedBox(
-                  height: 32,
-                  child: FilledButton.tonalIcon(
-                    onPressed: () => showContextEditorSheet(context, d),
-                    icon: const Icon(Icons.tune, size: 16),
-                    label: Text(L10n.t('directors.configure', lang),
-                        style: const TextStyle(fontSize: 12)),
-                  ),
-                ),
-              ],
+            _ContextConfigSection(
+              director: d,
+              lang: lang,
+              cs: cs,
+              onConfigure: () => showContextEditorSheet(context, d),
             ),
-            const SizedBox(height: 8),
-            if (d.needsSetup)
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                margin: const EdgeInsets.only(bottom: 8),
-                decoration: BoxDecoration(
-                  color: Colors.amber.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                      color: Colors.amber.withValues(alpha: 0.3)),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.warning_amber_rounded,
-                        color: Colors.amber.shade700, size: 20),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        L10n.t('directors.needsSetupHint', lang,
-                            {'fields': d.missingFields.join(', ')}),
-                        style: TextStyle(
-                            fontSize: 13, color: Colors.amber.shade700),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            // Show configured context keys
-            if (d.contextWindow.isNotEmpty)
-              ...d.contextWindow.entries.map((e) => Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Icon(
-                          d.missingFields.contains(e.key)
-                              ? Icons.radio_button_unchecked
-                              : Icons.check_circle_outline,
-                          size: 14,
-                          color: d.missingFields.contains(e.key)
-                              ? Colors.amber.shade700
-                              : Colors.green,
-                        ),
-                        const SizedBox(width: 8),
-                        Text(e.key,
-                            style: TextStyle(
-                                fontWeight: FontWeight.w500,
-                                fontSize: 13,
-                                color: cs.onSurface)),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            e.value.toString().length > 60
-                                ? '${e.value.toString().substring(0, 60)}...'
-                                : e.value.toString(),
-                            style: TextStyle(
-                                fontSize: 12,
-                                color: cs.onSurfaceVariant),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
-                  )),
             const SizedBox(height: 20),
           ],
 
@@ -417,18 +337,33 @@ class _DirectorDetailScreenState extends ConsumerState<DirectorDetailScreen> {
             children: [
               if (d.enabled)
                 Expanded(
-                  child: FilledButton.icon(
-                    onPressed: s.runningIds.contains(d.id)
-                        ? null
-                        : () => _runNow(d),
-                    icon: s.runningIds.contains(d.id)
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child:
-                                CircularProgressIndicator(strokeWidth: 2))
-                        : const Icon(Icons.play_arrow),
-                    label: Text(L10n.t('directors.runNow', lang)),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      FilledButton.icon(
+                        onPressed: s.runningIds.contains(d.id) || d.needsSetup
+                            ? null
+                            : () => _runNow(d),
+                        icon: s.runningIds.contains(d.id)
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2))
+                            : const Icon(Icons.play_arrow),
+                        label: Text(L10n.t('directors.runNow', lang)),
+                      ),
+                      if (d.needsSetup)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(
+                            L10n.t('directors.runBlocked', lang),
+                            style: TextStyle(
+                                fontSize: 11, color: cs.onSurfaceVariant),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                    ],
                   ),
                 ),
               if (d.enabled) const SizedBox(width: 12),
@@ -519,6 +454,396 @@ class _StatTile extends StatelessWidget {
         Text(label,
             style: TextStyle(fontSize: 13, color: cs.onSurfaceVariant)),
       ],
+    );
+  }
+}
+
+// ── Context configuration section ──
+// Shows a clear setup wizard when fields are missing, or a summary when complete.
+
+class _ContextConfigSection extends StatelessWidget {
+  final Director director;
+  final String lang;
+  final ColorScheme cs;
+  final VoidCallback onConfigure;
+
+  const _ContextConfigSection({
+    required this.director,
+    required this.lang,
+    required this.cs,
+    required this.onConfigure,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final d = director;
+
+    // Separate required user-editable fields from runtime fields
+    final requiredFields = d.requiredContext
+        .where((f) => f.required && !f.readOnly && !f.autoManaged)
+        .toList();
+    final optionalFields = d.requiredContext
+        .where((f) => !f.required && !f.readOnly && !f.autoManaged)
+        .toList();
+
+    final filledRequired = requiredFields
+        .where((f) => !d.missingFields.contains(f.key))
+        .length;
+    final totalRequired = requiredFields.length;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Header row
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                L10n.t('directors.contextConfig', lang),
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 14,
+                  color: cs.onSurface,
+                ),
+              ),
+            ),
+            SizedBox(
+              height: 32,
+              child: FilledButton.tonalIcon(
+                onPressed: onConfigure,
+                icon: const Icon(Icons.tune, size: 16),
+                label: Text(
+                  L10n.t('directors.configure', lang),
+                  style: const TextStyle(fontSize: 12),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+
+        // Setup status card
+        if (d.needsSetup)
+          _SetupRequiredCard(
+            requiredFields: requiredFields,
+            missingFields: d.missingFields,
+            filledRequired: filledRequired,
+            totalRequired: totalRequired,
+            lang: lang,
+            cs: cs,
+            onConfigure: onConfigure,
+            contextWindow: d.contextWindow,
+          )
+        else
+          _SetupCompleteCard(
+            requiredFields: requiredFields,
+            optionalFields: optionalFields,
+            lang: lang,
+            cs: cs,
+            contextWindow: d.contextWindow,
+          ),
+      ],
+    );
+  }
+}
+
+class _SetupRequiredCard extends StatelessWidget {
+  final List<ContextFieldMeta> requiredFields;
+  final List<String> missingFields;
+  final int filledRequired;
+  final int totalRequired;
+  final String lang;
+  final ColorScheme cs;
+  final VoidCallback onConfigure;
+  final Map<String, dynamic> contextWindow;
+
+  const _SetupRequiredCard({
+    required this.requiredFields,
+    required this.missingFields,
+    required this.filledRequired,
+    required this.totalRequired,
+    required this.lang,
+    required this.cs,
+    required this.onConfigure,
+    required this.contextWindow,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final progress = totalRequired > 0 ? filledRequired / totalRequired : 0.0;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.amber.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.amber.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Title row with icon
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.amber.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(Icons.checklist_rounded,
+                    color: Colors.amber.shade700, size: 20),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      L10n.t('directors.setupRequired', lang),
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 15,
+                        color: Colors.amber.shade700,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      L10n.t('directors.setupProgress', lang, {
+                        'done': '$filledRequired',
+                        'total': '$totalRequired',
+                      }),
+                      style: TextStyle(
+                          fontSize: 12, color: cs.onSurfaceVariant),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          // Progress bar
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: progress,
+              backgroundColor: cs.surfaceContainerHighest,
+              color: Colors.amber.shade700,
+              minHeight: 6,
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Checklist of required fields
+          ...requiredFields.map((field) {
+            final isMissing = missingFields.contains(field.key);
+            final label = field.localizedLabel(lang);
+            final hint = field.localizedHint(lang);
+            final hasFile = field.allowFileAttach;
+
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(top: 1),
+                    child: Icon(
+                      isMissing
+                          ? Icons.radio_button_unchecked
+                          : Icons.check_circle,
+                      size: 18,
+                      color: isMissing
+                          ? Colors.amber.shade700
+                          : Colors.green.shade600,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                label,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w500,
+                                  fontSize: 13,
+                                  color: isMissing
+                                      ? cs.onSurface
+                                      : cs.onSurfaceVariant,
+                                  decoration: isMissing
+                                      ? null
+                                      : TextDecoration.lineThrough,
+                                ),
+                              ),
+                            ),
+                            if (hasFile) ...[
+                              const SizedBox(width: 6),
+                              Icon(Icons.attach_file,
+                                  size: 14, color: cs.primary),
+                            ],
+                          ],
+                        ),
+                        if (isMissing && hint.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Text(
+                              hint,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: cs.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                        if (!isMissing)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Text(
+                              _getPreview(field),
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.green.shade600,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+
+          const SizedBox(height: 8),
+
+          // CTA button
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: onConfigure,
+              icon: const Icon(Icons.edit_outlined, size: 18),
+              label: Text(L10n.t('directors.completeSetup', lang)),
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.amber.shade700,
+                foregroundColor: Colors.white,
+                minimumSize: const Size.fromHeight(44),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _getPreview(ContextFieldMeta field) {
+    final val = contextWindow[field.key];
+    if (val == null) return '';
+    final s = val.toString();
+    return s.length > 50 ? '${s.substring(0, 50)}...' : s;
+  }
+}
+
+class _SetupCompleteCard extends StatelessWidget {
+  final List<ContextFieldMeta> requiredFields;
+  final List<ContextFieldMeta> optionalFields;
+  final String lang;
+  final ColorScheme cs;
+  final Map<String, dynamic> contextWindow;
+
+  const _SetupCompleteCard({
+    required this.requiredFields,
+    required this.optionalFields,
+    required this.lang,
+    required this.cs,
+    required this.contextWindow,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final configuredOptional = optionalFields
+        .where((f) {
+          final val = contextWindow[f.key];
+          return val != null &&
+              val.toString().isNotEmpty &&
+              val.toString() != '[]';
+        })
+        .length;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.green.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.green.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.check_circle,
+                  color: Colors.green.shade600, size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  L10n.t('directors.setupComplete', lang),
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                    color: Colors.green.shade600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '${requiredFields.length} ${L10n.t('directors.requiredFields', lang).toLowerCase()}'
+            '${optionalFields.isNotEmpty ? ' · $configuredOptional/${optionalFields.length} ${L10n.t('directors.optionalFields', lang).toLowerCase()}' : ''}',
+            style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
+          ),
+          // Show configured required fields as compact chips
+          if (requiredFields.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: requiredFields.map((f) {
+                final label = f.localizedLabel(lang);
+                return Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: cs.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.check, size: 12, color: Colors.green.shade600),
+                      const SizedBox(width: 4),
+                      Text(label,
+                          style:
+                              TextStyle(fontSize: 11, color: cs.onSurfaceVariant)),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }

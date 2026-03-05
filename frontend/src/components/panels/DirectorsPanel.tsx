@@ -46,7 +46,16 @@ import {
   X,
   Settings,
   AlertTriangle,
+  ArrowLeft,
+  FileText,
+  Mail,
+  Code,
+  Bell,
+  BarChart3,
+  Shield,
 } from "lucide-react";
+import type { InboxItem } from "@/lib/types";
+import { fetchInbox } from "@/lib/api";
 import EmptyState from "@/components/EmptyState";
 import { SkeletonList } from "@/components/Skeleton";
 import DirectorContextEditor from "@/components/panels/DirectorContextEditor";
@@ -73,6 +82,7 @@ export default function DirectorsPanel() {
   const [creatingProjectId, setCreatingProjectId] = useState<string | null>(null);
   const [expandedTeamId, setExpandedTeamId] = useState<string | null>(null);
   const [editingContextFor, setEditingContextFor] = useState<Director | null>(null);
+  const [selectedDirector, setSelectedDirector] = useState<Director | null>(null);
 
   // Team run state from store (replaces local teamRunning boolean)
   const activeRun = useDirectorRunStore((s) => s.activeRun);
@@ -293,6 +303,37 @@ export default function DirectorsPanel() {
 
   const activeProject = projects.find((p) => p.id === activeProjectId);
 
+  // If a director is selected, show detail view
+  if (selectedDirector) {
+    // Refresh director data from the list (in case it was updated)
+    const freshDirector = directors.find((d) => d.id === selectedDirector.id) || selectedDirector;
+    return (
+      <div className="p-4 space-y-4">
+        <DirectorDetailView
+          director={freshDirector}
+          authToken={authToken}
+          onBack={() => setSelectedDirector(null)}
+          onRun={() => handleRun(freshDirector.id)}
+          onConfigure={() => setEditingContextFor(freshDirector)}
+          onDelete={() => handleDelete(freshDirector.id)}
+          isRunning={runningId === freshDirector.id}
+          isConfirmDelete={confirmDeleteId === freshDirector.id}
+          t={t}
+        />
+        {editingContextFor && (
+          <DirectorContextEditor
+            director={editingContextFor}
+            onClose={() => setEditingContextFor(null)}
+            onSaved={() => {
+              setEditingContextFor(null);
+              loadDirectors();
+            }}
+          />
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="p-4 space-y-4">
       {/* Project Switcher */}
@@ -379,6 +420,7 @@ export default function DirectorsPanel() {
                   onDelete={() => handleDelete(d.id)}
                   onToggle={() => handleToggleEnabled(d)}
                   onConfigure={() => setEditingContextFor(d)}
+                  onSelect={() => setSelectedDirector(d)}
                   t={t}
                 />
               ))}
@@ -605,6 +647,7 @@ interface DirectorCardProps {
   onDelete: () => void;
   onToggle: () => void;
   onConfigure: () => void;
+  onSelect: () => void;
   t: (key: string, params?: Record<string, string | number>) => string;
 }
 
@@ -617,6 +660,7 @@ const DirectorCard = React.memo(function DirectorCard({
   onDelete,
   onToggle,
   onConfigure,
+  onSelect,
   t,
 }: DirectorCardProps) {
   const [expanded, setExpanded] = useState(false);
@@ -627,6 +671,11 @@ const DirectorCard = React.memo(function DirectorCard({
     <div className="rounded-lg bg-surface2/50 hover:bg-surface2 transition-colors overflow-hidden">
       {/* Main row */}
       <div className="flex items-center gap-3 p-3">
+        <button
+          type="button"
+          onClick={onSelect}
+          className="flex items-center gap-3 flex-1 min-w-0 text-left bg-transparent border-0 p-0 cursor-pointer"
+        >
         <span className="text-lg shrink-0">{d.emoji}</span>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 flex-wrap">
@@ -660,6 +709,7 @@ const DirectorCard = React.memo(function DirectorCard({
             )}
           </div>
         </div>
+        </button>
         <div className="flex items-center gap-1 shrink-0">
           {/* Configure button — only if director has required_context fields */}
           {hasContext && (
@@ -981,6 +1031,257 @@ const TeamRunProgress = React.memo(function TeamRunProgress({
           ))}
         </div>
       )}
+    </div>
+  );
+});
+
+// --- DirectorDetailView sub-component ---
+
+const INBOX_TYPE_ICONS: Record<string, typeof FileText> = {
+  report: BarChart3,
+  draft: FileText,
+  analysis: BarChart3,
+  code: Code,
+  notification: Bell,
+};
+
+const INBOX_STATUS_COLORS: Record<string, string> = {
+  unread: "bg-primary",
+  read: "bg-subtext",
+  approved: "bg-green",
+  rejected: "bg-red",
+  archived: "bg-subtext",
+};
+
+interface DirectorDetailViewProps {
+  director: Director;
+  authToken: string | null;
+  onBack: () => void;
+  onRun: () => void;
+  onConfigure: () => void;
+  onDelete: () => void;
+  isRunning: boolean;
+  isConfirmDelete: boolean;
+  t: (key: string, params?: Record<string, string | number>) => string;
+}
+
+const DirectorDetailView = React.memo(function DirectorDetailView({
+  director: d,
+  authToken,
+  onBack,
+  onRun,
+  onConfigure,
+  onDelete,
+  isRunning,
+  isConfirmDelete,
+  t,
+}: DirectorDetailViewProps) {
+  const [inboxItems, setInboxItems] = useState<InboxItem[]>([]);
+  const [loadingInbox, setLoadingInbox] = useState(false);
+
+  // Load related inbox items on mount
+  useEffect(() => {
+    if (!authToken) return;
+    setLoadingInbox(true);
+    fetchInbox(authToken, { director_id: d.id, limit: 5 })
+      .then((data) => setInboxItems(data.items))
+      .catch(() => {})
+      .finally(() => setLoadingInbox(false));
+  }, [authToken, d.id]);
+
+  const needsSetup = d.setup_status === "needs_setup";
+  const hasContext = (d.required_context ?? []).length > 0;
+  const requiredFields = (d.required_context ?? []).filter((f) => f.required);
+  const configuredRequired = requiredFields.filter(
+    (f) => d.context_window[f.key]?.trim(),
+  );
+
+  return (
+    <div className="space-y-4 animate-fade-in">
+      {/* Header */}
+      <div className="flex items-start gap-3">
+        <button
+          onClick={onBack}
+          className="mt-1 p-1.5 rounded-lg text-text2 hover:bg-surface2 transition-colors shrink-0"
+          title={t("directors.detail.back")}
+        >
+          <ArrowLeft size={16} />
+        </button>
+        <span className="text-2xl shrink-0">{d.emoji}</span>
+        <div className="flex-1 min-w-0">
+          <h2 className="text-base font-semibold text-text">{d.name}</h2>
+          {d.description && (
+            <p className="text-xs text-text2 mt-0.5">{d.description}</p>
+          )}
+        </div>
+        <span className={`w-2.5 h-2.5 rounded-full mt-2 shrink-0 ${d.enabled ? "bg-green" : "bg-subtext"}`} />
+      </div>
+
+      {/* Info chips */}
+      <div className="flex items-center gap-2 flex-wrap">
+        {d.schedule ? (
+          <span className="text-xs px-2 py-0.5 rounded-full bg-blue/10 text-blue flex items-center gap-1">
+            <Clock size={10} />
+            {d.schedule}
+          </span>
+        ) : (
+          <span className="text-xs px-2 py-0.5 rounded-full bg-surface2 text-subtext">
+            {t("directors.manual")}
+          </span>
+        )}
+        <span className={`text-xs px-2 py-0.5 rounded-full flex items-center gap-1 ${
+          d.permission_level === "yellow" ? "bg-yellow/10 text-yellow" : "bg-green/10 text-green"
+        }`}>
+          <Shield size={10} />
+          {t("directors.detail.permLevel")}: {d.permission_level}
+        </span>
+        {d.can_delegate && (
+          <span className="text-xs px-2 py-0.5 rounded-full bg-mauve/10 text-mauve">
+            {t("directors.canDelegate")}
+          </span>
+        )}
+        {d.next_run && (
+          <span className="text-xs px-2 py-0.5 rounded-full bg-surface2 text-text2 flex items-center gap-1">
+            <Clock size={10} />
+            {new Date(d.next_run * 1000).toLocaleString()}
+          </span>
+        )}
+      </div>
+
+      {/* Stats row */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="p-3 rounded-lg bg-surface2/50">
+          <span className="text-xs text-subtext block">{t("directors.runs", { count: d.run_count })}</span>
+          <span className="text-lg font-semibold text-text">{d.run_count}</span>
+        </div>
+        <div className="p-3 rounded-lg bg-surface2/50">
+          <span className="text-xs text-subtext block">{t("directors.totalCost")}</span>
+          <span className="text-lg font-semibold text-text">${d.total_cost.toFixed(4)}</span>
+        </div>
+      </div>
+
+      {/* Setup progress (when has context fields) */}
+      {hasContext && (
+        <div className="p-3 rounded-lg bg-surface2/50 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-text flex items-center gap-1.5">
+              <Settings size={12} className="text-text2" />
+              {t("directors.contextEditor")}
+            </span>
+            {requiredFields.length > 0 && (
+              <span className={`text-xs ${needsSetup ? "text-yellow" : "text-green"}`}>
+                {t("directors.detail.setupProgress", {
+                  done: configuredRequired.length,
+                  total: requiredFields.length,
+                })}
+              </span>
+            )}
+          </div>
+          {requiredFields.length > 0 && (
+            <div className="h-1.5 bg-surface2 rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all ${needsSetup ? "bg-yellow" : "bg-green"}`}
+                style={{ width: `${requiredFields.length > 0 ? (configuredRequired.length / requiredFields.length) * 100 : 0}%` }}
+              />
+            </div>
+          )}
+          <button
+            onClick={onConfigure}
+            className="text-xs text-primary hover:underline"
+          >
+            {t("directors.configure")}
+          </button>
+        </div>
+      )}
+
+      {/* Role prompt */}
+      <div className="space-y-1.5">
+        <span className="text-xs font-medium text-text">{t("directors.detail.rolePrompt")}</span>
+        <pre className="text-xs text-text2 bg-surface2/50 rounded-lg p-3 max-h-32 overflow-y-auto whitespace-pre-wrap font-mono">
+          {d.role_prompt || "—"}
+        </pre>
+      </div>
+
+      {/* Last run result */}
+      <div className="space-y-1.5">
+        <span className="text-xs font-medium text-text">{t("directors.detail.lastResult")}</span>
+        {d.last_result ? (
+          <div className="text-xs text-text2 bg-surface2/50 rounded-lg p-3 max-h-40 overflow-y-auto whitespace-pre-wrap">
+            {d.last_run && (
+              <span className="text-xs text-subtext block mb-1">
+                {new Date(d.last_run * 1000).toLocaleString()}
+              </span>
+            )}
+            {d.last_result}
+          </div>
+        ) : (
+          <p className="text-xs text-subtext italic">{t("directors.detail.noResult")}</p>
+        )}
+        {d.last_error && (
+          <p className="text-xs text-red bg-red/5 px-3 py-2 rounded-lg">
+            {t("directors.detail.lastError")}: {d.last_error}
+          </p>
+        )}
+      </div>
+
+      {/* Related inbox items */}
+      <div className="space-y-1.5">
+        <span className="text-xs font-medium text-text">{t("directors.detail.relatedInbox")}</span>
+        {loadingInbox ? (
+          <SkeletonList count={2} height="h-10" />
+        ) : inboxItems.length === 0 ? (
+          <p className="text-xs text-subtext italic py-2">{t("directors.noActivity")}</p>
+        ) : (
+          <div className="space-y-1">
+            {inboxItems.map((item) => {
+              const TypeIcon = INBOX_TYPE_ICONS[item.content_type] || Mail;
+              const statusColor = INBOX_STATUS_COLORS[item.status] || "bg-subtext";
+              return (
+                <div
+                  key={item.id}
+                  className="flex items-center gap-2 px-3 py-2 rounded-lg bg-surface2/50 hover:bg-surface2 transition-colors"
+                >
+                  <TypeIcon size={12} className="text-text2 shrink-0" />
+                  <span className="text-xs text-text flex-1 truncate">{item.title}</span>
+                  <span className={`w-2 h-2 rounded-full shrink-0 ${statusColor}`} />
+                  <span className="text-xs text-subtext shrink-0">
+                    {new Date(item.created_at * 1000).toLocaleDateString()}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Action buttons */}
+      <div className="flex items-center gap-2 pt-2 border-t border-overlay">
+        <button
+          onClick={onRun}
+          disabled={isRunning || needsSetup}
+          className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors text-sm font-medium disabled:opacity-40"
+          title={needsSetup ? t("directors.needsSetup") : t("directors.runNow")}
+        >
+          {isRunning ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+          {t("directors.runNow")}
+        </button>
+        {hasContext && (
+          <button
+            onClick={onConfigure}
+            className="flex items-center justify-center gap-2 py-2 px-4 rounded-lg bg-surface2 text-text2 hover:text-text hover:bg-surface2/80 transition-colors text-sm"
+          >
+            <Settings size={14} />
+            {t("directors.configure")}
+          </button>
+        )}
+        <button
+          onClick={onDelete}
+          className="flex items-center justify-center gap-2 py-2 px-4 rounded-lg text-red hover:bg-red/10 transition-colors text-sm"
+        >
+          <Trash2 size={14} />
+          {isConfirmDelete ? t("directors.deleteConfirm", { name: d.name }) : t("directors.delete")}
+        </button>
+      </div>
     </div>
   );
 });

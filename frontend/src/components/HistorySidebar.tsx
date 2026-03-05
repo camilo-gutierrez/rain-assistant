@@ -74,18 +74,16 @@ export default function HistorySidebar({ mode }: HistorySidebarProps) {
   const content = (
     <>
       {mode === "drawer" && (
-        <div className="flex items-center justify-between px-5 py-4 border-b border-overlay/60">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-overlay/40">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
-              <Clock size={16} className="text-primary" />
-            </div>
-            <h2 className="text-sm font-bold text-text">
+            <Clock size={18} className="text-text2" />
+            <h2 className="text-sm font-semibold text-text">
               {t("history.title")}
             </h2>
           </div>
           <button
             onClick={toggleMobileSidebar}
-            className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl hover:bg-surface2 transition-colors text-text2 hover:text-text focus-ring"
+            className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-[10px] hover:bg-surface2/60 transition-colors text-text2 hover:text-text focus-ring"
             aria-label={t("a11y.close")}
           >
             <X size={18} />
@@ -94,13 +92,12 @@ export default function HistorySidebar({ mode }: HistorySidebarProps) {
       )}
 
       {mode === "inline" && (
-        <div className="flex items-center gap-2 px-4 py-2.5">
-          <Clock size={13} className="text-subtext" />
-          <span className="text-xs font-semibold text-subtext uppercase tracking-widest">
+        <div className="flex items-center gap-2 px-3 py-2">
+          <span className="text-xs font-medium text-subtext uppercase tracking-wide">
             {t("history.title")}
           </span>
           {conversations.length > 0 && (
-            <span className="ml-auto text-xs font-bold text-primary bg-primary/10 px-2 py-0.5 rounded-full">
+            <span className="ml-auto text-xs text-subtext">
               {conversations.length}
             </span>
           )}
@@ -110,7 +107,7 @@ export default function HistorySidebar({ mode }: HistorySidebarProps) {
       <div className="flex-1 overflow-y-auto">
         {isLoading ? (
           <div className="px-3 py-3">
-            <SkeletonList count={3} height="h-16" gap="space-y-2" />
+            <SkeletonList count={3} height="h-14" gap="space-y-1" />
           </div>
         ) : conversations.length === 0 ? (
           <EmptyState
@@ -119,7 +116,7 @@ export default function HistorySidebar({ mode }: HistorySidebarProps) {
             hint={t("sidebar.emptyHint")}
           />
         ) : (
-          <div className="flex flex-col gap-1 px-2 py-2">
+          <div className="flex flex-col gap-0.5 px-2 py-1">
             {conversations.map((conv) => (
               <ConversationEntry
                 key={conv.id}
@@ -139,7 +136,7 @@ export default function HistorySidebar({ mode }: HistorySidebarProps) {
         )}
       </div>
 
-      <div className="px-4 py-2.5 border-t border-overlay/40 text-xs text-subtext text-center font-medium">
+      <div className="px-4 py-2 text-xs text-subtext text-center">
         {t("history.count", { n: conversations.length, max: 5 })}
       </div>
     </>
@@ -188,29 +185,29 @@ function ConversationEntry({
 }) {
   return (
     <div
-      className={`group relative px-3 py-2.5 cursor-pointer rounded-xl transition-all duration-200 ${
+      className={`group relative px-3 py-2 cursor-pointer rounded-[10px] transition-colors duration-150 ${
         isActive
-          ? "bg-primary/10 inner-glow-primary"
-          : "hover:bg-surface2/60"
+          ? "bg-surface2 text-text"
+          : "hover:bg-surface2/50"
       }`}
       onClick={onLoad}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
-          <div className={`text-sm font-semibold truncate leading-tight ${isActive ? "text-primary" : "text-text"}`}>
+          <div className={`text-sm truncate leading-tight ${isActive ? "font-medium text-text" : "text-text"}`}>
             {conv.label}
           </div>
-          <div className="text-xs text-text2 truncate mt-1 leading-tight opacity-80">
+          <div className="text-xs text-subtext truncate mt-0.5 leading-tight">
             {conv.preview || "..."}
           </div>
-          <div className="flex items-center gap-1.5 mt-1.5 text-xs text-subtext">
+          <div className="flex items-center gap-1.5 mt-1 text-xs text-subtext">
             <span>{formatDate(conv.updatedAt)}</span>
-            <span className="text-overlay">|</span>
+            <span className="text-overlay">·</span>
             <span>{conv.messageCount} msgs</span>
             {conv.totalCost > 0 && (
               <>
-                <span className="text-overlay">|</span>
-                <span className="text-green font-medium">${conv.totalCost.toFixed(4)}</span>
+                <span className="text-overlay">·</span>
+                <span className="text-green">${conv.totalCost.toFixed(4)}</span>
               </>
             )}
           </div>
@@ -219,12 +216,12 @@ function ConversationEntry({
           onClick={onDelete}
           className={`shrink-0 p-1.5 rounded-lg text-xs transition-all duration-150 mt-0.5 ${
             isConfirmingDelete
-              ? "text-red bg-red/10 shadow-[inset_0_0_0_1px_rgba(211,47,47,0.2)]"
+              ? "text-red bg-red/10"
               : "text-subtext hover:text-red hover:bg-red/5 opacity-0 group-hover:opacity-100 touch-visible"
           }`}
           title={isConfirmingDelete ? t("history.confirmDelete") : t("history.delete")}
         >
-          <Trash2 size={13} />
+          <Trash2 size={14} />
         </button>
       </div>
     </div>

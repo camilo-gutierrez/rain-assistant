@@ -92,10 +92,9 @@ export default function HomePage() {
       <div className="flex flex-1 overflow-hidden">
         {/* Desktop sidebar */}
         {showSidebar && (
-          <aside className="hidden md:flex w-[280px] shrink-0 flex-col bg-surface border-r border-overlay/30">
+          <aside className="hidden md:flex w-[260px] shrink-0 flex-col bg-bg border-r border-overlay/20">
             <div className="overflow-y-auto flex-1 flex flex-col min-h-0">
               <SidebarNav />
-              <div className="h-px bg-gradient-to-r from-transparent via-overlay/50 to-transparent mx-4 shrink-0" />
               <HistorySidebar mode="inline" />
             </div>
           </aside>

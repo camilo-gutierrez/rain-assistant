@@ -1118,7 +1118,9 @@ class _DirectorCard extends StatelessWidget {
                       SizedBox(
                         height: 30,
                         child: FilledButton.tonalIcon(
-                          onPressed: isRunning ? null : onRun,
+                          onPressed: isRunning || d.needsSetup
+                              ? null
+                              : onRun,
                           icon: isRunning
                               ? const SizedBox(
                                   width: 14,
@@ -1126,7 +1128,10 @@ class _DirectorCard extends StatelessWidget {
                                   child: CircularProgressIndicator(
                                       strokeWidth: 2))
                               : const Icon(Icons.play_arrow, size: 16),
-                          label: Text(L10n.t('directors.runNow', lang),
+                          label: Text(
+                              d.needsSetup
+                                  ? L10n.t('directors.completeSetup', lang)
+                                  : L10n.t('directors.runNow', lang),
                               style: const TextStyle(fontSize: 12)),
                         ),
                       ),

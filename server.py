@@ -69,6 +69,7 @@ from shared_state import (
     _active_ws_by_device,
     _token_device_map,
     _auth_attempts,
+    _hash_token,
     # config is set up as an alias to shared_state.config after load_or_create_config()
     verify_token,
     get_token,
@@ -847,7 +848,7 @@ def _restore_tokens_from_db():
             remaining = TOKEN_TTL_SECONDS - (time.time() - row["last_activity"])
             if remaining <= 0:
                 continue
-            active_tokens[token] = time.time() + remaining
+            active_tokens[_hash_token(token)] = time.time() + remaining
             # Restore device mapping
             if row.get("device_id"):
                 _token_device_map[row["token_hash"]] = row["device_id"]

@@ -53,13 +53,18 @@ class WebSocketService {
     _setStatus(ConnectionStatus.connecting);
     _cleanup();
 
-    final uri = Uri.parse('$_wsUrl?token=${Uri.encodeComponent(_token!)}');
+    // Connect WITHOUT token in URL — tokens in URLs leak to proxy logs,
+    // DNS servers, and stack traces.  Send token as first message instead.
+    final uri = Uri.parse(_wsUrl!);
 
     try {
       _channel = WebSocketChannel.connect(uri);
 
       // Wait for the actual WebSocket handshake to complete
       await _channel!.ready;
+
+      // Authenticate via first message (server supports this as option 3)
+      _channel!.sink.add(jsonEncode({'type': 'auth', 'token': _token}));
 
       _subscription = _channel!.stream.listen(
         _onMessage,
@@ -81,7 +86,8 @@ class WebSocketService {
         category: 'connection',
       );
     } catch (e, stack) {
-      print('[WS] Connection failed: $e');
+      // Do NOT log the full exception — it may contain the server URL or token.
+      // Only log a generic message; details go to crash reporting.
       CrashReportingService.instance.captureException(
         e,
         stackTrace: stack,

@@ -5,46 +5,23 @@ import { getWsUrl } from "@/lib/constants";
 const TOKEN_STORAGE_KEY = 'rain_session_token';
 
 /**
- * Simple XOR obfuscation for tokens in sessionStorage.
- * NOT cryptographic — prevents casual inspection only.
- * Acceptable because: tokens are ephemeral (session-only),
- * transmitted over WSS, and expire server-side (24h TTL).
+ * Token storage in sessionStorage (plaintext).
+ *
+ * Security context: tokens are ephemeral (session-only, cleared on tab close),
+ * transmitted over WSS/HTTPS, and expire server-side (24h TTL).
+ * sessionStorage is not accessible cross-origin and is cleared automatically.
+ * Previous XOR "obfuscation" was removed as it provided false security
+ * (key was hardcoded in source, trivially reversible).
  */
-function obfuscateToken(token: string): string {
-  const key = 'rain_obfuscation_key_2026';
-  let result = '';
-  for (let i = 0; i < token.length; i++) {
-    result += String.fromCharCode(token.charCodeAt(i) ^ key.charCodeAt(i % key.length));
-  }
-  return btoa(result);
-}
-
-function deobfuscateToken(obfuscated: string): string {
-  const key = 'rain_obfuscation_key_2026';
-  const decoded = atob(obfuscated);
-  let result = '';
-  for (let i = 0; i < decoded.length; i++) {
-    result += String.fromCharCode(decoded.charCodeAt(i) ^ key.charCodeAt(i % key.length));
-  }
-  return result;
-}
-
 function readStoredToken(): string | null {
   if (typeof window === 'undefined') return null;
-  // Try new obfuscated key first
-  const obfuscated = sessionStorage.getItem(TOKEN_STORAGE_KEY);
-  if (obfuscated) {
-    try {
-      return deobfuscateToken(obfuscated);
-    } catch {
-      return obfuscated; // backward compat: old plain token
-    }
-  }
-  // Backward compat: check old key and migrate
+  const token = sessionStorage.getItem(TOKEN_STORAGE_KEY);
+  if (token) return token;
+  // Backward compat: check old key
   const old = sessionStorage.getItem('rain-token');
   if (old) {
     sessionStorage.removeItem('rain-token');
-    sessionStorage.setItem(TOKEN_STORAGE_KEY, obfuscateToken(old));
+    sessionStorage.setItem(TOKEN_STORAGE_KEY, old);
     return old;
   }
   return null;
@@ -85,11 +62,10 @@ export const useConnectionStore = create<ConnectionState>()((set, get) => ({
 
   setAuthToken: (token) => {
     if (token) {
-      sessionStorage.setItem(TOKEN_STORAGE_KEY, obfuscateToken(token));
+      sessionStorage.setItem(TOKEN_STORAGE_KEY, token);
     } else {
       sessionStorage.removeItem(TOKEN_STORAGE_KEY);
     }
-    // Clean up old key if present
     sessionStorage.removeItem("rain-token");
     set({ authToken: token });
   },

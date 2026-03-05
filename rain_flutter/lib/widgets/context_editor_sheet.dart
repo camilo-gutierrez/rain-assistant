@@ -178,17 +178,27 @@ class _ContextEditorSheetState extends ConsumerState<_ContextEditorSheet> {
     final lang = ref.watch(settingsProvider).language;
     final d = widget.director;
 
-    // Group fields by group
-    final groups = <String, List<ContextFieldMeta>>{};
-    for (final field in d.requiredContext) {
-      groups.putIfAbsent(field.group, () => []).add(field);
-    }
+    // Separate fields into required, optional, and runtime
+    final requiredFields = d.requiredContext
+        .where((f) => f.required && !f.readOnly && !f.autoManaged)
+        .toList();
+    final optionalFields = d.requiredContext
+        .where((f) => !f.required && !f.readOnly && !f.autoManaged)
+        .toList();
+    final runtimeFields = d.requiredContext
+        .where((f) => f.readOnly || f.autoManaged)
+        .toList();
 
     // Extra keys not in required_context
     final knownKeys = d.requiredContext.map((f) => f.key).toSet();
     final extraKeys = d.contextWindow.keys
         .where((k) => !knownKeys.contains(k))
         .toList();
+
+    final filledRequired = requiredFields
+        .where((f) => !d.missingFields.contains(f.key))
+        .length;
+    final totalRequired = requiredFields.length;
 
     return DraggableScrollableSheet(
       initialChildSize: 0.85,
@@ -248,29 +258,48 @@ class _ContextEditorSheetState extends ConsumerState<_ContextEditorSheet> {
 
             const SizedBox(height: 12),
 
-            // Needs setup banner
-            if (d.needsSetup)
+            // Setup progress indicator (when setup needed)
+            if (d.needsSetup && totalRequired > 0)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 child: Container(
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(
-                    color: Colors.amber.withValues(alpha: 0.1),
+                    color: Colors.amber.withValues(alpha: 0.08),
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(
                         color: Colors.amber.withValues(alpha: 0.3)),
                   ),
-                  child: Row(
+                  child: Column(
                     children: [
-                      Icon(Icons.warning_amber_rounded,
-                          color: Colors.amber.shade700, size: 20),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          L10n.t('directors.needsSetupHint', lang,
-                              {'fields': d.missingFields.join(', ')}),
-                          style: TextStyle(
-                              fontSize: 13, color: Colors.amber.shade700),
+                      Row(
+                        children: [
+                          Icon(Icons.checklist_rounded,
+                              color: Colors.amber.shade700, size: 18),
+                          const SizedBox(width: 8),
+                          Text(
+                            L10n.t('directors.setupProgress', lang, {
+                              'done': '$filledRequired',
+                              'total': '$totalRequired',
+                            }),
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                              color: Colors.amber.shade700,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: LinearProgressIndicator(
+                          value: totalRequired > 0
+                              ? filledRequired / totalRequired
+                              : 0,
+                          backgroundColor: cs.surfaceContainerHighest,
+                          color: Colors.amber.shade700,
+                          minHeight: 6,
                         ),
                       ),
                     ],
@@ -288,19 +317,27 @@ class _ContextEditorSheetState extends ConsumerState<_ContextEditorSheet> {
                   controller: scrollController,
                   padding: const EdgeInsets.symmetric(horizontal: 20),
                   children: [
-                    // Editable grouped fields (non-runtime)
-                    for (final entry in groups.entries)
-                      if (entry.key != 'runtime') ...[
-                        _GroupHeader(
-                          group: entry.key,
-                          lang: lang,
-                          cs: cs,
-                        ),
-                        for (final field in entry.value) ...[
-                          _buildField(field, lang, cs),
-                          const SizedBox(height: 16),
-                        ],
+                    // ── Required fields section ──
+                    if (requiredFields.isNotEmpty) ...[
+                      _GroupHeader(
+                        group: '_required',
+                        lang: lang,
+                        cs: cs,
+                      ),
+                      for (final field in requiredFields) ...[
+                        _buildField(field, lang, cs),
+                        const SizedBox(height: 16),
                       ],
+                    ],
+
+                    // ── Optional fields section (collapsible) ──
+                    if (optionalFields.isNotEmpty)
+                      _CollapsibleOptionalGroup(
+                        fields: optionalFields,
+                        lang: lang,
+                        cs: cs,
+                        buildField: (f) => _buildField(f, lang, cs),
+                      ),
 
                     // Extra context keys (not from template)
                     if (extraKeys.isNotEmpty) ...[
@@ -324,9 +361,9 @@ class _ContextEditorSheetState extends ConsumerState<_ContextEditorSheet> {
                     ],
 
                     // Runtime / auto-managed fields (collapsible)
-                    if (groups.containsKey('runtime'))
+                    if (runtimeFields.isNotEmpty)
                       _CollapsibleRuntimeGroup(
-                        fields: groups['runtime']!,
+                        fields: runtimeFields,
                         contextWindow: widget.director.contextWindow,
                         lang: lang,
                         cs: cs,
@@ -422,7 +459,7 @@ class _ContextEditorSheetState extends ConsumerState<_ContextEditorSheet> {
               : null,
         ),
       'select' => DropdownButtonFormField<String>(
-          value: controller.text.isNotEmpty ? controller.text : null,
+          initialValue: controller.text.isNotEmpty ? controller.text : null,
           items: field.options
               .map((o) => DropdownMenuItem(value: o, child: Text(o)))
               .toList(),
@@ -462,14 +499,66 @@ class _ContextEditorSheetState extends ConsumerState<_ContextEditorSheet> {
         ),
     };
 
-    // Add file attach button for textarea fields that allow it
+    // Add file upload card for textarea fields that allow file attach
     if (field.allowFileAttach && field.type == 'textarea') {
       fieldWidget = Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // Prominent file upload card
+          _FileUploadCard(controller: controller, lang: lang, cs: cs),
+          const SizedBox(height: 8),
+          // Separator with "or type manually"
+          Row(
+            children: [
+              Expanded(
+                child: Divider(
+                    color: cs.outlineVariant.withValues(alpha: 0.3)),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Text(
+                  L10n.t('directors.orTypeManually', lang),
+                  style: TextStyle(
+                      fontSize: 11, color: cs.onSurfaceVariant),
+                ),
+              ),
+              Expanded(
+                child: Divider(
+                    color: cs.outlineVariant.withValues(alpha: 0.3)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
           fieldWidget,
-          const SizedBox(height: 6),
-          _FileAttachButton(controller: controller, lang: lang, cs: cs),
+        ],
+      );
+    }
+
+    // Add info tooltip for hint text on non-file fields
+    if (!field.allowFileAttach && hint.isNotEmpty) {
+      fieldWidget = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          fieldWidget,
+          Padding(
+            padding: const EdgeInsets.only(top: 4, left: 4),
+            child: Row(
+              children: [
+                Icon(Icons.info_outline,
+                    size: 12, color: cs.onSurfaceVariant.withValues(alpha: 0.6)),
+                const SizedBox(width: 4),
+                Flexible(
+                  child: Text(
+                    hint,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: cs.onSurfaceVariant.withValues(alpha: 0.6),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ],
       );
     }
@@ -496,6 +585,8 @@ class _GroupHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final label = switch (group) {
+      '_required' => L10n.t('directors.requiredFields', lang),
+      '_optional' => L10n.t('directors.optionalFields', lang),
       'profile' => L10n.t('directors.contextGroups.profile', lang),
       'search' => L10n.t('directors.contextGroups.search', lang),
       'filters' => L10n.t('directors.contextGroups.filters', lang),
@@ -505,6 +596,8 @@ class _GroupHeader extends StatelessWidget {
     };
 
     final icon = switch (group) {
+      '_required' => Icons.star_rounded,
+      '_optional' => Icons.tune,
       'profile' => Icons.person_outline,
       'search' => Icons.search,
       'filters' => Icons.filter_list,
@@ -706,6 +799,211 @@ class _TagsFormFieldState extends State<_TagsFormField> {
           ),
         );
       },
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Collapsible optional group — collapsed by default when director needs setup
+// ---------------------------------------------------------------------------
+
+class _CollapsibleOptionalGroup extends StatefulWidget {
+  final List<ContextFieldMeta> fields;
+  final String lang;
+  final ColorScheme cs;
+  final Widget Function(ContextFieldMeta) buildField;
+
+  const _CollapsibleOptionalGroup({
+    required this.fields,
+    required this.lang,
+    required this.cs,
+    required this.buildField,
+  });
+
+  @override
+  State<_CollapsibleOptionalGroup> createState() =>
+      _CollapsibleOptionalGroupState();
+}
+
+class _CollapsibleOptionalGroupState extends State<_CollapsibleOptionalGroup> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        InkWell(
+          onTap: () => setState(() => _expanded = !_expanded),
+          borderRadius: BorderRadius.circular(8),
+          child: Padding(
+            padding: const EdgeInsets.only(top: 8, bottom: 12),
+            child: Row(
+              children: [
+                Icon(Icons.tune, size: 18, color: widget.cs.primary),
+                const SizedBox(width: 8),
+                Text(
+                  L10n.t('directors.optionalFields', widget.lang),
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: widget.cs.primary,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  '(${widget.fields.length})',
+                  style: TextStyle(
+                      fontSize: 12, color: widget.cs.onSurfaceVariant),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Divider(
+                      color:
+                          widget.cs.outlineVariant.withValues(alpha: 0.3)),
+                ),
+                const SizedBox(width: 4),
+                Icon(
+                  _expanded ? Icons.expand_less : Icons.expand_more,
+                  size: 20,
+                  color: widget.cs.onSurfaceVariant,
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (_expanded)
+          ...widget.fields.map((field) => Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: widget.buildField(field),
+              )),
+      ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// File upload card — prominent card for uploading CV / documents
+// ---------------------------------------------------------------------------
+
+class _FileUploadCard extends StatelessWidget {
+  final TextEditingController controller;
+  final String lang;
+  final ColorScheme cs;
+
+  const _FileUploadCard({
+    required this.controller,
+    required this.lang,
+    required this.cs,
+  });
+
+  Future<void> _pickFile(BuildContext context) async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['txt', 'md', 'csv', 'json', 'pdf', 'docx'],
+      withData: true,
+    );
+
+    if (result == null || result.files.single.bytes == null) return;
+
+    final bytes = result.files.single.bytes!;
+    final text = String.fromCharCodes(bytes);
+    final fileName = result.files.single.name;
+
+    if (!context.mounted) return;
+
+    if (controller.text.trim().isEmpty) {
+      controller.text = text;
+      showToast(
+        context,
+        L10n.t('directors.fileLoaded', lang, {'name': fileName}),
+        type: ToastType.success,
+      );
+    } else {
+      final action = await showDialog<String>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(L10n.t('directors.fileAttachAction', lang)),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop('replace'),
+              child: Text(L10n.t('directors.fileReplace', lang)),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop('append'),
+              child: Text(L10n.t('directors.fileAppend', lang)),
+            ),
+          ],
+        ),
+      );
+      if (action == 'replace') {
+        controller.text = text;
+      } else if (action == 'append') {
+        controller.text = '${controller.text}\n\n$text';
+      }
+      if (context.mounted && action != null) {
+        showToast(
+          context,
+          L10n.t('directors.fileLoaded', lang, {'name': fileName}),
+          type: ToastType.success,
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hasContent = controller.text.trim().isNotEmpty;
+
+    return InkWell(
+      onTap: () => _pickFile(context),
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: cs.primary.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: cs.primary.withValues(alpha: 0.25),
+            width: 1.5,
+          ),
+        ),
+        child: Column(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: cs.primary.withValues(alpha: 0.1),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                hasContent ? Icons.description : Icons.upload_file,
+                size: 28,
+                color: cs.primary,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              L10n.t('directors.uploadCV', lang),
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                fontSize: 14,
+                color: cs.primary,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              hasContent
+                  ? '${controller.text.trim().length} chars'
+                  : L10n.t('directors.uploadCVHint', lang),
+              style: TextStyle(
+                fontSize: 12,
+                color: cs.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -925,85 +1223,6 @@ class _ReadOnlyFieldState extends State<_ReadOnlyField> {
 
   bool _looksLikeJson(String text) =>
       text.startsWith('{') || text.startsWith('[');
-}
-
-// ---------------------------------------------------------------------------
-// File attach button — for textarea fields with allow_file_attach
-// ---------------------------------------------------------------------------
-
-class _FileAttachButton extends StatelessWidget {
-  final TextEditingController controller;
-  final String lang;
-  final ColorScheme cs;
-
-  const _FileAttachButton({
-    required this.controller,
-    required this.lang,
-    required this.cs,
-  });
-
-  Future<void> _pickFile(BuildContext context) async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['txt', 'md', 'csv', 'json'],
-      withData: true,
-    );
-
-    if (result == null || result.files.single.bytes == null) return;
-
-    final bytes = result.files.single.bytes!;
-    final text = String.fromCharCodes(bytes);
-
-    if (!context.mounted) return;
-
-    if (controller.text.trim().isEmpty) {
-      controller.text = text;
-    } else {
-      final action = await showDialog<String>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: Text(L10n.t('directors.fileAttachAction', lang)),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop('replace'),
-              child: Text(L10n.t('directors.fileReplace', lang)),
-            ),
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop('append'),
-              child: Text(L10n.t('directors.fileAppend', lang)),
-            ),
-          ],
-        ),
-      );
-      if (action == 'replace') {
-        controller.text = text;
-      } else if (action == 'append') {
-        controller.text = '${controller.text}\n\n$text';
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: OutlinedButton.icon(
-        onPressed: () => _pickFile(context),
-        icon: Icon(Icons.attach_file, size: 16, color: cs.primary),
-        label: Text(
-          L10n.t('directors.attachFile', lang),
-          style: TextStyle(fontSize: 12, color: cs.primary),
-        ),
-        style: OutlinedButton.styleFrom(
-          minimumSize: const Size(0, 32),
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          side: BorderSide(color: cs.outlineVariant),
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        ),
-      ),
-    );
-  }
 }
 
 // ---------------------------------------------------------------------------

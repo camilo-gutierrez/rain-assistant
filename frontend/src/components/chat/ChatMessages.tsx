@@ -11,6 +11,7 @@ import PermissionRequestBlock from "@/components/chat/PermissionRequestBlock";
 import ScreenshotViewer from "@/components/computer-use/ScreenshotViewer";
 import ComputerActionBubble from "@/components/computer-use/ComputerActionBubble";
 import SubAgentIndicator from "@/components/chat/SubAgentIndicator";
+import A2UISurface from "@/components/chat/A2UISurface";
 
 function MessageSkeleton() {
   return (
@@ -100,11 +101,13 @@ export default function ChatMessages() {
               case "permission_request":
                 return <PermissionRequestBlock key={msg.id} message={msg} />;
               case "computer_screenshot":
-                return <ScreenshotViewer key={msg.id} message={msg} />;
+                return <ScreenshotViewer key={msg.id} message={msg} messages={messages} />;
               case "computer_action":
                 return <ComputerActionBubble key={msg.id} message={msg} />;
               case "subagent_event":
                 return <SubAgentIndicator key={msg.id} message={msg} />;
+              case "a2ui_surface":
+                return <A2UISurface key={msg.id} message={msg} />;
               default:
                 return null;
             }

@@ -62,8 +62,8 @@ YELLOW_TOOLS: set[str] = {
 # ──────────────────────────────────────────────────────────────
 
 DANGEROUS_PATTERNS: list[re.Pattern] = [
-    # File deletion
-    re.compile(r"\brm\s+(-[a-zA-Z]*[rf])", re.IGNORECASE),
+    # File deletion — match absolute paths (/bin/rm) and whitespace variants
+    re.compile(r"(?:^|[\s;|&]|/[\w/]*/?)rm\s+(-[a-zA-Z]*[rf])", re.IGNORECASE),
     re.compile(r"\brm\b.*--no-preserve-root", re.IGNORECASE),
     re.compile(r"\brmdir\b", re.IGNORECASE),
     re.compile(r"\bdel\b\s+/[sS]", re.IGNORECASE),
@@ -86,9 +86,9 @@ DANGEROUS_PATTERNS: list[re.Pattern] = [
     re.compile(r"\breg\b\s+(delete|add)", re.IGNORECASE),
     re.compile(r"\bregedit\b", re.IGNORECASE),
 
-    # Permission / ownership changes
-    re.compile(r"\bchmod\b\s+[0-7]{3,4}\s+/", re.IGNORECASE),
-    re.compile(r"\bchown\b.*-R\s+.*/", re.IGNORECASE),
+    # Permission / ownership changes — no trailing slash requirement
+    re.compile(r"\bchmod\b\s+[0-7]{3,4}\b", re.IGNORECASE),
+    re.compile(r"\bchown\b.*-R\b", re.IGNORECASE),
     re.compile(r"\bicacls\b", re.IGNORECASE),
     re.compile(r"\btakeown\b", re.IGNORECASE),
 
@@ -102,11 +102,14 @@ DANGEROUS_PATTERNS: list[re.Pattern] = [
     re.compile(r"\bnetsh\b.*firewall", re.IGNORECASE),
     re.compile(r"\biptables\b", re.IGNORECASE),
 
-    # Piping to execution (code injection vectors)
-    re.compile(r"\bcurl\b.*\|\s*(bash|sh|python|powershell)", re.IGNORECASE),
-    re.compile(r"\bwget\b.*\|\s*(bash|sh|python|powershell)", re.IGNORECASE),
+    # Piping to execution — broader: any pipe to interpreter
+    re.compile(r"\|\s*(bash|sh|python[23]?|powershell|pwsh|node|perl|ruby)\b", re.IGNORECASE),
     re.compile(r"\bInvoke-Expression\b", re.IGNORECASE),
     re.compile(r"\biex\b\s*\(", re.IGNORECASE),
+
+    # Indirection/eval — can bypass all other checks
+    re.compile(r"\beval\s+", re.IGNORECASE),
+    re.compile(r"\bexec\s+", re.IGNORECASE),
 
     # Env variable manipulation of critical vars
     re.compile(r"\bsetx?\b\s+PATH\b", re.IGNORECASE),
@@ -116,6 +119,12 @@ DANGEROUS_PATTERNS: list[re.Pattern] = [
     re.compile(r"\bgit\b\s+push\b.*--force", re.IGNORECASE),
     re.compile(r"\bgit\b\s+reset\b.*--hard", re.IGNORECASE),
     re.compile(r"\bgit\b\s+clean\b.*-[a-zA-Z]*f", re.IGNORECASE),
+
+    # Cron manipulation
+    re.compile(r"\bcrontab\b\s+-[re]", re.IGNORECASE),
+
+    # Privilege escalation
+    re.compile(r"\bsudo\b", re.IGNORECASE),
 ]
 
 

@@ -121,6 +121,69 @@ export interface SubAgentInfo {
   status: "running" | "completed" | "error" | "cancelled";
 }
 
+// === A2UI (Agent-to-UI) Surfaces ===
+
+export type A2UIComponentType =
+  | "column" | "row"
+  | "text" | "image" | "divider" | "icon"
+  | "button" | "text_field" | "checkbox" | "slider"
+  | "card" | "data_table" | "progress_bar" | "spacer";
+
+export interface A2UIComponent {
+  id: string;
+  type: A2UIComponentType;
+  // Layout
+  children?: string[];
+  spacing?: number;
+  crossAxis?: string;
+  mainAxis?: string;
+  // Text
+  text?: string;
+  variant?: "h1" | "h2" | "h3" | "body" | "caption";
+  // Image
+  url?: string;
+  alt?: string;
+  width?: number;
+  height?: number;
+  // Icon
+  name?: string;
+  size?: number;
+  color?: string;
+  // Button
+  label?: string;
+  style?: "filled" | "outlined" | "text";
+  action?: string;
+  // TextField
+  hint?: string;
+  value?: string;
+  fieldName?: string;
+  // Checkbox
+  checked?: boolean;
+  // Slider
+  min?: number;
+  max?: number;
+  // Card
+  title?: string;
+  padding?: number;
+  // DataTable
+  columns?: string[];
+  rows?: string[][];
+  // ProgressBar
+  // (uses value 0-100 and label)
+}
+
+export interface A2UISurface {
+  id: string;
+  title?: string;
+  root: string;
+  components: Record<string, A2UIComponent>;
+}
+
+export interface A2UISurfaceMessage extends BaseMessage {
+  type: "a2ui_surface";
+  surface: A2UISurface;
+}
+
 export type AnyMessage =
   | UserMessage
   | AssistantMessage
@@ -130,7 +193,8 @@ export type AnyMessage =
   | PermissionRequestMessage
   | ComputerScreenshotMessage
   | ComputerActionMessage
-  | SubAgentMessage;
+  | SubAgentMessage
+  | A2UISurfaceMessage;
 
 // === Agent ===
 export type AgentPanel = "fileBrowser" | "chat";
@@ -223,7 +287,9 @@ export type WSSendMessage =
   | { type: "set_auto_approve"; agent_id: string; enabled: boolean }
   // Computer Use Phase 5+7
   | { type: "computer_use_hint"; agent_id: string; text: string; x?: number; y?: number }
-  | { type: "set_monitor"; agent_id: string; monitor_index: number };
+  | { type: "set_monitor"; agent_id: string; monitor_index: number }
+  // A2UI
+  | { type: "a2ui_user_action"; agent_id: string; surface_id: string; action_name: string; context: Record<string, unknown> };
 
 // === WebSocket Receive Messages ===
 export type WSReceiveMessage =
@@ -272,6 +338,9 @@ export type WSReceiveMessage =
   | { type: "partial_transcription"; agent_id: string; text: string; is_final: boolean }
   | { type: "mcp_server_status"; agent_id: string; status: string; label?: string; server?: string }
   | { type: "auto_approve_changed"; agent_id: string; enabled: boolean }
+  // A2UI
+  | { type: "a2ui_surface"; agent_id: string; surface: A2UISurface }
+  | { type: "a2ui_update"; agent_id: string; surface_id: string; updates: Array<{ id: string } & Partial<A2UIComponent>> }
   // Director team execution events
   | { type: "director_event"; event: "team_run_start"; project_id: string; project_name: string; director_count: number }
   | { type: "director_event"; event: "run_complete"; director_id: string; director_name: string; project_id: string; success: boolean }
@@ -472,6 +541,9 @@ export interface ContextFieldMeta {
   default: string;
   options: string[];
   group: string;
+  readOnly?: boolean;
+  autoManaged?: boolean;
+  allowFileAttach?: boolean;
 }
 
 export interface Director {

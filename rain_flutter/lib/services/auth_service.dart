@@ -40,16 +40,33 @@ class AuthService {
   }
 
   /// Load persisted server URL, token, and device ID on app start.
+  /// All sensitive data is stored in FlutterSecureStorage (encrypted).
   Future<void> init() async {
-    final prefs = await SharedPreferences.getInstance();
-    _serverUrl = prefs.getString(_serverUrlKey);
+    _serverUrl = await _secureStorage.read(key: _serverUrlKey);
     _token = await _secureStorage.read(key: _tokenKey);
 
-    // Device ID — generate once and persist
-    _deviceId = prefs.getString(_deviceIdKey) ?? '';
+    // Device ID — generate once and persist in secure storage
+    _deviceId = await _secureStorage.read(key: _deviceIdKey) ?? '';
     if (_deviceId.isEmpty) {
       _deviceId = const Uuid().v4();
-      await prefs.setString(_deviceIdKey, _deviceId);
+      await _secureStorage.write(key: _deviceIdKey, value: _deviceId);
+    }
+
+    // Migrate from SharedPreferences if present (one-time)
+    final prefs = await SharedPreferences.getInstance();
+    if (_serverUrl == null || _serverUrl!.isEmpty) {
+      final oldUrl = prefs.getString(_serverUrlKey);
+      if (oldUrl != null && oldUrl.isNotEmpty) {
+        _serverUrl = oldUrl;
+        await _secureStorage.write(key: _serverUrlKey, value: _serverUrl!);
+        await prefs.remove(_serverUrlKey);
+      }
+    } else {
+      await prefs.remove(_serverUrlKey);
+    }
+    final oldDeviceId = prefs.getString(_deviceIdKey);
+    if (oldDeviceId != null) {
+      await prefs.remove(_deviceIdKey);
     }
 
     _deviceName = _detectDeviceName();
@@ -69,12 +86,11 @@ class AuthService {
     }
   }
 
-  /// Persist the server URL.
+  /// Persist the server URL in encrypted storage.
   Future<void> setServerUrl(String url) async {
     // Normalize: remove trailing slash
     _serverUrl = url.endsWith('/') ? url.substring(0, url.length - 1) : url;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_serverUrlKey, _serverUrl!);
+    await _secureStorage.write(key: _serverUrlKey, value: _serverUrl!);
   }
 
   /// Check if the server is reachable.
@@ -197,8 +213,7 @@ class AuthService {
   Future<void> clearAll() async {
     await clearToken();
     _serverUrl = null;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_serverUrlKey);
+    await _secureStorage.delete(key: _serverUrlKey);
   }
 
   Map<String, String> _authHeaders() => {

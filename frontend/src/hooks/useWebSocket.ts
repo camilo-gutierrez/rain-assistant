@@ -14,6 +14,7 @@ import { handleComputerUseMessage } from "@/hooks/useComputerUseMessages";
 import { handleSubAgentMessage } from "@/hooks/useSubAgentMessages";
 import { handleVoiceMessage } from "@/hooks/useVoiceMessages";
 import { handleDirectorMessage } from "@/hooks/useDirectorMessages";
+import { handleA2UIMessage } from "@/hooks/useA2UIMessages";
 import type { WSReceiveMessage } from "@/lib/types";
 import { synthesize } from "@/lib/api";
 import { autoSaveConversation, loadHistoryForAgent } from "@/lib/historyUtils";
@@ -58,6 +59,7 @@ export function useWebSocket() {
       if (handleComputerUseMessage(msg, agentId)) return;
       if (handleSubAgentMessage(msg, agentId)) return;
       if (handleVoiceMessage(msg, agentId)) return;
+      if (handleA2UIMessage(msg, agentId)) return;
 
       // Core routing
       switch (msg.type) {

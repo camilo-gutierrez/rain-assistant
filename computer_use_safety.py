@@ -97,31 +97,49 @@ class DirectoryGuard:
         ]
 
     def is_allowed(self, path: str) -> bool:
-        """Check if a path is safe to access."""
-        norm = os.path.normpath(os.path.abspath(path)).lower()
+        """Check if a path is safe to access.
+
+        Resolves symlinks to prevent bypasses where a symlink inside
+        an allowed dir points to a blocked location.  Uses proper
+        path prefix matching (with os.sep) to avoid false positives
+        like /etc matching /etc-backup.
+        """
+        try:
+            resolved = str(Path(path).resolve()).lower()
+        except (OSError, ValueError):
+            return False
 
         # If whitelist is set, path must be under an allowed dir
         if self._allowed:
-            if not any(norm.startswith(a) for a in self._allowed):
+            if not any(
+                resolved.startswith(a + os.sep) or resolved == a
+                for a in self._allowed
+            ):
                 return False
 
-        # Check blocked directories
+        # Check blocked directories with proper boundary matching
         for blocked in self._blocked:
-            if norm.startswith(blocked) or blocked in norm:
+            if resolved.startswith(blocked + os.sep) or resolved == blocked:
                 return False
 
         return True
 
     def get_blocked_reason(self, path: str) -> Optional[str]:
         """Return reason why a path is blocked, or None if allowed."""
-        norm = os.path.normpath(os.path.abspath(path)).lower()
+        try:
+            resolved = str(Path(path).resolve()).lower()
+        except (OSError, ValueError):
+            return f"Cannot resolve path: {path}"
 
         if self._allowed:
-            if not any(norm.startswith(a) for a in self._allowed):
+            if not any(
+                resolved.startswith(a + os.sep) or resolved == a
+                for a in self._allowed
+            ):
                 return f"Path not in allowed directories: {path}"
 
         for blocked in self._blocked:
-            if norm.startswith(blocked) or blocked in norm:
+            if resolved.startswith(blocked + os.sep) or resolved == blocked:
                 return f"Access to protected directory blocked: {blocked}"
 
         return None

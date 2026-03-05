@@ -136,6 +136,8 @@ const translations: Record<Language, Record<string, string>> = {
     "voice.talkModeDesc": "Continuous conversation with Rain",
     "voice.startTalkMode": "Start Talk Mode",
     "voice.endConversation": "End Conversation",
+    "voice.mute": "Mute",
+    "voice.unmute": "Unmute",
 
     // Sidebar
     "sidebar.newChat": "New conversation",
@@ -184,6 +186,8 @@ const translations: Record<Language, Record<string, string>> = {
     "cu.monitor": "Monitor",
     "cu.primaryMonitor": "Primary",
     "cu.monitorSelector": "Select monitor",
+    "cu.diffToggle": "Diff",
+    "cu.diffOverlay": "Screenshot difference overlay",
 
     // Model Switcher
     "modelSwitcher.keyConfigured": "Key configured",
@@ -292,6 +296,7 @@ const translations: Record<Language, Record<string, string>> = {
     "directors.runNow": "Run Now",
     "directors.running": "Running...",
     "directors.runs": "{count} runs",
+    "directors.totalCost": "Total Cost",
     "directors.cost": "Cost",
     "directors.canDelegate": "Can delegate",
     "directors.delete": "Delete",
@@ -335,6 +340,23 @@ const translations: Record<Language, Record<string, string>> = {
     "directors.contextGroups.general": "General",
     "directors.contextGroups.extra": "Other",
     "directors.contextConfigured": "Context configured",
+    "directors.detail.overview": "Overview",
+    "directors.detail.rolePrompt": "Role Prompt",
+    "directors.detail.lastResult": "Last Run Result",
+    "directors.detail.lastError": "Last Error",
+    "directors.detail.relatedInbox": "Recent Inbox Items",
+    "directors.detail.setupProgress": "{done}/{total} required fields configured",
+    "directors.detail.optionalFields": "Optional Fields",
+    "directors.detail.autoManagedFields": "Auto-managed Fields",
+    "directors.detail.permLevel": "Permission",
+    "directors.detail.back": "Back",
+    "directors.detail.noResult": "No runs yet",
+    "directors.detail.fileAttach": "Attach file",
+    "directors.cancel": "Cancel",
+
+    // A2UI
+    "a2ui.submit": "Submit",
+    "a2ui.surface": "Interactive Surface",
 
     // Projects
     "projects.title": "Projects",
@@ -544,6 +566,8 @@ const translations: Record<Language, Record<string, string>> = {
     "voice.talkModeDesc": "Conversaci\u00f3n continua con Rain",
     "voice.startTalkMode": "Iniciar Conversaci\u00f3n",
     "voice.endConversation": "Terminar Conversaci\u00f3n",
+    "voice.mute": "Silenciar",
+    "voice.unmute": "Activar mic",
 
     // Sidebar
     "sidebar.newChat": "Nueva conversaci\u00f3n",
@@ -592,6 +616,8 @@ const translations: Record<Language, Record<string, string>> = {
     "cu.monitor": "Monitor",
     "cu.primaryMonitor": "Principal",
     "cu.monitorSelector": "Seleccionar monitor",
+    "cu.diffToggle": "Diferencia",
+    "cu.diffOverlay": "Overlay de diferencia de capturas",
 
     // Model Switcher
     "modelSwitcher.keyConfigured": "Key configurada",
@@ -700,6 +726,7 @@ const translations: Record<Language, Record<string, string>> = {
     "directors.runNow": "Ejecutar",
     "directors.running": "Ejecutando...",
     "directors.runs": "{count} ejecuciones",
+    "directors.totalCost": "Costo Total",
     "directors.cost": "Costo",
     "directors.canDelegate": "Puede delegar",
     "directors.delete": "Eliminar",
@@ -743,6 +770,23 @@ const translations: Record<Language, Record<string, string>> = {
     "directors.contextGroups.general": "General",
     "directors.contextGroups.extra": "Otros",
     "directors.contextConfigured": "Contexto configurado",
+    "directors.detail.overview": "Vista general",
+    "directors.detail.rolePrompt": "Prompt de Rol",
+    "directors.detail.lastResult": "Resultado de la ultima ejecucion",
+    "directors.detail.lastError": "Ultimo error",
+    "directors.detail.relatedInbox": "Entregables recientes",
+    "directors.detail.setupProgress": "{done}/{total} campos requeridos configurados",
+    "directors.detail.optionalFields": "Campos opcionales",
+    "directors.detail.autoManagedFields": "Campos automaticos",
+    "directors.detail.permLevel": "Permiso",
+    "directors.detail.back": "Volver",
+    "directors.detail.noResult": "Sin ejecuciones aun",
+    "directors.detail.fileAttach": "Adjuntar archivo",
+    "directors.cancel": "Cancelar",
+
+    // A2UI
+    "a2ui.submit": "Enviar",
+    "a2ui.surface": "Superficie Interactiva",
 
     // Projects
     "projects.title": "Proyectos",

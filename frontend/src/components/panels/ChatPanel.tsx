@@ -32,7 +32,7 @@ export default function ChatPanel() {
   const isSaving = useHistoryStore((s) => s.isSaving);
   const voiceMode = useSettingsStore((s) => s.voiceMode);
   const voiceState = useVoiceModeStore((s) => s.voiceState);
-  const { activate, deactivate } = useVoiceMode();
+  const { activate, deactivate, toggleMute } = useVoiceMode();
   const [talkModeActive, setTalkModeActive] = useState(false);
 
   const send = useConnectionStore((s) => s.send);
@@ -200,7 +200,7 @@ export default function ChatPanel() {
 
       {/* Talk Mode overlay (fullscreen when active) */}
       {talkModeActive && voiceMode === "talk-mode" && (
-        <TalkModeOverlay onEnd={handleTalkModeToggle} />
+        <TalkModeOverlay onEnd={handleTalkModeToggle} onToggleMute={toggleMute} />
       )}
     </div>
   );
