@@ -3872,7 +3872,7 @@ def _run_update():
 
     try:
         result = subprocess.run(
-            [sys.executable, "-m", "pip", "install", "--upgrade", "rain-assistant"],
+            [sys.executable, "-m", "pip", "install", "--upgrade", "rain-assistant[documents]"],
             capture_output=True, text=True,
         )
         if result.returncode == 0:

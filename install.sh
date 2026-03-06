@@ -16,8 +16,8 @@ PACKAGE_NAME="rain-assistant"
 MIN_PY_MAJOR=3
 MIN_PY_MINOR=11
 
-# Install from PyPI (published package)
-PACKAGE_SOURCE="$PACKAGE_NAME"
+# Install from PyPI (published package) — includes documents extra for CV/file parsing
+PACKAGE_SOURCE="$PACKAGE_NAME[documents]"
 
 # ── Colors ─────────────────────────────────────────────────────────────────────
 RED='\033[0;31m'

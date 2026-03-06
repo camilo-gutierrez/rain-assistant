@@ -87,7 +87,7 @@ async def parse_file_upload(request: Request, file: UploadFile = File(...)):
     except ImportError:
         return JSONResponse(
             {"error": "Document parser not available. Install: pip install rain-assistant[documents]"},
-            status_code=500,
+            status_code=422,
         )
 
     tmp_path = None
