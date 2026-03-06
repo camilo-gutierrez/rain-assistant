@@ -3893,6 +3893,7 @@ def _run_update():
 
 def _run_uninstall():
     """Uninstall Rain Assistant."""
+    import shutil
     import subprocess
     from pathlib import Path
 
@@ -3902,45 +3903,49 @@ def _run_uninstall():
 
     rain_dir = Path.home() / ".rain"
 
+    resp = input("  Desinstalar Rain Assistant? (s/n): ").strip().lower()
+    if resp not in ("s", "y", "si"):
+        print("  Cancelado.", flush=True)
+        sys.exit(0)
+
     if sys.platform == "win32":
         script = rain_dir / "uninstall.ps1"
         if script.exists():
-            resp = input("  Desinstalar Rain Assistant? (s/n): ").strip().lower()
-            if resp not in ("s", "y", "si"):
-                print("  Cancelado.", flush=True)
-                sys.exit(0)
             subprocess.run(
                 ["powershell", "-ExecutionPolicy", "Bypass", "-File", str(script)],
             )
         else:
-            # Fallback: pip uninstall
-            resp = input("  Desinstalar Rain Assistant via pip? (s/n): ").strip().lower()
-            if resp not in ("s", "y", "si"):
-                print("  Cancelado.", flush=True)
-                sys.exit(0)
             subprocess.run([sys.executable, "-m", "pip", "uninstall", "rain-assistant", "-y"])
-            print(flush=True)
-            print("  Rain Assistant desinstalado.", flush=True)
-            print("  Nota: ~/.rain-assistant/ (config/datos) NO se elimino.", flush=True)
-            print(flush=True)
     else:
         script = rain_dir / "uninstall.sh"
         if script.exists():
-            resp = input("  Desinstalar Rain Assistant? (s/n): ").strip().lower()
-            if resp not in ("s", "y", "si"):
-                print("  Cancelado.", flush=True)
-                sys.exit(0)
             subprocess.run(["bash", str(script)])
         else:
-            # Fallback: pip uninstall
-            resp = input("  Desinstalar Rain Assistant via pip? (s/n): ").strip().lower()
-            if resp not in ("s", "y", "si"):
-                print("  Cancelado.", flush=True)
-                sys.exit(0)
             subprocess.run([sys.executable, "-m", "pip", "uninstall", "rain-assistant", "-y"])
-            print(flush=True)
-            print("  Rain Assistant desinstalado.", flush=True)
-            print("  Nota: ~/.rain-assistant/ (config/datos) NO se elimino.", flush=True)
+            # Clean PATH entries from shell configs
+            for rc_name in [".bashrc", ".zshrc", ".bash_profile"]:
+                rc = Path.home() / rc_name
+                if rc.exists():
+                    try:
+                        content = rc.read_text()
+                        lines = [
+                            ln for ln in content.splitlines()
+                            if ".rain/bin" not in ln and ln.strip() != "# Rain Assistant"
+                        ]
+                        rc.write_text("\n".join(lines) + "\n")
+                    except OSError:
+                        pass
+
+    # Always clean up ~/.rain/ if it still exists
+    if rain_dir.exists():
+        print(f"  Eliminando {rain_dir}...", flush=True)
+        shutil.rmtree(rain_dir, ignore_errors=True)
+
+    print(flush=True)
+    print("  Desinstalando Rain Assistant...", flush=True)
+    print("  Rain Assistant desinstalado.", flush=True)
+    print("  Nota: ~/.rain-assistant/ (config/datos) NO se elimino.", flush=True)
+    print(flush=True)
             print(flush=True)
 
 
