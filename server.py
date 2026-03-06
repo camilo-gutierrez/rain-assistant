@@ -872,8 +872,9 @@ async def lifespan(application: FastAPI):
     _migrate_directors()
     # Restore tokens from DB so sessions survive server restarts
     _restore_tokens_from_db()
+    # Load Whisper model in background so the server starts immediately
     loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, transcriber.load_model)
+    loop.run_in_executor(None, transcriber.load_model)
     cleanup_task = asyncio.create_task(_cleanup_expired_tokens())
     scheduler_task = asyncio.create_task(_scheduler_loop())
     image_cleanup_task = asyncio.create_task(_cleanup_expired_images())
