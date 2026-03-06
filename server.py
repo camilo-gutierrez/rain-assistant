@@ -3946,7 +3946,6 @@ def _run_uninstall():
     print("  Rain Assistant desinstalado.", flush=True)
     print("  Nota: ~/.rain-assistant/ (config/datos) NO se elimino.", flush=True)
     print(flush=True)
-            print(flush=True)
 
 
 def main():
