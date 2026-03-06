@@ -89,7 +89,7 @@ class ContextFieldMeta {
   final String key;
   final String label;
   final String labelEs;
-  final String type; // text, textarea, tags, number, select, toggle
+  final String type; // text, textarea, tags, number, select, toggle, file, date, radio, multiselect
   final String hint;
   final String hintEs;
   final bool required;
@@ -99,6 +99,7 @@ class ContextFieldMeta {
   final bool readOnly;
   final bool autoManaged;
   final bool allowFileAttach;
+  final List<String> acceptedExtensions; // for type=='file', e.g. ['pdf','docx']
 
   const ContextFieldMeta({
     required this.key,
@@ -114,6 +115,7 @@ class ContextFieldMeta {
     this.readOnly = false,
     this.autoManaged = false,
     this.allowFileAttach = false,
+    this.acceptedExtensions = const [],
   });
 
   factory ContextFieldMeta.fromJson(Map<String, dynamic> json) =>
@@ -134,6 +136,10 @@ class ContextFieldMeta {
         readOnly: json['read_only'] == true,
         autoManaged: json['auto_managed'] == true,
         allowFileAttach: json['allow_file_attach'] == true,
+        acceptedExtensions: (json['accepted_extensions'] as List?)
+                ?.map((e) => e as String)
+                .toList() ??
+            [],
       );
 
   /// Get the label in the user's language.

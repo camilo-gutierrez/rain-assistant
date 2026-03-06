@@ -466,6 +466,35 @@ class L10n {
     'directors.orTypeManually': 'or type/paste manually below',
     'directors.runBlocked': 'Complete setup first to run this director',
     'directors.configuredFields': 'Configured',
+    'directors.uploadFile': 'Upload File',
+    'directors.uploadFileHint': 'Tap to select a file',
+    'directors.fileSelected': 'File: {name} ({size})',
+    'directors.clearFile': 'Clear',
+    'directors.selectDate': 'Select date',
+
+    // Permission levels
+    'directors.permLevelLabel': 'Permission Level',
+    'directors.permLevelHint': 'Controls what tools this director can use autonomously',
+    'directors.permGreen': 'Green',
+    'directors.permYellow': 'Yellow',
+    'directors.permRed': 'Red',
+    'directors.permGreenDesc': 'Read-only operations. Auto-approved, no confirmation needed.',
+    'directors.permYellowDesc': 'Read + write operations. File edits, browser navigation, etc.',
+    'directors.permRedDesc': 'Full access. Includes dangerous operations (delete, system commands).',
+    'directors.permChanged': 'Permission level updated',
+
+    // Team Setup Wizard
+    'wizard.title': 'Team Setup',
+    'wizard.subtitle': 'Configure your team before getting started',
+    'wizard.sharedFields': 'Shared Fields',
+    'wizard.sharedFieldsHint': 'These fields are shared across multiple directors',
+    'wizard.directorFields': 'Fields for {name}',
+    'wizard.progress': '{done} of {total} fields',
+    'wizard.save': 'Save & Continue',
+    'wizard.skip': 'Skip for Now',
+    'wizard.saved': 'Team configured successfully!',
+    'wizard.skipConfirm': 'You can configure directors individually later',
+    'wizard.noFieldsNeeded': 'This team has no required fields to configure',
 
     // Projects
     'projects.title': 'Projects',
@@ -987,6 +1016,35 @@ class L10n {
     'directors.orTypeManually': 'o escribe/pega manualmente abajo',
     'directors.runBlocked': 'Completa la configuracion primero para ejecutar este director',
     'directors.configuredFields': 'Configurados',
+    'directors.uploadFile': 'Subir Archivo',
+    'directors.uploadFileHint': 'Toca para seleccionar un archivo',
+    'directors.fileSelected': 'Archivo: {name} ({size})',
+    'directors.clearFile': 'Limpiar',
+    'directors.selectDate': 'Seleccionar fecha',
+
+    // Permission levels
+    'directors.permLevelLabel': 'Nivel de Permiso',
+    'directors.permLevelHint': 'Controla que herramientas puede usar este director de forma autonoma',
+    'directors.permGreen': 'Verde',
+    'directors.permYellow': 'Amarillo',
+    'directors.permRed': 'Rojo',
+    'directors.permGreenDesc': 'Solo lectura. Auto-aprobado, sin confirmacion necesaria.',
+    'directors.permYellowDesc': 'Lectura + escritura. Edicion de archivos, navegacion web, etc.',
+    'directors.permRedDesc': 'Acceso total. Incluye operaciones peligrosas (eliminar, comandos del sistema).',
+    'directors.permChanged': 'Nivel de permiso actualizado',
+
+    // Team Setup Wizard
+    'wizard.title': 'Configurar Equipo',
+    'wizard.subtitle': 'Configura tu equipo antes de comenzar',
+    'wizard.sharedFields': 'Campos Compartidos',
+    'wizard.sharedFieldsHint': 'Estos campos se comparten entre varios directores',
+    'wizard.directorFields': 'Campos de {name}',
+    'wizard.progress': '{done} de {total} campos',
+    'wizard.save': 'Guardar y Continuar',
+    'wizard.skip': 'Omitir por Ahora',
+    'wizard.saved': '¡Equipo configurado exitosamente!',
+    'wizard.skipConfirm': 'Puedes configurar los directores individualmente después',
+    'wizard.noFieldsNeeded': 'Este equipo no tiene campos requeridos que configurar',
 
     // Projects
     'projects.title': 'Proyectos',

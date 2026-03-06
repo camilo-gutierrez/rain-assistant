@@ -241,6 +241,54 @@ async def api_delete_project(request: Request, project_id: str):
     return JSONResponse({"error": "Not found"}, status_code=404)
 
 
+@directors_router.post("/api/directors/projects/{project_id}/setup")
+async def api_project_setup(request: Request, project_id: str):
+    """Bulk update context_window for multiple directors in a project.
+
+    Body: { "context_updates": { "<director_id>": { "key": "value", ... }, ... } }
+    Merges each director's context_window with the provided values (preserving
+    auto-managed fields) and returns updated directors with recalculated
+    setup_status.
+    """
+    uid, err = _auth(request)
+    if err:
+        return err
+
+    project = get_project(project_id, user_id=uid)
+    if not project:
+        return JSONResponse({"error": "Project not found"}, status_code=404)
+
+    body = await request.json()
+    context_updates = body.get("context_updates", {})
+
+    if not context_updates:
+        return JSONResponse({"error": "No context_updates provided"}, status_code=400)
+
+    import json as _json
+
+    updated_directors = []
+    for director_id, context_data in context_updates.items():
+        director = get_director(director_id, user_id=uid)
+        if not director or director.get("project_id") != project_id:
+            continue
+
+        # Merge with existing context (preserve auto-managed fields)
+        existing_context = director.get("context_window", {})
+        if isinstance(existing_context, str):
+            try:
+                existing_context = _json.loads(existing_context)
+            except (ValueError, TypeError):
+                existing_context = {}
+
+        merged = {**existing_context, **context_data}
+        updated = update_director(director_id, user_id=uid, context_window=merged)
+        if updated:
+            updated = _compute_setup_status(updated)
+            updated_directors.append(updated)
+
+    return {"updated_directors": updated_directors}
+
+
 # ---------------------------------------------------------------------------
 # Templates (static sub-paths)
 # ---------------------------------------------------------------------------

@@ -378,6 +378,32 @@ class DirectorsNotifier extends StateNotifier<DirectorsState> {
     }
   }
 
+  Future<bool> bulkUpdateContext(
+      Dio dio, String projectId, Map<String, Map<String, dynamic>> contextUpdates) async {
+    try {
+      await dio.post('/directors/projects/$projectId/setup', data: {
+        'context_updates': contextUpdates,
+      });
+      await loadDirectors(dio);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> updatePermissionLevel(
+      Dio dio, String directorId, String level) async {
+    try {
+      await dio.patch('/directors/$directorId', data: {
+        'permission_level': level,
+      });
+      await loadDirectors(dio);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<bool> deleteDirector(Dio dio, Director d) async {
     try {
       await dio.delete('/directors/${d.id}');

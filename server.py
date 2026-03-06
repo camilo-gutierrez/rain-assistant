@@ -107,7 +107,7 @@ from shared_state import (
 )
 
 # Route modules
-from routes import auth_router, agents_router, files_router, settings_router, directors_router, images_router
+from routes import auth_router, agents_router, files_router, settings_router, directors_router, images_router, file_parse_router
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -1264,6 +1264,7 @@ app.include_router(files_router)
 app.include_router(settings_router)
 app.include_router(directors_router)
 app.include_router(images_router)
+app.include_router(file_parse_router)
 
 # Inject transcriber/synthesizer into settings routes (avoids circular imports)
 from routes.settings import init_settings_deps

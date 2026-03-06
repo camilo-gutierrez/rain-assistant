@@ -7,6 +7,7 @@ import '../providers/connection_provider.dart';
 import '../providers/directors_provider.dart';
 import '../providers/settings_provider.dart';
 import '../widgets/context_editor_sheet.dart';
+import '../widgets/permission_level_selector.dart';
 import '../widgets/toast.dart';
 
 class DirectorDetailScreen extends ConsumerStatefulWidget {
@@ -54,6 +55,34 @@ class _DirectorDetailScreenState extends ConsumerState<DirectorDetailScreen> {
   Future<void> _toggleEnabled(Director d) async {
     final dio = ref.read(authServiceProvider).authenticatedDio;
     await ref.read(directorsProvider.notifier).toggleEnabled(dio, d);
+  }
+
+  void _showPermissionSheet(Director d) {
+    final lang = ref.read(settingsProvider).language;
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => _PermissionBottomSheet(
+        currentLevel: d.permissionLevel,
+        lang: lang,
+        onChanged: (newLevel) async {
+          Navigator.of(ctx).pop();
+          if (newLevel == d.permissionLevel) return;
+          final dio = ref.read(authServiceProvider).authenticatedDio;
+          final ok = await ref
+              .read(directorsProvider.notifier)
+              .updatePermissionLevel(dio, d.id, newLevel);
+          if (mounted && ok) {
+            showToast(
+              context,
+              L10n.t('directors.permChanged', lang),
+              type: ToastType.success,
+            );
+          }
+        },
+      ),
+    );
   }
 
   Future<void> _deleteDirector(Director d) async {
@@ -132,11 +161,14 @@ class _DirectorDetailScreenState extends ConsumerState<DirectorDetailScreen> {
                 label: d.schedule ?? L10n.t('directors.manual', lang),
                 cs: cs,
               ),
-              _InfoChip(
-                icon: Icons.shield_outlined,
-                label:
-                    '${L10n.t('directors.permLevel', lang)}: ${d.permissionLevel}',
-                cs: cs,
+              // Tappable permission badge — opens selector sheet
+              GestureDetector(
+                onTap: () => _showPermissionSheet(d),
+                child: PermissionLevelBadge(
+                  level: d.permissionLevel,
+                  lang: lang,
+                  fontSize: 12,
+                ),
               ),
               if (d.canDelegate)
                 _InfoChip(
@@ -842,6 +874,53 @@ class _SetupCompleteCard extends StatelessWidget {
               }).toList(),
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+// ── Permission level bottom sheet ──
+
+class _PermissionBottomSheet extends StatelessWidget {
+  final String currentLevel;
+  final String lang;
+  final ValueChanged<String> onChanged;
+
+  const _PermissionBottomSheet({
+    required this.currentLevel,
+    required this.lang,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: cs.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Drag handle
+          Container(
+            width: 36,
+            height: 4,
+            decoration: BoxDecoration(
+              color: cs.outlineVariant,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(height: 20),
+          PermissionLevelSelector(
+            currentLevel: currentLevel,
+            lang: lang,
+            onChanged: onChanged,
+          ),
         ],
       ),
     );

@@ -274,7 +274,8 @@ class AuthService {
     final dio = Dio(BaseOptions(
       baseUrl: apiUrl,
       connectTimeout: const Duration(seconds: 15),
-      receiveTimeout: const Duration(seconds: 30),
+      receiveTimeout: const Duration(seconds: 120),
+      sendTimeout: const Duration(seconds: 60),
     ));
     dio.interceptors.add(InterceptorsWrapper(
       onRequest: (options, handler) {

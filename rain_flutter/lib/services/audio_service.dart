@@ -81,7 +81,11 @@ class AudioService {
       final response = await _dio.post(
         '/upload-audio',
         data: formData,
-        options: Options(contentType: 'multipart/form-data'),
+        options: Options(
+          contentType: 'multipart/form-data',
+          sendTimeout: const Duration(seconds: 60),
+          receiveTimeout: const Duration(seconds: 120),
+        ),
       );
 
       if (response.statusCode == 200 && response.data is Map) {

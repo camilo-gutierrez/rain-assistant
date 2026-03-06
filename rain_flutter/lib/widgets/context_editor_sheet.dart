@@ -1,6 +1,5 @@
 import 'dart:convert';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -9,6 +8,7 @@ import '../models/director.dart';
 import '../providers/connection_provider.dart';
 import '../providers/directors_provider.dart';
 import '../providers/settings_provider.dart';
+import 'context_field_builder.dart';
 import 'toast.dart';
 
 /// Shows a full-height bottom sheet to configure a director's context fields.
@@ -129,9 +129,8 @@ class _ContextEditorSheetState extends ConsumerState<_ContextEditorSheet> {
             .where((t) => t.isNotEmpty)
             .toList();
         newContext[field.key] = jsonEncode(tags);
-      } else if (field.type == 'number') {
-        newContext[field.key] = text;
-      } else if (field.type == 'toggle') {
+      } else if (field.type == 'multiselect') {
+        // Already stored as JSON array by the widget
         newContext[field.key] = text;
       } else {
         newContext[field.key] = text;
@@ -319,13 +318,20 @@ class _ContextEditorSheetState extends ConsumerState<_ContextEditorSheet> {
                   children: [
                     // ── Required fields section ──
                     if (requiredFields.isNotEmpty) ...[
-                      _GroupHeader(
+                      ContextGroupHeader(
                         group: '_required',
                         lang: lang,
                         cs: cs,
                       ),
                       for (final field in requiredFields) ...[
-                        _buildField(field, lang, cs),
+                        buildContextField(
+                          field,
+                          _controllers[field.key]!,
+                          lang,
+                          cs,
+                          setStateCallback: setState,
+                          dio: ref.read(authServiceProvider).authenticatedDio,
+                        ),
                         const SizedBox(height: 16),
                       ],
                     ],
@@ -336,12 +342,19 @@ class _ContextEditorSheetState extends ConsumerState<_ContextEditorSheet> {
                         fields: optionalFields,
                         lang: lang,
                         cs: cs,
-                        buildField: (f) => _buildField(f, lang, cs),
+                        buildField: (f) => buildContextField(
+                          f,
+                          _controllers[f.key]!,
+                          lang,
+                          cs,
+                          setStateCallback: setState,
+                          dio: ref.read(authServiceProvider).authenticatedDio,
+                        ),
                       ),
 
                     // Extra context keys (not from template)
                     if (extraKeys.isNotEmpty) ...[
-                      _GroupHeader(
+                      ContextGroupHeader(
                         group: 'extra',
                         lang: lang,
                         cs: cs,
@@ -401,402 +414,6 @@ class _ContextEditorSheetState extends ConsumerState<_ContextEditorSheet> {
           ),
         ),
           ],
-        );
-      },
-    );
-  }
-
-  Widget _buildField(ContextFieldMeta field, String lang, ColorScheme cs) {
-    final controller = _controllers[field.key]!;
-    final label = field.localizedLabel(lang);
-    final hint = field.localizedHint(lang);
-
-    final requiredSuffix = field.required
-        ? Text(' *',
-            style: TextStyle(
-                color: cs.error, fontSize: 14, fontWeight: FontWeight.w700))
-        : null;
-
-    Widget fieldWidget = switch (field.type) {
-      'textarea' => TextFormField(
-          controller: controller,
-          decoration: InputDecoration(
-            labelText: label,
-            hintText: hint,
-            border: const OutlineInputBorder(),
-            suffix: requiredSuffix,
-            alignLabelWithHint: true,
-          ),
-          maxLines: 6,
-          minLines: 3,
-          validator: field.required
-              ? (v) => (v == null || v.trim().isEmpty)
-                  ? L10n.t('directors.fieldRequired', lang)
-                  : null
-              : null,
-        ),
-      'tags' => _TagsFormField(
-          controller: controller,
-          label: label,
-          hint: hint,
-          required: field.required,
-          lang: lang,
-          cs: cs,
-        ),
-      'number' => TextFormField(
-          controller: controller,
-          decoration: InputDecoration(
-            labelText: label,
-            hintText: hint,
-            border: const OutlineInputBorder(),
-            suffix: requiredSuffix,
-          ),
-          keyboardType: TextInputType.number,
-          validator: field.required
-              ? (v) => (v == null || v.trim().isEmpty)
-                  ? L10n.t('directors.fieldRequired', lang)
-                  : null
-              : null,
-        ),
-      'select' => DropdownButtonFormField<String>(
-          initialValue: controller.text.isNotEmpty ? controller.text : null,
-          items: field.options
-              .map((o) => DropdownMenuItem(value: o, child: Text(o)))
-              .toList(),
-          onChanged: (v) => controller.text = v ?? '',
-          decoration: InputDecoration(
-            labelText: label,
-            border: const OutlineInputBorder(),
-          ),
-          validator: field.required
-              ? (v) => (v == null || v.isEmpty)
-                  ? L10n.t('directors.fieldRequired', lang)
-                  : null
-              : null,
-        ),
-      'toggle' => SwitchListTile(
-          title: Text(label),
-          subtitle: hint.isNotEmpty
-              ? Text(hint, style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant))
-              : null,
-          value: controller.text == 'true',
-          onChanged: (v) => setState(() => controller.text = v.toString()),
-          contentPadding: EdgeInsets.zero,
-        ),
-      _ => TextFormField(
-          controller: controller,
-          decoration: InputDecoration(
-            labelText: label,
-            hintText: hint,
-            border: const OutlineInputBorder(),
-            suffix: requiredSuffix,
-          ),
-          validator: field.required
-              ? (v) => (v == null || v.trim().isEmpty)
-                  ? L10n.t('directors.fieldRequired', lang)
-                  : null
-              : null,
-        ),
-    };
-
-    // Add file upload card for textarea fields that allow file attach
-    if (field.allowFileAttach && field.type == 'textarea') {
-      fieldWidget = Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // Prominent file upload card
-          _FileUploadCard(controller: controller, lang: lang, cs: cs),
-          const SizedBox(height: 8),
-          // Separator with "or type manually"
-          Row(
-            children: [
-              Expanded(
-                child: Divider(
-                    color: cs.outlineVariant.withValues(alpha: 0.3)),
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: Text(
-                  L10n.t('directors.orTypeManually', lang),
-                  style: TextStyle(
-                      fontSize: 11, color: cs.onSurfaceVariant),
-                ),
-              ),
-              Expanded(
-                child: Divider(
-                    color: cs.outlineVariant.withValues(alpha: 0.3)),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          fieldWidget,
-        ],
-      );
-    }
-
-    // Add info tooltip for hint text on non-file fields
-    if (!field.allowFileAttach && hint.isNotEmpty) {
-      fieldWidget = Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          fieldWidget,
-          Padding(
-            padding: const EdgeInsets.only(top: 4, left: 4),
-            child: Row(
-              children: [
-                Icon(Icons.info_outline,
-                    size: 12, color: cs.onSurfaceVariant.withValues(alpha: 0.6)),
-                const SizedBox(width: 4),
-                Flexible(
-                  child: Text(
-                    hint,
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: cs.onSurfaceVariant.withValues(alpha: 0.6),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      );
-    }
-
-    return fieldWidget;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Group header
-// ---------------------------------------------------------------------------
-
-class _GroupHeader extends StatelessWidget {
-  final String group;
-  final String lang;
-  final ColorScheme cs;
-
-  const _GroupHeader({
-    required this.group,
-    required this.lang,
-    required this.cs,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final label = switch (group) {
-      '_required' => L10n.t('directors.requiredFields', lang),
-      '_optional' => L10n.t('directors.optionalFields', lang),
-      'profile' => L10n.t('directors.contextGroups.profile', lang),
-      'search' => L10n.t('directors.contextGroups.search', lang),
-      'filters' => L10n.t('directors.contextGroups.filters', lang),
-      'extra' => L10n.t('directors.contextGroups.extra', lang),
-      'runtime' => L10n.t('directors.contextGroups.runtime', lang),
-      _ => L10n.t('directors.contextGroups.general', lang),
-    };
-
-    final icon = switch (group) {
-      '_required' => Icons.star_rounded,
-      '_optional' => Icons.tune,
-      'profile' => Icons.person_outline,
-      'search' => Icons.search,
-      'filters' => Icons.filter_list,
-      'extra' => Icons.more_horiz,
-      'runtime' => Icons.auto_mode_outlined,
-      _ => Icons.settings_outlined,
-    };
-
-    return Padding(
-      padding: const EdgeInsets.only(top: 8, bottom: 12),
-      child: Row(
-        children: [
-          Icon(icon, size: 18, color: cs.primary),
-          const SizedBox(width: 8),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: cs.primary,
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Divider(color: cs.outlineVariant.withValues(alpha: 0.3)),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Tags form field — chips + add input
-// ---------------------------------------------------------------------------
-
-class _TagsFormField extends StatefulWidget {
-  final TextEditingController controller;
-  final String label;
-  final String hint;
-  final bool required;
-  final String lang;
-  final ColorScheme cs;
-
-  const _TagsFormField({
-    required this.controller,
-    required this.label,
-    required this.hint,
-    required this.required,
-    required this.lang,
-    required this.cs,
-  });
-
-  @override
-  State<_TagsFormField> createState() => _TagsFormFieldState();
-}
-
-class _TagsFormFieldState extends State<_TagsFormField> {
-  late List<String> _tags;
-  final _addController = TextEditingController();
-  final _focusNode = FocusNode();
-
-  @override
-  void initState() {
-    super.initState();
-    _parseTags();
-  }
-
-  void _parseTags() {
-    final text = widget.controller.text.trim();
-    if (text.isEmpty) {
-      _tags = [];
-      return;
-    }
-
-    // Try JSON array first, then comma-separated
-    try {
-      final decoded = jsonDecode(text);
-      if (decoded is List) {
-        _tags = decoded.map((e) => e.toString()).toList();
-        return;
-      }
-    } catch (_) {}
-
-    _tags = text
-        .split(RegExp(r'[,\n]'))
-        .map((t) => t.trim())
-        .where((t) => t.isNotEmpty)
-        .toList();
-  }
-
-  void _syncToController() {
-    widget.controller.text = _tags.join(', ');
-  }
-
-  void _addTag(String tag) {
-    final trimmed = tag.trim();
-    if (trimmed.isEmpty || _tags.contains(trimmed)) return;
-    setState(() {
-      _tags.add(trimmed);
-      _syncToController();
-      _addController.clear();
-    });
-  }
-
-  void _removeTag(int index) {
-    setState(() {
-      _tags.removeAt(index);
-      _syncToController();
-    });
-  }
-
-  @override
-  void dispose() {
-    _addController.dispose();
-    _focusNode.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final requiredStar = widget.required
-        ? Text(' *',
-            style: TextStyle(
-                color: widget.cs.error,
-                fontSize: 14,
-                fontWeight: FontWeight.w700))
-        : null;
-
-    return FormField<String>(
-      validator: widget.required
-          ? (_) => _tags.isEmpty
-              ? L10n.t('directors.fieldRequired', widget.lang)
-              : null
-          : null,
-      builder: (state) {
-        return InputDecorator(
-          decoration: InputDecoration(
-            labelText: widget.label,
-            hintText: _tags.isEmpty ? widget.hint : null,
-            border: const OutlineInputBorder(),
-            suffix: requiredStar,
-            errorText: state.errorText,
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (_tags.isNotEmpty)
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: [
-                    for (var i = 0; i < _tags.length; i++)
-                      InputChip(
-                        label: Text(_tags[i],
-                            style: const TextStyle(fontSize: 12)),
-                        onDeleted: () => _removeTag(i),
-                        deleteIconColor: widget.cs.onSurfaceVariant,
-                        materialTapTargetSize:
-                            MaterialTapTargetSize.shrinkWrap,
-                        visualDensity: VisualDensity.compact,
-                      ),
-                  ],
-                ),
-              if (_tags.isNotEmpty) const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _addController,
-                      focusNode: _focusNode,
-                      decoration: InputDecoration(
-                        hintText: L10n.t('directors.addTag', widget.lang),
-                        border: InputBorder.none,
-                        isDense: true,
-                        contentPadding: EdgeInsets.zero,
-                      ),
-                      style: const TextStyle(fontSize: 13),
-                      onSubmitted: (v) {
-                        _addTag(v);
-                        _focusNode.requestFocus();
-                      },
-                    ),
-                  ),
-                  IconButton(
-                    icon: Icon(Icons.add_circle_outline,
-                        size: 20, color: widget.cs.primary),
-                    onPressed: () {
-                      _addTag(_addController.text);
-                      _focusNode.requestFocus();
-                    },
-                    visualDensity: VisualDensity.compact,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                  ),
-                ],
-              ),
-            ],
-          ),
         );
       },
     );
@@ -877,133 +494,6 @@ class _CollapsibleOptionalGroupState extends State<_CollapsibleOptionalGroup> {
                 child: widget.buildField(field),
               )),
       ],
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// File upload card — prominent card for uploading CV / documents
-// ---------------------------------------------------------------------------
-
-class _FileUploadCard extends StatelessWidget {
-  final TextEditingController controller;
-  final String lang;
-  final ColorScheme cs;
-
-  const _FileUploadCard({
-    required this.controller,
-    required this.lang,
-    required this.cs,
-  });
-
-  Future<void> _pickFile(BuildContext context) async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['txt', 'md', 'csv', 'json', 'pdf', 'docx'],
-      withData: true,
-    );
-
-    if (result == null || result.files.single.bytes == null) return;
-
-    final bytes = result.files.single.bytes!;
-    final text = String.fromCharCodes(bytes);
-    final fileName = result.files.single.name;
-
-    if (!context.mounted) return;
-
-    if (controller.text.trim().isEmpty) {
-      controller.text = text;
-      showToast(
-        context,
-        L10n.t('directors.fileLoaded', lang, {'name': fileName}),
-        type: ToastType.success,
-      );
-    } else {
-      final action = await showDialog<String>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: Text(L10n.t('directors.fileAttachAction', lang)),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop('replace'),
-              child: Text(L10n.t('directors.fileReplace', lang)),
-            ),
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop('append'),
-              child: Text(L10n.t('directors.fileAppend', lang)),
-            ),
-          ],
-        ),
-      );
-      if (action == 'replace') {
-        controller.text = text;
-      } else if (action == 'append') {
-        controller.text = '${controller.text}\n\n$text';
-      }
-      if (context.mounted && action != null) {
-        showToast(
-          context,
-          L10n.t('directors.fileLoaded', lang, {'name': fileName}),
-          type: ToastType.success,
-        );
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final hasContent = controller.text.trim().isNotEmpty;
-
-    return InkWell(
-      onTap: () => _pickFile(context),
-      borderRadius: BorderRadius.circular(14),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: cs.primary.withValues(alpha: 0.06),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: cs.primary.withValues(alpha: 0.25),
-            width: 1.5,
-          ),
-        ),
-        child: Column(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: cs.primary.withValues(alpha: 0.1),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                hasContent ? Icons.description : Icons.upload_file,
-                size: 28,
-                color: cs.primary,
-              ),
-            ),
-            const SizedBox(height: 10),
-            Text(
-              L10n.t('directors.uploadCV', lang),
-              style: TextStyle(
-                fontWeight: FontWeight.w600,
-                fontSize: 14,
-                color: cs.primary,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              hasContent
-                  ? '${controller.text.trim().length} chars'
-                  : L10n.t('directors.uploadCVHint', lang),
-              style: TextStyle(
-                fontSize: 12,
-                color: cs.onSurfaceVariant,
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

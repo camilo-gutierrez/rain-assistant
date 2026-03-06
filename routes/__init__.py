@@ -10,6 +10,7 @@ from routes.files import files_router
 from routes.settings import settings_router
 from routes.directors import directors_router
 from routes.images import images_router
+from routes.file_parse import file_parse_router
 
 __all__ = [
     "auth_router",
@@ -18,4 +19,5 @@ __all__ = [
     "settings_router",
     "directors_router",
     "images_router",
+    "file_parse_router",
 ]

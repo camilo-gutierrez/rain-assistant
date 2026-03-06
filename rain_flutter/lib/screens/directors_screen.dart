@@ -6,8 +6,10 @@ import '../providers/connection_provider.dart';
 import '../providers/directors_provider.dart';
 import '../providers/settings_provider.dart';
 import '../widgets/context_editor_sheet.dart';
+import '../widgets/permission_level_selector.dart';
 import '../widgets/toast.dart';
 import 'director_detail_screen.dart';
+import 'team_setup_wizard_screen.dart';
 
 // ── Cron validation ──
 
@@ -240,6 +242,10 @@ class _DirectorsScreenState extends ConsumerState<DirectorsScreen>
           type: ToastType.success);
       notifier.setActiveProject(dio, project.id);
       _tabController.animateTo(0);
+      // Launch wizard if team template has directors with required fields
+      if (data.containsKey('team_template') && data['team_template'] != null) {
+        await _maybeShowWizard(project);
+      }
     } else if (mounted) {
       showToast(context, 'Error', type: ToastType.error);
     }
@@ -658,9 +664,41 @@ class _DirectorsScreenState extends ConsumerState<DirectorsScreen>
           type: ToastType.success);
       notifier.setActiveProject(dio, project.id);
       _tabController.animateTo(0);
+      await _maybeShowWizard(project);
     } else if (mounted) {
       showToast(context, 'Error', type: ToastType.error);
     }
+  }
+
+  /// Check if any directors in the project have user-editable required fields
+  /// and navigate to the team setup wizard if so.
+  Future<void> _maybeShowWizard(DirectorProject project) async {
+    final dio = ref.read(authServiceProvider).authenticatedDio;
+    final notifier = ref.read(directorsProvider.notifier);
+
+    // Reload directors to get the newly installed ones
+    await notifier.loadDirectors(dio);
+
+    if (!mounted) return;
+
+    // Filter directors that belong to this project and have user-editable required fields
+    final projectDirectors = ref
+        .read(directorsProvider)
+        .directors
+        .where((d) => d.requiredContext.any(
+            (f) => f.required && !f.readOnly && !f.autoManaged))
+        .toList();
+
+    if (projectDirectors.isEmpty) return;
+
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => TeamSetupWizardScreen(
+        projectId: project.id,
+        projectName: project.name,
+        projectEmoji: project.emoji,
+        directors: projectDirectors,
+      ),
+    ));
   }
 
   // ── Tasks tab ──
@@ -1090,8 +1128,15 @@ class _DirectorCard extends StatelessWidget {
                     Text('\$${d.totalCost.toStringAsFixed(4)}',
                         style: TextStyle(
                             fontSize: 12, color: cs.onSurfaceVariant)),
+                    // Permission level badge
+                    const SizedBox(width: 12),
+                    PermissionLevelBadge(
+                      level: d.permissionLevel,
+                      lang: lang,
+                      fontSize: 10,
+                    ),
                     if (d.canDelegate) ...[
-                      const SizedBox(width: 16),
+                      const SizedBox(width: 8),
                       Icon(Icons.call_split, size: 14, color: cs.primary),
                       const SizedBox(width: 4),
                       Text(L10n.t('directors.canDelegate', lang),

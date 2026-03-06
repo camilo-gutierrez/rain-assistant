@@ -71,6 +71,10 @@ async def upload_audio(request: Request, audio: UploadFile = File(...)):
         suffix = ".ogg"
     elif audio.content_type and "mp4" in audio.content_type:
         suffix = ".mp4"
+    elif audio.content_type and "m4a" in audio.content_type:
+        suffix = ".m4a"
+    elif audio.filename and audio.filename.endswith(".m4a"):
+        suffix = ".m4a"
 
     tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
     try:
