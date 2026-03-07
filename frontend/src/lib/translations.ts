@@ -205,6 +205,7 @@ const translations: Record<Language, Record<string, string>> = {
     "mcp.serverError": "{label} failed to start and has been disabled",
     "mcp.serverDisabled": "{label} is not configured. Set it up with: rain setup",
     "mcp.allServersFailed": "All MCP servers failed to start. Rain will work without integrations.",
+    "mcp.clickToSetup": "Click to set up {label}",
 
     // Months
     "month.0": "Jan", "month.1": "Feb", "month.2": "Mar", "month.3": "Apr",
@@ -306,11 +307,10 @@ const translations: Record<Language, Record<string, string>> = {
     "directors.templates": "Templates",
     "directors.noTemplates": "No templates available",
     "directors.install": "Install",
-    "directors.individualTemplates": "Individual Directors",
-    "directors.teamTemplates": "Teams",
     "directors.teamDirectors": "{count} directors",
     "directors.createProject": "Create Project",
     "directors.runTeam": "Run Team",
+    "directors.stopTeam": "Stop Team",
     "directors.teamRunning": "Team running…",
     "directors.taskQueue": "Task Queue",
     "directors.noTasks": "No tasks in queue",
@@ -635,6 +635,7 @@ const translations: Record<Language, Record<string, string>> = {
     "mcp.serverError": "{label} no pudo iniciar y fue deshabilitado",
     "mcp.serverDisabled": "{label} no esta configurado. Configuralo con: rain setup",
     "mcp.allServersFailed": "Todos los servidores MCP fallaron al iniciar. Rain funcionara sin integraciones.",
+    "mcp.clickToSetup": "Haz clic para configurar {label}",
 
     // Months
     "month.0": "Ene", "month.1": "Feb", "month.2": "Mar", "month.3": "Abr",
@@ -736,11 +737,10 @@ const translations: Record<Language, Record<string, string>> = {
     "directors.templates": "Plantillas",
     "directors.noTemplates": "No hay plantillas disponibles",
     "directors.install": "Instalar",
-    "directors.individualTemplates": "Directores Individuales",
-    "directors.teamTemplates": "Equipos",
     "directors.teamDirectors": "{count} directores",
     "directors.createProject": "Crear Proyecto",
     "directors.runTeam": "Ejecutar Equipo",
+    "directors.stopTeam": "Detener Equipo",
     "directors.teamRunning": "Equipo en ejecución…",
     "directors.taskQueue": "Cola de Tareas",
     "directors.noTasks": "No hay tareas en cola",

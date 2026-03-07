@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:audio_session/audio_session.dart';
@@ -49,22 +50,37 @@ class AudioService {
   }
 
   /// Start recording audio to a temporary .m4a file.
-  Future<void> startRecording() async {
-    final hasPermission = await _recorder.hasPermission();
-    if (!hasPermission) return;
+  /// Returns true if recording started successfully, false otherwise.
+  Future<bool> startRecording() async {
+    try {
+      final hasPermission = await _recorder.hasPermission();
+      if (!hasPermission) {
+        debugPrint('[Audio] Microphone permission denied');
+        return false;
+      }
 
-    final dir = await getTemporaryDirectory();
-    _recordingPath =
-        '${dir.path}/rain_recording_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      final dir = await getTemporaryDirectory();
+      _recordingPath =
+          '${dir.path}/rain_recording_${DateTime.now().millisecondsSinceEpoch}.m4a';
 
-    await _recorder.start(
-      const RecordConfig(
-        encoder: AudioEncoder.aacLc,
-        sampleRate: 44100,
-        bitRate: 128000,
-      ),
-      path: _recordingPath!,
-    );
+      await _recorder.start(
+        const RecordConfig(
+          encoder: AudioEncoder.aacLc,
+          sampleRate: 44100,
+          bitRate: 128000,
+        ),
+        path: _recordingPath!,
+      );
+      return true;
+    } catch (e, stack) {
+      debugPrint('[Audio] Failed to start recording: $e');
+      CrashReportingService.instance.captureException(
+        e,
+        stackTrace: stack,
+        context: 'audio_start_recording',
+      );
+      return false;
+    }
   }
 
   /// Stop recording and upload to /api/upload-audio.
@@ -151,14 +167,55 @@ class AudioService {
 
       debugPrint('[TTS] Received ${bytes.length} bytes, playing...');
 
-      // Play from bytes in memory
-      await _player.setAudioSource(_BytesAudioSource(bytes));
+      // Try in-memory playback first; fall back to file-based playback
+      // (some Android devices don't support StreamAudioSource properly)
+      try {
+        await _player.setAudioSource(_BytesAudioSource(bytes));
+      } catch (e) {
+        debugPrint('[TTS] In-memory source failed, trying file fallback: $e');
+        await _playFromFile(bytes);
+        return;
+      }
       playbackState.value = TtsPlaybackState.playing;
       await _player.play();
-    } catch (e) {
+    } catch (e, stack) {
       debugPrint('[TTS] Error: $e');
+      CrashReportingService.instance.captureException(
+        e,
+        stackTrace: stack,
+        context: 'tts_synthesize',
+      );
       playbackState.value = TtsPlaybackState.error;
       // Reset to idle after a moment so UI can recover
+      Future.delayed(const Duration(seconds: 2), () {
+        if (playbackState.value == TtsPlaybackState.error) {
+          playbackState.value = TtsPlaybackState.idle;
+        }
+      });
+    }
+  }
+
+  /// Fallback: write audio bytes to a temp file and play from disk.
+  /// Works on devices where StreamAudioSource is unreliable.
+  Future<void> _playFromFile(Uint8List bytes) async {
+    try {
+      final dir = await getTemporaryDirectory();
+      final file = File(
+          '${dir.path}/rain_tts_${DateTime.now().millisecondsSinceEpoch}.mp3');
+      await file.writeAsBytes(bytes, flush: true);
+      await _player.setFilePath(file.path);
+      playbackState.value = TtsPlaybackState.playing;
+      await _player.play();
+      // Clean up after playback completes
+      file.delete().ignore();
+    } catch (e, stack) {
+      debugPrint('[TTS] File fallback also failed: $e');
+      CrashReportingService.instance.captureException(
+        e,
+        stackTrace: stack,
+        context: 'tts_file_fallback',
+      );
+      playbackState.value = TtsPlaybackState.error;
       Future.delayed(const Duration(seconds: 2), () {
         if (playbackState.value == TtsPlaybackState.error) {
           playbackState.value = TtsPlaybackState.idle;

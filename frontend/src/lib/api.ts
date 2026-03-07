@@ -581,6 +581,18 @@ export async function runProject(
   return res.json();
 }
 
+export async function stopProject(
+  projectId: string,
+  token: string | null
+): Promise<{ stopped: boolean }> {
+  const res = await fetchWithTimeout(
+    `${getApiUrl()}/directors/projects/${encodeURIComponent(projectId)}/stop`,
+    { method: "POST", headers: authHeaders(token) }
+  );
+  if (!res.ok) throw new Error(`Stop project failed: ${res.status}`);
+  return res.json();
+}
+
 export async function fetchDirectorTemplates(
   token: string | null
 ): Promise<{ templates: DirectorTemplate[] }> {
@@ -724,5 +736,21 @@ export async function fetchTeamTemplates(
     headers: authHeaders(token),
   });
   if (!res.ok) throw new Error(`Fetch team templates failed: ${res.status}`);
+  return res.json();
+}
+
+export interface McpServerInfo {
+  status: string;
+  error: string | null;
+  label: string;
+}
+
+export async function fetchMcpStatus(
+  token: string | null
+): Promise<{ servers: Record<string, McpServerInfo>; config_exists: boolean }> {
+  const res = await fetchWithTimeout(`${getApiUrl()}/api/mcp/status`, {
+    headers: authHeaders(token),
+  });
+  if (!res.ok) return { servers: {}, config_exists: false };
   return res.json();
 }

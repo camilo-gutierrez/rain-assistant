@@ -68,6 +68,8 @@ class L10n {
     'chat.camera': 'Camera',
     'chat.recording': 'Recording... Release to Send',
     'chat.transcribing': 'Transcribing audio...',
+    'chat.micError': 'Could not access microphone. Check permissions.',
+    'chat.ttsError': 'Could not play audio on this device.',
     'chat.stop': 'Stop',
     'chat.stopping': 'Stopping...',
     'chat.forceStop': 'Force Stop',
@@ -557,6 +559,16 @@ class L10n {
     'devices.revokeAllConfirmBody': 'All connected devices will be disconnected immediately. You can then log in with this device.',
     'devices.revokeAllError': 'Could not remove devices. Try again.',
 
+    // MCP Tools
+    'mcp.title': 'Integrations',
+    'mcp.hub': 'Hub',
+    'mcp.email': 'Email',
+    'mcp.browser': 'Browser',
+    'mcp.calendar': 'Calendar',
+    'mcp.smarthome': 'Smart Home',
+    'mcp.tapToSetup': 'Tap to set up {label}',
+    'mcp.notAvailable': '{label} not available',
+
     // Days of week
     'dow.Monday': 'Mon', 'dow.Tuesday': 'Tue', 'dow.Wednesday': 'Wed',
     'dow.Thursday': 'Thu', 'dow.Friday': 'Fri', 'dow.Saturday': 'Sat',
@@ -618,6 +630,8 @@ class L10n {
     'chat.camera': 'Cámara',
     'chat.recording': 'Grabando... Suelta para Enviar',
     'chat.transcribing': 'Transcribiendo audio...',
+    'chat.micError': 'No se pudo acceder al micrófono. Revisa los permisos.',
+    'chat.ttsError': 'No se pudo reproducir el audio en este dispositivo.',
     'chat.stop': 'Detener',
     'chat.stopping': 'Deteniendo...',
     'chat.forceStop': 'Forzar Parada',
@@ -1106,6 +1120,16 @@ class L10n {
     'devices.revokeAllConfirmTitle': 'Eliminar todos los dispositivos?',
     'devices.revokeAllConfirmBody': 'Todos los dispositivos conectados se desconectaran inmediatamente. Podras iniciar sesion con este dispositivo.',
     'devices.revokeAllError': 'No se pudieron eliminar los dispositivos. Intenta de nuevo.',
+
+    // MCP Tools
+    'mcp.title': 'Integraciones',
+    'mcp.hub': 'Hub',
+    'mcp.email': 'Email',
+    'mcp.browser': 'Navegador',
+    'mcp.calendar': 'Calendario',
+    'mcp.smarthome': 'Smart Home',
+    'mcp.tapToSetup': 'Toca para configurar {label}',
+    'mcp.notAvailable': '{label} no disponible',
 
     // Days of week
     'dow.Monday': 'Lun', 'dow.Tuesday': 'Mar', 'dow.Wednesday': 'Mié',

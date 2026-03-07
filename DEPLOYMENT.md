@@ -86,17 +86,20 @@ pip install "rain-assistant[all]"
 
 Available extras:
 
-| Extra          | Packages added                                      |
-|----------------|-----------------------------------------------------|
-| `telegram`     | aiogram 3                                           |
-| `computer-use` | anthropic, pyautogui, mss, Pillow, pyperclip        |
-| `browser`      | playwright                                          |
-| `scheduler`    | croniter                                            |
-| `ollama`       | ollama                                              |
-| `tunnel`       | pycloudflared                                       |
-| `memory`       | sentence-transformers, pypdf                        |
-| `voice`        | torch, openwakeword, onnxruntime                    |
-| `all`          | All of the above                                    |
+| Extra          | Packages added                                              |
+|----------------|-------------------------------------------------------------|
+| `telegram`     | aiogram 3                                                   |
+| `computer-use` | anthropic, pyautogui, mss, Pillow, pyperclip, imagehash    |
+| `browser`      | playwright                                                  |
+| `scheduler`    | croniter                                                    |
+| `ollama`       | ollama                                                      |
+| `tunnel`       | pycloudflared, certifi                                      |
+| `memory`       | sentence-transformers, pypdf                                |
+| `documents`    | python-docx, beautifulsoup4, ebooklib, lxml                 |
+| `vision`       | pytesseract                                                 |
+| `ann`          | faiss-cpu                                                   |
+| `voice`        | torch, openwakeword, onnxruntime                            |
+| `all`          | All of the above                                            |
 
 ### Docker
 
@@ -199,6 +202,18 @@ Created automatically by `rain setup`. Key fields:
     "default_cwd": "/home/deploy"
   },
 
+  // Default provider when multiple keys are stored
+  "default_provider": "claude",
+
+  // Authentication mode ("api_key" or "oauth")
+  "auth_mode": "api_key",
+
+  // Whisper transcription language (ISO 639-1)
+  "language": "en",
+
+  // Maximum concurrent device connections (default: 2)
+  "max_devices": 2,
+
   // Plugin environment variables (API keys for plugins)
   "plugin_env": {
     "WEATHER_API_KEY": "abc123"
@@ -233,6 +248,8 @@ rain --port 9000            # Custom port (default: 8000)
 rain --no-browser           # Don't auto-open browser
 rain --telegram             # Start Telegram bot alongside web server
 rain --telegram-only        # Telegram bot only (no web server)
+rain --update               # Update to the latest version via pip
+rain --uninstall            # Uninstall Rain Assistant
 rain doctor                 # Check dependencies and system health
 rain setup                  # Re-run first-time setup wizard
 rain --version              # Show version
@@ -428,8 +445,8 @@ Returns 200 when healthy, 503 when unhealthy. Response body:
 ```json
 {
   "status": "healthy",
-  "version": "1.0.7",
-  "uptime_seconds": 3621.45,
+  "version": "1.0.20",
+  "uptime_seconds": 3621.5,
   "checks": {
     "database": "ok",
     "disk_space_mb": 52481.3,

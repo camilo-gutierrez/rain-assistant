@@ -11,9 +11,8 @@ import {
   deleteDirector,
   runDirector,
   runProject,
-  fetchDirectorTemplates,
+  stopProject,
   fetchTeamTemplates,
-  createDirector,
   createProject,
   updateDirector,
   fetchDirectorTasks,
@@ -22,7 +21,6 @@ import {
 } from "@/lib/api";
 import type {
   Director,
-  DirectorTemplate,
   DirectorTask,
   ActivityItem,
   DirectorProject,
@@ -39,7 +37,6 @@ import {
   ChevronUp,
   ListTodo,
   Zap,
-  Download,
   FolderOpen,
   Users,
   CheckCircle,
@@ -53,6 +50,7 @@ import {
   Bell,
   BarChart3,
   Shield,
+  Square,
 } from "lucide-react";
 import type { InboxItem } from "@/lib/types";
 import { fetchInbox } from "@/lib/api";
@@ -61,30 +59,26 @@ import { SkeletonList } from "@/components/Skeleton";
 import DirectorContextEditor from "@/components/panels/DirectorContextEditor";
 
 type Tab = "directors" | "templates" | "tasks" | "activity";
-type TemplateSubTab = "individual" | "teams";
 
 export default function DirectorsPanel() {
   const { t } = useTranslation();
   const authToken = useConnectionStore((s) => s.authToken);
 
   const [tab, setTab] = useState<Tab>("directors");
-  const [templateSubTab, setTemplateSubTab] = useState<TemplateSubTab>("individual");
   const [directors, setDirectors] = useState<Director[]>([]);
-  const [templates, setTemplates] = useState<DirectorTemplate[]>([]);
   const [tasks, setTasks] = useState<DirectorTask[]>([]);
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [runningId, setRunningId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [installingId, setInstallingId] = useState<string | null>(null);
   const [teamTemplates, setTeamTemplates] = useState<TeamTemplate[]>([]);
   const [creatingProjectId, setCreatingProjectId] = useState<string | null>(null);
   const [expandedTeamId, setExpandedTeamId] = useState<string | null>(null);
   const [editingContextFor, setEditingContextFor] = useState<Director | null>(null);
   const [selectedDirector, setSelectedDirector] = useState<Director | null>(null);
 
-  // Team run state from store (replaces local teamRunning boolean)
+  // Team run state from store
   const activeRun = useDirectorRunStore((s) => s.activeRun);
   const clearRun = useDirectorRunStore((s) => s.clearRun);
   const teamRunning = activeRun !== null;
@@ -120,11 +114,7 @@ export default function DirectorsPanel() {
     if (!authToken) return;
     setLoading(true);
     try {
-      const [tmplData, teamData] = await Promise.all([
-        fetchDirectorTemplates(authToken),
-        fetchTeamTemplates(authToken),
-      ]);
-      setTemplates(tmplData.templates);
+      const teamData = await fetchTeamTemplates(authToken);
       setTeamTemplates(teamData.team_templates.filter((t) => t.directors.length > 0));
     } catch {
       // silent
@@ -172,11 +162,10 @@ export default function DirectorsPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, activeProjectId]);
 
-  // Auto-refresh data when a team run finishes (activeRun → null)
+  // Auto-refresh data when a team run finishes (activeRun -> null)
   const prevRunRef = useRef(activeRun);
   useEffect(() => {
     if (prevRunRef.current && !activeRun) {
-      // Run just finished and was cleared — refresh data
       loadDirectors();
       if (tab === "tasks") loadTasks();
       if (tab === "activity") loadActivity();
@@ -225,32 +214,6 @@ export default function DirectorsPanel() {
     }
   }
 
-  async function handleInstallTemplate(tmpl: DirectorTemplate, projectId?: string) {
-    if (!authToken) return;
-    setInstallingId(tmpl.id);
-    try {
-      const data = await createDirector({
-        id: projectId ? `${projectId}_${tmpl.id}` : tmpl.id,
-        name: tmpl.name,
-        emoji: tmpl.emoji,
-        description: tmpl.description,
-        role_prompt: tmpl.role_prompt,
-        schedule: tmpl.schedule,
-        tools_allowed: tmpl.tools_allowed,
-        plugins_allowed: tmpl.plugins_allowed,
-        permission_level: tmpl.permission_level as "green" | "yellow",
-        can_delegate: tmpl.can_delegate,
-        project_id: projectId || activeProjectId || "default",
-      } as Parameters<typeof createDirector>[0], authToken);
-      setDirectors((prev) => [...prev, data.director]);
-      setTab("directors");
-    } catch {
-      // silent
-    } finally {
-      setInstallingId(null);
-    }
-  }
-
   async function handleCreateProject(team: TeamTemplate) {
     if (!authToken) return;
     setCreatingProjectId(team.id);
@@ -277,7 +240,6 @@ export default function DirectorsPanel() {
     if (!authToken || !activeProjectId || teamRunning) return;
     try {
       const data = await runProject(activeProjectId, authToken);
-      // Initialize run store from HTTP response (if WS hasn't beaten us)
       const store = useDirectorRunStore.getState();
       if (!store.activeRun) {
         store.startRun(
@@ -288,7 +250,16 @@ export default function DirectorsPanel() {
         );
       }
     } catch {
-      // silent — HTTP failed, no WS events will come
+      // silent
+    }
+  }
+
+  async function handleStopTeam() {
+    if (!authToken || !activeProjectId) return;
+    try {
+      await stopProject(activeProjectId, authToken);
+    } catch {
+      // silent
     }
   }
 
@@ -299,13 +270,10 @@ export default function DirectorsPanel() {
     { key: "activity", label: t("directors.activity") },
   ];
 
-  const directorIds = new Set(directors.map((d) => d.id));
-
   const activeProject = projects.find((p) => p.id === activeProjectId);
 
   // If a director is selected, show detail view
   if (selectedDirector) {
-    // Refresh director data from the list (in case it was updated)
     const freshDirector = directors.find((d) => d.id === selectedDirector.id) || selectedDirector;
     return (
       <div className="p-4 space-y-4">
@@ -343,7 +311,7 @@ export default function DirectorsPanel() {
           <select
             value={activeProjectId}
             onChange={(e) => setActiveProjectId(e.target.value)}
-            className="flex-1 text-xs bg-surface2/50 border border-border rounded-md px-2 py-1.5 text-text focus:outline-none focus:ring-1 focus:ring-primary"
+            className="flex-1 text-xs bg-surface2/50 border border-border rounded-md px-2 py-1.5 text-text focus-ring"
           >
             <option value="">{t("projects.allDirectors")}</option>
             {projects.map((p) => (
@@ -395,7 +363,7 @@ export default function DirectorsPanel() {
                 </button>
               )}
               {activeRun && (
-                <TeamRunProgress run={activeRun} onDismiss={clearRun} t={t} />
+                <TeamRunProgress run={activeRun} onDismiss={clearRun} onStop={handleStopTeam} t={t} />
               )}
             </>
           )}
@@ -429,160 +397,78 @@ export default function DirectorsPanel() {
         </>
       )}
 
-      {/* Templates tab */}
+      {/* Templates tab — team templates only */}
       {tab === "templates" && (
         <>
-          {/* Inner sub-tabs: Individual | Teams */}
-          <div className="flex gap-1 bg-surface2/30 rounded-lg p-0.5">
-            {(
-              [
-                { key: "individual" as TemplateSubTab, label: t("directors.individualTemplates") },
-                { key: "teams" as TemplateSubTab, label: t("directors.teamTemplates") },
-              ] as const
-            ).map((st) => (
-              <button
-                key={st.key}
-                onClick={() => setTemplateSubTab(st.key)}
-                className={`flex-1 text-xs font-medium py-1.5 px-2 rounded-md transition-colors ${
-                  templateSubTab === st.key
-                    ? "bg-surface text-text shadow-sm"
-                    : "text-subtext hover:text-text2"
-                }`}
-              >
-                {st.label}
-              </button>
-            ))}
-          </div>
-
           {loading ? (
             <SkeletonList count={3} height="h-20" />
-          ) : templateSubTab === "individual" ? (
-            /* Individual Directors sub-tab */
-            templates.length === 0 ? (
-              <EmptyState icon={Bot} title={t("directors.noTemplates")} />
-            ) : (
-              <div className="space-y-2">
-                {activeProject && (
-                  <span className="text-xs text-subtext px-1">
-                    {t("projects.installTo", { name: `${activeProject.emoji} ${activeProject.name}` })}
-                  </span>
-                )}
-                {templates.map((tmpl) => (
-                  <div
-                    key={tmpl.id}
-                    className="p-3 rounded-lg bg-surface2/50 hover:bg-surface2 transition-colors space-y-2"
-                  >
-                    <div className="flex items-start gap-2">
-                      <span className="text-lg">{tmpl.emoji}</span>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium text-text">{tmpl.name}</div>
-                        <p className="text-xs text-text2 mt-0.5 line-clamp-2">{tmpl.description}</p>
+          ) : teamTemplates.length === 0 ? (
+            <EmptyState icon={Users} title={t("directors.noTemplates")} />
+          ) : (
+            <div className="space-y-2">
+              {teamTemplates.map((team) => (
+                <div
+                  key={team.id}
+                  className="rounded-lg bg-surface2/50 hover:bg-surface2 transition-colors overflow-hidden"
+                >
+                  <div className="flex items-start gap-2 p-3">
+                    <span className="text-lg">{team.emoji}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-text">{team.name}</span>
+                        <span className="text-xs px-1.5 py-0.5 rounded-full bg-mauve/10 text-mauve flex items-center gap-1">
+                          <Users size={10} />
+                          {t("directors.teamDirectors", { count: team.directors.length })}
+                        </span>
                       </div>
+                      <p className="text-xs text-text2 mt-0.5 line-clamp-2">{team.description}</p>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
                       <button
-                        onClick={() => handleInstallTemplate(tmpl)}
-                        disabled={installingId === tmpl.id || directorIds.has(tmpl.id)}
-                        className="shrink-0 text-xs px-2.5 py-1 rounded-lg bg-green/10 text-green hover:bg-green/20 transition-colors disabled:opacity-40"
+                        onClick={() => handleCreateProject(team)}
+                        disabled={creatingProjectId === team.id}
+                        className="text-xs px-2.5 py-1 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors disabled:opacity-40"
                       >
-                        {installingId === tmpl.id ? (
+                        {creatingProjectId === team.id ? (
                           <Loader2 size={12} className="animate-spin" />
-                        ) : directorIds.has(tmpl.id) ? (
-                          t("directors.enabled")
                         ) : (
                           <span className="flex items-center gap-1">
-                            <Download size={11} />
-                            {t("directors.install")}
+                            <FolderOpen size={11} />
+                            {t("directors.createProject")}
                           </span>
                         )}
                       </button>
-                    </div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {tmpl.schedule && (
-                        <span className="text-xs px-1.5 py-0.5 rounded-full bg-blue/10 text-blue flex items-center gap-1">
-                          <Clock size={10} />
-                          {tmpl.schedule}
-                        </span>
-                      )}
-                      {tmpl.can_delegate && (
-                        <span className="text-xs px-1.5 py-0.5 rounded-full bg-mauve/10 text-mauve">
-                          {t("directors.canDelegate")}
-                        </span>
-                      )}
-                      <span className={`w-2 h-2 rounded-full ${tmpl.permission_level === "yellow" ? "bg-yellow" : "bg-green"}`} />
+                      <button
+                        onClick={() => setExpandedTeamId(expandedTeamId === team.id ? null : team.id)}
+                        className="min-w-[28px] min-h-[28px] flex items-center justify-center rounded-lg text-text2 hover:bg-surface2 transition-colors"
+                      >
+                        {expandedTeamId === team.id ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                      </button>
                     </div>
                   </div>
-                ))}
-              </div>
-            )
-          ) : (
-            /* Teams sub-tab */
-            teamTemplates.length === 0 ? (
-              <EmptyState icon={Users} title={t("directors.noTemplates")} />
-            ) : (
-              <div className="space-y-2">
-                {teamTemplates.map((team) => (
-                  <div
-                    key={team.id}
-                    className="rounded-lg bg-surface2/50 hover:bg-surface2 transition-colors overflow-hidden"
-                  >
-                    <div className="flex items-start gap-2 p-3">
-                      <span className="text-lg">{team.emoji}</span>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-text">{team.name}</span>
-                          <span className="text-xs px-1.5 py-0.5 rounded-full bg-mauve/10 text-mauve flex items-center gap-1">
-                            <Users size={10} />
-                            {t("directors.teamDirectors", { count: team.directors.length })}
-                          </span>
-                        </div>
-                        <p className="text-xs text-text2 mt-0.5 line-clamp-2">{team.description}</p>
-                      </div>
-                      <div className="flex items-center gap-1 shrink-0">
-                        <button
-                          onClick={() => handleCreateProject(team)}
-                          disabled={creatingProjectId === team.id}
-                          className="text-xs px-2.5 py-1 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors disabled:opacity-40"
-                        >
-                          {creatingProjectId === team.id ? (
-                            <Loader2 size={12} className="animate-spin" />
-                          ) : (
-                            <span className="flex items-center gap-1">
-                              <FolderOpen size={11} />
-                              {t("directors.createProject")}
+                  {/* Expanded: show team directors */}
+                  {expandedTeamId === team.id && team.director_details && (
+                    <div className="px-3 pb-3 space-y-1.5 border-t border-overlay/50 pt-2">
+                      {team.director_details.map((dir) => (
+                        <div key={dir.id} className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-bg/50">
+                          <span className="text-sm">{dir.emoji}</span>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs font-medium text-text">{dir.name}</div>
+                            <p className="text-xs text-subtext truncate">{dir.description}</p>
+                          </div>
+                          {dir.schedule && (
+                            <span className="text-xs text-text2 flex items-center gap-1 shrink-0">
+                              <Clock size={9} />
+                              {dir.schedule}
                             </span>
                           )}
-                        </button>
-                        <button
-                          onClick={() => setExpandedTeamId(expandedTeamId === team.id ? null : team.id)}
-                          className="min-w-[28px] min-h-[28px] flex items-center justify-center rounded-lg text-text2 hover:bg-surface2 transition-colors"
-                        >
-                          {expandedTeamId === team.id ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                        </button>
-                      </div>
+                        </div>
+                      ))}
                     </div>
-                    {/* Expanded: show team directors */}
-                    {expandedTeamId === team.id && team.director_details && (
-                      <div className="px-3 pb-3 space-y-1.5 border-t border-overlay/50 pt-2">
-                        {team.director_details.map((dir) => (
-                          <div key={dir.id} className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-bg/50">
-                            <span className="text-sm">{dir.emoji}</span>
-                            <div className="flex-1 min-w-0">
-                              <div className="text-xs font-medium text-text">{dir.name}</div>
-                              <p className="text-xs text-subtext truncate">{dir.description}</p>
-                            </div>
-                            {dir.schedule && (
-                              <span className="text-xs text-text2 flex items-center gap-1 shrink-0">
-                                <Clock size={9} />
-                                {dir.schedule}
-                              </span>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )
+                  )}
+                </div>
+              ))}
+            </div>
           )}
         </>
       )}
@@ -676,42 +562,41 @@ const DirectorCard = React.memo(function DirectorCard({
           onClick={onSelect}
           className="flex items-center gap-3 flex-1 min-w-0 text-left bg-transparent border-0 p-0 cursor-pointer"
         >
-        <span className="text-lg shrink-0">{d.emoji}</span>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-sm font-medium text-text">{d.name}</span>
-            <span className={`w-2 h-2 rounded-full shrink-0 ${d.enabled ? "bg-green" : "bg-subtext"}`} />
-            {needsSetup && (
-              <span className="text-xs px-1.5 py-0.5 rounded-full bg-yellow/10 text-yellow flex items-center gap-1">
-                <AlertTriangle size={10} />
-                {t("directors.needsSetup")}
-              </span>
-            )}
+          <span className="text-lg shrink-0">{d.emoji}</span>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-sm font-medium text-text">{d.name}</span>
+              <span className={`w-2 h-2 rounded-full shrink-0 ${d.enabled ? "bg-green" : "bg-subtext"}`} />
+              {needsSetup && (
+                <span className="text-xs px-1.5 py-0.5 rounded-full bg-yellow/10 text-yellow flex items-center gap-1">
+                  <AlertTriangle size={10} />
+                  {t("directors.needsSetup")}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2 mt-0.5">
+              {d.schedule ? (
+                <span className="text-xs text-text2 flex items-center gap-1">
+                  <Clock size={10} />
+                  {d.schedule}
+                </span>
+              ) : (
+                <span className="text-xs text-subtext">{t("directors.manual")}</span>
+              )}
+              {d.run_count > 0 && (
+                <span className="text-xs text-subtext">
+                  {t("directors.runs", { count: d.run_count })}
+                </span>
+              )}
+              {d.total_cost > 0 && (
+                <span className="text-xs text-subtext">
+                  ${d.total_cost.toFixed(4)}
+                </span>
+              )}
+            </div>
           </div>
-          <div className="flex items-center gap-2 mt-0.5">
-            {d.schedule ? (
-              <span className="text-xs text-text2 flex items-center gap-1">
-                <Clock size={10} />
-                {d.schedule}
-              </span>
-            ) : (
-              <span className="text-xs text-subtext">{t("directors.manual")}</span>
-            )}
-            {d.run_count > 0 && (
-              <span className="text-xs text-subtext">
-                {t("directors.runs", { count: d.run_count })}
-              </span>
-            )}
-            {d.total_cost > 0 && (
-              <span className="text-xs text-subtext">
-                ${d.total_cost.toFixed(4)}
-              </span>
-            )}
-          </div>
-        </div>
         </button>
         <div className="flex items-center gap-1 shrink-0">
-          {/* Configure button — only if director has required_context fields */}
           {hasContext && (
             <button
               onClick={onConfigure}
@@ -725,7 +610,6 @@ const DirectorCard = React.memo(function DirectorCard({
               <Settings size={14} />
             </button>
           )}
-          {/* Run button */}
           <button
             onClick={onRun}
             disabled={isRunning}
@@ -734,7 +618,6 @@ const DirectorCard = React.memo(function DirectorCard({
           >
             {isRunning ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
           </button>
-          {/* Toggle enabled */}
           <button
             onClick={onToggle}
             className={`min-w-[32px] min-h-[32px] flex items-center justify-center rounded-lg transition-colors ${
@@ -744,7 +627,6 @@ const DirectorCard = React.memo(function DirectorCard({
           >
             <Power size={14} />
           </button>
-          {/* Expand */}
           <button
             onClick={() => setExpanded(!expanded)}
             className="min-w-[32px] min-h-[32px] flex items-center justify-center rounded-lg text-text2 hover:bg-surface2 transition-colors"
@@ -773,7 +655,6 @@ const DirectorCard = React.memo(function DirectorCard({
             <p className="text-xs text-text2">{d.description}</p>
           )}
 
-          {/* Needs setup banner (expanded) */}
           {needsSetup && (
             <div className="flex items-start gap-2 px-2.5 py-2 rounded-md bg-yellow/5 border border-yellow/20">
               <AlertTriangle size={12} className="text-yellow shrink-0 mt-0.5" />
@@ -794,7 +675,6 @@ const DirectorCard = React.memo(function DirectorCard({
             </div>
           )}
 
-          {/* Context summary (when configured) */}
           {hasContext && !needsSetup && (
             <div className="flex items-center gap-2">
               <span className="text-xs text-green flex items-center gap-1">
@@ -832,14 +712,13 @@ const DirectorCard = React.memo(function DirectorCard({
             <div className="text-subtext">
               {t("directors.nextRun")}:{" "}
               <span className="text-text2">
-                {d.next_run ? new Date(d.next_run * 1000).toLocaleString() : "—"}
+                {d.next_run ? new Date(d.next_run * 1000).toLocaleString() : "\u2014"}
               </span>
             </div>
           </div>
           {d.last_error && (
             <p className="text-xs text-red bg-red/5 px-2 py-1 rounded">{d.last_error}</p>
           )}
-          {/* Delete */}
           <div className="flex justify-end">
             <button
               onClick={onDelete}
@@ -887,7 +766,7 @@ const TaskRow = React.memo(function TaskRow({ task }: TaskRowProps) {
       <div className="flex-1 min-w-0">
         <div className="text-sm text-text truncate">{task.title}</div>
         <div className="text-xs text-subtext">
-          {task.creator_id} → {task.assignee_id || "?"}
+          {task.creator_id} &rarr; {task.assignee_id || "?"}
           {task.priority <= 3 && " !!"}
         </div>
       </div>
@@ -918,7 +797,7 @@ const ActivityRow = React.memo(function ActivityRow({ item }: ActivityRowProps) 
             <>{item.director_name}: {item.title}</>
           )}
           {item.type === "task" && (
-            <>{item.creator_id} → {item.assignee_id}: {item.title}</>
+            <>{item.creator_id} &rarr; {item.assignee_id}: {item.title}</>
           )}
         </span>
       </div>
@@ -939,12 +818,14 @@ const DIRECTOR_RUN_STATUS_COLORS: Record<DirectorRunStatus, string> = {
 interface TeamRunProgressProps {
   run: ActiveTeamRun;
   onDismiss: () => void;
+  onStop: () => void;
   t: (key: string, params?: Record<string, string | number>) => string;
 }
 
 const TeamRunProgress = React.memo(function TeamRunProgress({
   run,
   onDismiss,
+  onStop,
   t,
 }: TeamRunProgressProps) {
   const directorEntries = Object.values(run.directors);
@@ -953,10 +834,11 @@ const TeamRunProgress = React.memo(function TeamRunProgress({
   ).length;
   const total = Math.max(run.directorCount, directorEntries.length);
   const allDone = completedCount >= total && total > 0;
+  const isRunning = !allDone;
   const pct = total > 0 ? (completedCount / total) * 100 : 0;
 
   return (
-    <div className="rounded-lg bg-primary/5 border border-primary/20 overflow-hidden animate-[fade-in_0.2s_ease-out]">
+    <div className="rounded-lg bg-primary/5 border border-primary/20 overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2">
         <div className="flex items-center gap-2 min-w-0">
@@ -975,15 +857,27 @@ const TeamRunProgress = React.memo(function TeamRunProgress({
               : t("directors.teamRunning")}
           </span>
         </div>
-        {allDone && (
-          <button
-            onClick={onDismiss}
-            className="text-text2 hover:text-text transition-colors p-0.5 rounded shrink-0"
-            title={t("directors.dismissProgress")}
-          >
-            <X size={14} />
-          </button>
-        )}
+        <div className="flex items-center gap-1 shrink-0">
+          {isRunning && (
+            <button
+              onClick={onStop}
+              className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg text-red hover:bg-red/10 transition-colors"
+              title={t("directors.stopTeam")}
+            >
+              <Square size={10} />
+              {t("directors.stopTeam")}
+            </button>
+          )}
+          {allDone && (
+            <button
+              onClick={onDismiss}
+              className="text-text2 hover:text-text transition-colors p-0.5 rounded shrink-0"
+              title={t("directors.dismissProgress")}
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Progress bar */}
@@ -1079,7 +973,6 @@ const DirectorDetailView = React.memo(function DirectorDetailView({
   const [inboxItems, setInboxItems] = useState<InboxItem[]>([]);
   const [loadingInbox, setLoadingInbox] = useState(false);
 
-  // Load related inbox items on mount
   useEffect(() => {
     if (!authToken) return;
     setLoadingInbox(true);
@@ -1097,7 +990,7 @@ const DirectorDetailView = React.memo(function DirectorDetailView({
   );
 
   return (
-    <div className="space-y-4 animate-fade-in">
+    <div className="space-y-4">
       {/* Header */}
       <div className="flex items-start gap-3">
         <button
@@ -1160,7 +1053,7 @@ const DirectorDetailView = React.memo(function DirectorDetailView({
         </div>
       </div>
 
-      {/* Setup progress (when has context fields) */}
+      {/* Setup progress */}
       {hasContext && (
         <div className="p-3 rounded-lg bg-surface2/50 space-y-2">
           <div className="flex items-center justify-between">
@@ -1198,7 +1091,7 @@ const DirectorDetailView = React.memo(function DirectorDetailView({
       <div className="space-y-1.5">
         <span className="text-xs font-medium text-text">{t("directors.detail.rolePrompt")}</span>
         <pre className="text-xs text-text2 bg-surface2/50 rounded-lg p-3 max-h-32 overflow-y-auto whitespace-pre-wrap font-mono">
-          {d.role_prompt || "—"}
+          {d.role_prompt || "\u2014"}
         </pre>
       </div>
 

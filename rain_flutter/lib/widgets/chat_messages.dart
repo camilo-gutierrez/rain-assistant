@@ -269,6 +269,17 @@ class _TtsPlayButtonState extends ConsumerState<TtsPlayButton> {
     } else {
       setState(() => _isThisPlaying = true);
       await audioService.synthesize(widget.text, settings.ttsVoice);
+      // If playback ended in error, show feedback
+      if (mounted &&
+          audioService.playbackState.value == TtsPlaybackState.error) {
+        final lang = settings.language;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(L10n.t('chat.ttsError', lang)),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
     }
   }
 

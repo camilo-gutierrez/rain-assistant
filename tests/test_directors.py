@@ -427,7 +427,7 @@ class TestMetaTool:
             "action": "templates", "_user_id": "u1",
         }, "/tmp")
         assert result["is_error"] is False
-        assert "strategy" in result["content"].lower()
+        assert "job_scout" in result["content"].lower()
 
     @pytest.mark.asyncio
     async def test_set_context_action(self):
@@ -488,11 +488,11 @@ class TestBuiltinTemplates:
 
     def test_templates_exist(self):
         from directors.builtin import DIRECTOR_TEMPLATES
-        assert len(DIRECTOR_TEMPLATES) >= 5
+        assert len(DIRECTOR_TEMPLATES) >= 4
         ids = [t["id"] for t in DIRECTOR_TEMPLATES]
-        assert "strategy" in ids
-        assert "content" in ids
-        assert "development" in ids
+        assert "job_scout" in ids
+        assert "job_researcher" in ids
+        assert "job_applicant" in ids
 
     def test_template_fields(self):
         from directors.builtin import DIRECTOR_TEMPLATES

@@ -24,6 +24,7 @@ import '../widgets/computer_live_display.dart';
 import '../widgets/cwd_picker_sheet.dart';
 import '../widgets/mode_switcher.dart';
 import '../widgets/model_switcher.dart';
+import '../widgets/mcp_tools_bar.dart';
 import '../widgets/rate_limit_badge.dart';
 import 'alter_egos_screen.dart';
 import 'directors_screen.dart';
@@ -298,6 +299,24 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     ref.read(agentProvider.notifier).setInterruptPending(agentId, true);
   }
 
+  /// Send a prompt from an MCP chip tap (no images, no input clearing).
+  void _sendMcpPrompt(String text) {
+    final agentState = ref.read(agentProvider);
+    final agentId = agentState.activeAgentId;
+    if (agentId.isEmpty) return;
+
+    ref.read(agentProvider.notifier).appendMessage(
+          agentId,
+          UserMessage.create(text),
+        );
+    ref.read(agentProvider.notifier).setProcessing(agentId, true);
+    ref.read(agentProvider.notifier).setAgentStatus(agentId, AgentStatus.working);
+    _scrollToBottom(force: true);
+
+    final ws = ref.read(webSocketServiceProvider);
+    ws.send({'type': 'send_message', 'text': text, 'agent_id': agentId});
+  }
+
   Future<void> _toggleRecording() async {
     final audioService = ref.read(audioServiceProvider);
     final isRecording = ref.read(isRecordingProvider);
@@ -317,8 +336,21 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         ref.read(isTranscribingProvider.notifier).state = false;
       }
     } else {
-      ref.read(isRecordingProvider.notifier).state = true;
-      await audioService.startRecording();
+      final started = await audioService.startRecording();
+      if (started) {
+        ref.read(isRecordingProvider.notifier).state = true;
+      } else {
+        // Recording failed — show feedback
+        if (mounted) {
+          final lang = ref.read(settingsProvider).language;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(L10n.t('chat.micError', lang)),
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+      }
     }
   }
 
@@ -721,6 +753,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     },
                   ),
           ),
+
+          // MCP integration chips
+          if (agent != null && !isProcessing)
+            Padding(
+              padding: const EdgeInsets.only(top: 4, bottom: 2),
+              child: McpToolsBar(
+                dio: ref.read(authServiceProvider).authenticatedDio,
+                lang: lang,
+                enabled: agent.cwd != null && !isProcessing,
+                onSendPrompt: _sendMcpPrompt,
+              ),
+            ),
 
           // Mode switcher (coding ↔ computer use)
           if (agent != null)

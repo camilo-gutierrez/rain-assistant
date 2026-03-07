@@ -13,6 +13,19 @@ import pytest
 
 
 # ---------------------------------------------------------------------------
+# Rate limiter auto-cleanup — prevents 429 bleed between tests
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _clear_rate_limiter():
+    """Clear the global rate limiter before every test to prevent 429 bleed."""
+    from rate_limiter import rate_limiter as rl
+    rl.reset()
+    yield
+    rl.reset()
+
+
+# ---------------------------------------------------------------------------
 # Temporary config directory — prevents touching the real ~/.rain-assistant
 # ---------------------------------------------------------------------------
 

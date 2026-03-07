@@ -1206,6 +1206,8 @@ async def health_check():
 
     payload = {
         "status": "healthy" if healthy else "unhealthy",
+        "version": _get_version(),
+        "uptime_seconds": round(time.monotonic() - _SERVER_START_TIME, 1),
         "checks": checks,
     }
     status_code = 200 if healthy else 503
